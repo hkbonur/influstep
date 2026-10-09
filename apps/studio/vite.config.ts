@@ -8,7 +8,7 @@ export default defineConfig(() => ({
   resolve: { dedupe: ['react', 'react-dom'], tsconfigPaths: true },
   server: {
     port: Number(process.env.PORT || 3300),
-    // The worker owns /go and /p in production; in dev, proxy them to wrangler is overkill,
-    // so the SPA answers them with a small page that calls the same Convex functions.
+    // The worker owns /go and /p in production. In dev the SPA routes of the same
+    // names call the same Convex functions, so tracked links work without wrangler.
   },
 }))

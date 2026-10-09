@@ -114,7 +114,7 @@ function EpisodePage() {
               Concept: {episode.concept}
               {episode.pillar && <span> · pillar: {episode.pillar}</span>}
             </p>
-            <ScriptEditor key={episode.updatedAt} episode={episode} sponsorName="Formstep" />
+            <ScriptEditor key={episode.updatedAt} episode={episode} sponsorName={data.sponsorName} />
           </section>
 
           <section>

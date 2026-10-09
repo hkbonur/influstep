@@ -32,17 +32,27 @@ export const complete = mutation({
     const item = await ctx.db.get(args.itemId)
     if (!item) throw new Error('checklist item not found')
     if (item.status === 'done') return
-    await ctx.db.patch(item._id, { status: 'done', doneAt: Date.now() })
+    const now = Date.now()
+    await ctx.db.patch(item._id, { status: 'done', doneAt: now })
+    const episodeIds = item.episodeId ? [item.episodeId] : []
     if (item.action?.kind === 'open_browser') {
       const persona = await ctx.db.get(item.personaId)
       const workspace = persona ? await ctx.db.get(persona.workspaceId) : null
-      if (workspace) {
-        const host = new URL(item.action.url).host
-        if (!workspace.signedInHosts.includes(host))
-          await ctx.db.patch(workspace._id, { signedInHosts: [...workspace.signedInHosts, host] })
+      const host = new URL(item.action.url).host
+      if (workspace && !workspace.signedInHosts.includes(host))
+        await ctx.db.patch(workspace._id, { signedInHosts: [...workspace.signedInHosts, host] })
+      // One sign-in serves every persona: the other items for the same host are done too.
+      const open = await ctx.db
+        .query('checklistItems')
+        .withIndex('by_status', (q) => q.eq('status', 'open'))
+        .collect()
+      for (const other of open) {
+        if (other.action?.kind !== 'open_browser' || new URL(other.action.url).host !== host) continue
+        await ctx.db.patch(other._id, { status: 'done', doneAt: now })
+        if (other.episodeId) episodeIds.push(other.episodeId)
       }
     }
-    if (item.episodeId) await ctx.runMutation(internal.internal.runner.resumeBlockedEpisode, { episodeId: item.episodeId })
+    for (const episodeId of episodeIds) await ctx.runMutation(internal.internal.runner.resumeBlockedEpisode, { episodeId })
   },
 })
 

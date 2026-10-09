@@ -49,6 +49,7 @@ export const get = query({
       episode,
       persona,
       appUrl: workspace?.appUrl ?? '',
+      sponsorName: workspace?.sponsorName ?? '',
       publications,
       links,
       checklist,
