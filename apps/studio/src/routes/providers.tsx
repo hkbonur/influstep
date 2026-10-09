@@ -23,15 +23,15 @@ function ProvidersPage() {
           </>
         }
       />
-      <div className="grid gap-10 lg:grid-cols-[1.2fr_1fr]">
+      <div className="grid gap-10 lg:grid-cols-[1.5fr_1fr]">
         <div className="space-y-10">
           <section>
             <Eyebrow className="mb-3">Adapters</Eyebrow>
             <table className="w-full text-sm">
               <thead className="text-xs text-ash">
                 <tr className="text-left">
-                  <th className="py-1 font-medium">Provider</th>
-                  <th className="py-1 font-medium">Real adapter</th>
+                  <th className="w-44 py-1 font-medium">Provider</th>
+                  <th className="w-56 py-1 font-medium">Real adapter</th>
                   <th className="py-1 font-medium">Needs</th>
                 </tr>
               </thead>
@@ -40,12 +40,12 @@ function ProvidersPage() {
                   const missing = provider.needs.filter((key) => !status.keys[key as keyof typeof status.keys])
                   return (
                     <tr key={provider.name} className="border-t border-mist">
-                      <td className="py-1.5">
+                      <td className="py-1.5 whitespace-nowrap">
                         <Mono>{provider.name}</Mono>
                       </td>
-                      <td className="py-1.5">
+                      <td className="py-1.5 whitespace-nowrap">
                         {provider.real}
-                        {!provider.hasReal && <span className="ml-1 text-xs text-ash">(mock only in the backend)</span>}
+                        {!provider.hasReal && <span className="ml-1 text-xs whitespace-nowrap text-ash">mock only</span>}
                       </td>
                       <td className="py-1.5">
                         <span className="flex flex-wrap gap-1">
