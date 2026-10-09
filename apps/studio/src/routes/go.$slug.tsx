@@ -13,19 +13,18 @@ function GoPage() {
   const params = Route.useParams()
   const click = useMutation(api.public.links.click)
   const [missing, setMissing] = React.useState(false)
+  // StrictMode mounts twice in dev; count the click once.
+  const counted = React.useRef(false)
   React.useEffect(() => {
-    let cancelled = false
+    if (counted.current) return
+    counted.current = true
     void click({ slug: params.slug, referrer: document.referrer || undefined }).then((result) => {
-      if (cancelled) return
       if (!result) {
         setMissing(true)
         return
       }
       window.location.replace(result.target)
     })
-    return () => {
-      cancelled = true
-    }
   }, [click, params.slug])
   return <p className="py-20 text-center text-ash">{missing ? 'This link does not exist.' : 'Counting the click…'}</p>
 }

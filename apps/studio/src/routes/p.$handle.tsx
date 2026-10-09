@@ -13,7 +13,7 @@ function BioPage() {
   if (bio === undefined) return <Skeleton className="mx-auto h-40 max-w-xl" />
   if (bio === null) return <p className="py-20 text-center text-ash">No such persona.</p>
   return (
-    <main className="mx-auto max-w-xl py-12">
+    <article className="mx-auto max-w-xl py-12">
       <h1 className="text-metric">{bio.name}</h1>
       <Mono className="text-ash">@{bio.handle}</Mono>
       <p className="my-3">{bio.bio}</p>
@@ -33,6 +33,6 @@ function BioPage() {
         ))}
       </ul>
       <small className="mt-8 block text-xs text-ash">{bio.name} is an AI-generated presenter.</small>
-    </main>
+    </article>
   )
 }
