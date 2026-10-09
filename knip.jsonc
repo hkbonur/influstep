@@ -1,0 +1,10 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    "apps/studio": { "entry": ["src/main.tsx", "src/routes/**/*.tsx", "worker/index.ts"], "project": ["src/**", "worker/**"] },
+    "apps/runner": { "entry": ["src/main.ts"], "project": ["src/**"] },
+    "packages/convex": { "entry": ["src/**/*.ts!"], "project": ["src/**"], "ignore": ["src/_generated/**"] },
+    "packages/shared": { "entry": ["src/index.ts"], "project": ["src/**"] }
+  },
+  "ignoreDependencies": ["oxc-transform-react"]
+}

@@ -1,0 +1,97 @@
+import { v } from 'convex/values'
+import { canTransition, type EpisodeStatus } from '@influstep/shared'
+import type { Doc, Id } from '../_generated/dataModel'
+import { internalMutation, internalQuery, type MutationCtx } from '../_generated/server'
+import { transition, type PipelineEvent } from '../core/pipeline'
+import { episodeStatusValidator } from '../lib/validators'
+
+/**
+ * Internal reads and writes the agent actions use. Actions cannot touch the
+ * database, so every fact they need and every change they make goes through
+ * here. Domain rules stay in core/.
+ */
+
+export const getJob = internalQuery({
+  args: { jobId: v.id('jobs') },
+  handler: async (ctx, args): Promise<Doc<'jobs'> | null> => ctx.db.get(args.jobId),
+})
+
+export const getPersona = internalQuery({
+  args: { personaId: v.id('personas') },
+  handler: async (ctx, args): Promise<{ persona: Doc<'personas'>; workspace: Doc<'workspaces'> }> => {
+    const persona = await ctx.db.get(args.personaId)
+    if (!persona) throw new Error(`persona ${args.personaId} not found`)
+    const workspace = await ctx.db.get(persona.workspaceId)
+    if (!workspace) throw new Error(`workspace ${persona.workspaceId} not found`)
+    return { persona, workspace }
+  },
+})
+
+export interface EpisodeContext {
+  episode: Doc<'episodes'>
+  persona: Doc<'personas'>
+  workspace: Doc<'workspaces'>
+  directives: Doc<'directives'>[]
+  signals: Doc<'signals'>[]
+  experiment: Doc<'experiments'> | null
+}
+
+export const getEpisodeContext = internalQuery({
+  args: { episodeId: v.id('episodes') },
+  handler: async (ctx, args): Promise<EpisodeContext> => {
+    const episode = await ctx.db.get(args.episodeId)
+    if (!episode) throw new Error(`episode ${args.episodeId} not found`)
+    const persona = await ctx.db.get(episode.personaId)
+    if (!persona) throw new Error(`persona ${episode.personaId} not found`)
+    const workspace = await ctx.db.get(persona.workspaceId)
+    if (!workspace) throw new Error(`workspace ${persona.workspaceId} not found`)
+    const directives = await ctx.db
+      .query('directives')
+      .withIndex('by_persona_active', (q) => q.eq('personaId', persona._id).eq('active', true))
+      .collect()
+    const signals = (await Promise.all(episode.signalIds.map((id) => ctx.db.get(id)))).filter(
+      (signal): signal is Doc<'signals'> => signal !== null
+    )
+    const experiment = episode.experimentId ? await ctx.db.get(episode.experimentId) : null
+    return { episode, persona, workspace, directives, signals, experiment }
+  },
+})
+
+/** Moves an episode through the pipeline or throws with the reason. */
+export async function applyEvent(
+  ctx: MutationCtx,
+  episodeId: Id<'episodes'>,
+  event: PipelineEvent,
+  previous?: EpisodeStatus
+): Promise<EpisodeStatus> {
+  const episode = await ctx.db.get(episodeId)
+  if (!episode) throw new Error(`episode ${episodeId} not found`)
+  const result = transition(episode.status, event, { previous })
+  if (!result.ok) throw new Error(result.reason)
+  await ctx.db.patch(episodeId, {
+    status: result.status,
+    error: event.type === 'failed' ? event.error : undefined,
+    updatedAt: Date.now(),
+  })
+  return result.status
+}
+
+/** Fails the episode when its status allows it; a measured or killed episode keeps its state. */
+export async function failEpisodeIfPossible(ctx: MutationCtx, episodeId: Id<'episodes'>, error: string): Promise<void> {
+  const episode = await ctx.db.get(episodeId)
+  if (!episode) return
+  if (!canTransition(episode.status, 'failed')) return
+  await applyEvent(ctx, episodeId, { type: 'failed', error })
+}
+
+export const failEpisode = internalMutation({
+  args: { episodeId: v.id('episodes'), error: v.string() },
+  handler: async (ctx, args) => failEpisodeIfPossible(ctx, args.episodeId, args.error),
+})
+
+export const setEpisodeStatus = internalMutation({
+  args: { episodeId: v.id('episodes'), status: episodeStatusValidator },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.episodeId, { status: args.status, updatedAt: Date.now() })
+  },
+})

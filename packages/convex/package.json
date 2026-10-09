@@ -1,0 +1,37 @@
+{
+  "name": "@influstep/convex",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./_generated/*": {
+      "types": "./src/_generated/*.d.ts",
+      "default": "./src/_generated/*.js"
+    }
+  },
+  "scripts": {
+    "dev": "convex dev",
+    "deploy": "convex deploy",
+    "codegen": "convex codegen",
+    "seed": "convex run internal/seed:run",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "tsc:check": "tsc --noEmit",
+    "lint:check": "oxlint ./src",
+    "lint:fix": "oxlint --fix ./src",
+    "format:fix": "oxfmt --config ../../.oxfmtrc.json --write ./src",
+    "format:check": "oxfmt --config ../../.oxfmtrc.json --check ./src"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0",
+    "@influstep/shared": "workspace:*",
+    "convex": "^1.46.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.5",
+    "convex-test": "^0.0.58",
+    "typescript": "^6.0.3",
+    "vitest": "^5.0.1"
+  }
+}
