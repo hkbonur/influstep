@@ -14,6 +14,8 @@ pnpm dev             # http://localhost:3300
 pnpm dev:runner      # in another terminal: the local runner (mock providers)
 ```
 
+Under Vite, `/go/:slug` and `/p/:handle` are SPA routes that call the same Convex functions as the worker. To exercise the worker itself, run `pnpm --filter @influstep/app exec wrangler dev --port 3301`. Before a real deploy, override `CONVEX_URL` in `apps/studio/wrangler.toml` (it is committed pointing at the local docker backend) or set it as a Cloudflare variable.
+
 Everything runs with mock providers by default: scripts, voices, recordings, uploads, and metrics are generated locally so the whole pipeline can be walked end to end. See `docs/plan.md` for how to switch each provider to its real adapter.
 
 ## Layout
