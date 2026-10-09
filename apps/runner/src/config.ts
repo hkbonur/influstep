@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
  * Runner configuration from `.env.local` (gitignored) next to the package,
  * then the shell. Explicit reads, explicit errors (ADR 0002).
  */
-export const runnerRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const runnerRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 export const artifactsDir = path.join(runnerRoot, 'artifacts')
 export const profileDir = path.join(runnerRoot, 'profile')
 

@@ -15,8 +15,7 @@
   },
   "dependencies": {
     "@influstep/shared": "workspace:*",
-    "playwright": "1.63.0",
-    "zod": "^4.6.5"
+    "playwright": "1.63.0"
   },
   "devDependencies": {
     "@types/node": "^24.13.5",

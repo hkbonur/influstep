@@ -17,10 +17,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "tsc:check": "tsc --noEmit",
-    "lint:check": "oxlint ./src",
-    "lint:fix": "oxlint --fix ./src",
-    "format:fix": "oxfmt --config ../../.oxfmtrc.json --write ./src",
-    "format:check": "oxfmt --config ../../.oxfmtrc.json --check ./src"
+    "lint:check": "oxlint ./src ./test",
+    "lint:fix": "oxlint --fix ./src ./test",
+    "format:fix": "oxfmt --config ../../.oxfmtrc.json --write ./src ./test",
+    "format:check": "oxfmt --config ../../.oxfmtrc.json --check ./src ./test"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
@@ -32,6 +32,7 @@
     "@types/node": "^24.13.5",
     "convex-test": "^0.0.58",
     "typescript": "^6.0.3",
+    "vite": "^8.3.0",
     "vitest": "^5.0.1"
   }
 }

@@ -30,7 +30,7 @@ When an agent cannot continue (n8n not signed in, YouTube permission missing), i
 
 | Provider        | Mock                                          | Real adapter                                                       | Needs                                                |
 | --------------- | --------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------- |
-| llm             | template writer seeded by ids                 | Anthropic Messages API (`claude-sonnet-5-5`)                        | `ANTHROPIC_API_KEY`                                   |
+| llm             | template writer seeded by ids                 | Anthropic Messages API (`claude-opus-5-5`)                        | `ANTHROPIC_API_KEY`                                   |
 | voice           | silent track with the script length           | ElevenLabs text-to-speech, persona voice id                        | `ELEVENLABS_API_KEY`; commercial use needs a paid plan |
 | avatar          | title card with the persona's name            | HeyGen or Higgsfield talking-head take                             | key; pick one once the look is chosen                |
 | screen          | ffmpeg placeholder video                      | Playwright `recordVideo` against the runner's browser profile      | the tool signed in (checklist item)                  |

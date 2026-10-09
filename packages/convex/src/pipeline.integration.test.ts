@@ -1,7 +1,8 @@
+import { runnerJobSchema } from '@influstep/shared'
 import { describe, expect, it } from 'vitest'
 import { api, internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
-import { setup } from './test-setup'
+import { setup } from '../test/setup'
 
 /**
  * One episode through the whole pipeline with mock providers: seed, writer,
@@ -20,7 +21,9 @@ describe('episode pipeline', () => {
 
     // The writer wrote the seeded idea of Max and auto-approval blocked on the n8n sign-in.
     const checklist = await t.query(api.private.checklist.list, {})
-    const signIn = checklist.find((item) => item.status === 'open' && item.action?.kind === 'open_browser' && item.personaHandle === 'max.builds.agents')
+    const signIn = checklist.find(
+      (item) => item.status === 'open' && item.action?.kind === 'open_browser' && item.personaHandle === 'max.builds.agents'
+    )
     expect(signIn?.title).toContain('localhost:5678')
     if (!signIn?.episodeId) throw new Error('sign-in item has no episode')
     const blocked = await t.query(api.private.episodes.get, { episodeId: signIn.episodeId })
@@ -33,13 +36,18 @@ describe('episode pipeline', () => {
     expect(recording?.episode.status).toBe('recording')
 
     // The runner claims the produce job and reports two renders.
-    const claimed = await t.mutation(internal.internal.runner.claimNext, { runnerName: 'test' })
-    const produceJob = claimed?.kind === 'produce' && claimed.payload.episodeId === signIn.episodeId ? claimed : await claimUntil(t, 'produce', signIn.episodeId)
+    const produceJob = await claimUntil(t, 'produce', signIn.episodeId)
+    if (produceJob.kind !== 'produce') throw new Error('expected a produce job')
     expect(produceJob.payload.shots.length).toBeGreaterThan(0)
     const storageId = await t.run((ctx) => ctx.storage.store(new Blob(['video'])))
     await t.mutation(internal.internal.runner.complete, {
       jobId: produceJob.id as Id<'jobs'>,
-      result: { renders: [{ aspect: '16:9', storageId, durationSec: 50, mock: true }, { aspect: '9:16', storageId, durationSec: 50, mock: true }] },
+      result: {
+        renders: [
+          { aspect: '16:9', storageId, durationSec: 50, mock: true },
+          { aspect: '9:16', storageId, durationSec: 50, mock: true },
+        ],
+      },
     })
     const scheduled = await t.query(api.private.episodes.get, { episodeId: signIn.episodeId })
     expect(scheduled?.episode.status).toBe('scheduled')
@@ -51,10 +59,16 @@ describe('episode pipeline', () => {
     expect(dispatched.dispatched).toBeGreaterThanOrEqual(2)
     for (let i = 0; i < 2; i += 1) {
       const job = await claimUntil(t, 'publish', signIn.episodeId)
+      if (job.kind !== 'publish') throw new Error('expected a publish job')
       expect(job.payload.renderUrl).toContain('http')
       await t.mutation(internal.internal.runner.complete, {
         jobId: job.id as Id<'jobs'>,
-        result: { externalId: `ext-${job.payload.platform}`, url: `https://${job.payload.platform}.example/ext`, publishedAt: Date.now() - 4 * 86_400_000, mock: true },
+        result: {
+          externalId: `ext-${job.payload.platform}`,
+          url: `https://${job.payload.platform}.example/ext`,
+          publishedAt: Date.now() - 4 * 86_400_000,
+          mock: true,
+        },
       })
     }
     const published = await t.query(api.private.episodes.get, { episodeId: signIn.episodeId })
@@ -126,10 +140,12 @@ describe('episode pipeline', () => {
 
 async function claimUntil(t: ReturnType<typeof setup>, kind: 'produce' | 'publish', episodeId: string) {
   for (let i = 0; i < 10; i += 1) {
-    const job = await t.mutation(internal.internal.runner.claimNext, { runnerName: 'test' })
-    if (!job) break
-    if (job.kind === kind && (kind === 'publish' || job.payload.episodeId === episodeId)) {
-      if (kind === 'publish') {
+    const claimed = await t.mutation(internal.internal.runner.claimNext, { runnerName: 'test' })
+    if (!claimed) break
+    // The wire type widens the union; the schema narrows it again.
+    const job = runnerJobSchema.parse(claimed)
+    if (job.kind === kind && (job.kind !== 'produce' || job.payload.episodeId === episodeId)) {
+      if (job.kind === 'publish') {
         const publication = await t.run((ctx) => ctx.db.get(job.payload.publicationId as Id<'publications'>))
         if (publication?.episodeId !== episodeId) {
           await t.mutation(internal.internal.runner.fail, { jobId: job.id as Id<'jobs'>, error: 'not the episode under test' })

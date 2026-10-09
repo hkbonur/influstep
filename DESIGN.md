@@ -101,7 +101,7 @@ Rejected: dashboard grids of a dozen equal widgets, colored KPI tiles, gradient 
 
 Same palette as Formstep (see frontmatter). Rules that matter here:
 
-**Status tint scale (episode pipeline).** Each episode status has one tint, applied as a 4% background and a 100% left rule on calendar cards and as a pill in lists. Tints are the semantic colors, never new hues:
+**Status tint scale (episode pipeline).** Each episode status has one tint, applied as a 6% background wash and a 100% dot on calendar cards and as a pill in lists. Never a side stripe. Tints are the semantic colors, never new hues:
 
 | Status         | Tint        | Reads as              |
 | -------------- | ----------- | --------------------- |
@@ -144,7 +144,7 @@ Same palette as Formstep (see frontmatter). Rules that matter here:
 - **Button destructive**: signal-red, used only for Kill and Pause.
 - **Pill**: status tint at 18% background, deep tint foreground, rounded pill, 1.25rem high.
 - **Card**: paper, hairline border, rounded xl, 1rem padding.
-- **Episode card** (calendar): card with a 2px left rule in the status tint, title at body weight 500, persona handle in mono under it, platform glyphs right-aligned.
+- **Episode card** (calendar): status tint as a 6% wash with a dot before the title; a 35% tint border when the card needs the operator (scripted, waiting, failed). Title at weight 500, persona handle in mono under it with the publish time, platform glyphs on the last row.
 - **Input / Textarea**: hairline background, rounded lg, 2rem high (textarea auto-grows).
 - **Chat**: operator messages right-aligned on paper-warm, persona replies left on paper with a hairline; directives extracted from a message show as a pinned list above the composer.
 - **Checklist item**: checkbox, title, "unblocks: <episode>" in mono, optional action button.

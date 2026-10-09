@@ -3,7 +3,7 @@ import { ffmpeg } from './ffmpeg'
 import { providersMode, requireEnv } from './config'
 
 /** Words per second a calm narrator manages; sets the mock track length and the shot timing. */
-export const WORDS_PER_SECOND = 2.4
+const WORDS_PER_SECOND = 2.4
 
 export function spokenSeconds(text: string): number {
   const words = text.trim().split(/\s+/).filter(Boolean).length

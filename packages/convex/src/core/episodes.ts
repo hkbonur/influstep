@@ -143,7 +143,7 @@ export async function approveEpisode(ctx: MutationCtx, episodeId: Id<'episodes'>
         title: `Sign in to ${host} in the runner's browser`,
         why: `"${episode.title}" records a screen on ${host}. The producer uses your signed-in session and never stores the password.`,
         status: 'open',
-        action: { kind: 'open_browser', url: `https://${host}` },
+        action: { kind: 'open_browser', url: `${localHost(host) ? 'http' : 'https'}://${host}` },
         createdAt: Date.now(),
       })
     }
@@ -263,4 +263,9 @@ export async function failPublication(ctx: MutationCtx, publicationId: Id<'publi
   const episode = await ctx.db.get(publication.episodeId)
   if (!episode || !canTransition(episode.status, 'failed')) return
   await applyEvent(ctx, publication.episodeId, { type: 'failed', error: `${publication.platform}: ${error}` })
+}
+
+/** Local tools (n8n in docker, a dev server) answer on http; everything else on https. */
+function localHost(host: string): boolean {
+  return host.startsWith('localhost') || host.startsWith('127.0.0.1')
 }

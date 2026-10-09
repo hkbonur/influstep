@@ -489,22 +489,21 @@ export const write = internalMutation({
     }
     if (signalIds[0]) await ctx.db.patch(signalIds[0], { status: 'used' })
 
-    // Max: two ideas for this week so the writer has work on first run.
+    // Max: two ideas on the next two days so the writer has work on first run, whatever today is.
     const max = await ctx.db.get(maxId)
     if (!max) throw new Error('persona vanished')
     for (const [offset, concept] of [
-      [2, 'Give Claude Code an MCP server for your own API'],
-      [4, 'An agent that opens the pull request and waits for review'],
+      [1, 'Give Claude Code an MCP server for your own API'],
+      [2, 'An agent that opens the pull request and waits for review'],
     ] as const) {
-      const day = addDays(monday, offset)
-      if (day < today) continue
+      const day = addDays(today, offset)
       await createIdea(ctx, max, {
         personaId: maxId,
         plannedFor: day,
         concept,
         pillar: 'MCP servers',
         sponsorSegment: 'none',
-        signalIds: offset === 2 ? [signalIds[4] as Id<'signals'>] : [],
+        signalIds: offset === 1 ? [signalIds[4] as Id<'signals'>] : [],
       })
     }
     await ctx.db.insert('checklistItems', {
