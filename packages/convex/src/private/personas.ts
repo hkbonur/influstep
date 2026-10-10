@@ -4,7 +4,13 @@ import { internal } from '../_generated/api'
 import type { Doc } from '../_generated/dataModel'
 import { mutation, query } from '../_generated/server'
 import { dayKey, weekStart } from '../core/dates'
+import {
+  activeDiscountCodes,
+  giveDiscountCode as giveDiscountCodeRule,
+  retireDiscountCode as retireDiscountCodeRule,
+} from '../core/discounts'
 import { createTrackedLink } from '../core/episodes'
+import { requireWorkspace, workspaceOf } from '../core/workspace'
 import { enqueueJob } from '../jobs/queue'
 import { platformValidator } from '../lib/validators'
 
@@ -60,7 +66,7 @@ export const get = query({
   handler: async (ctx, args) => {
     const persona = await ctx.db.get(args.personaId)
     if (!persona) return null
-    const workspace = await ctx.db.get(persona.workspaceId)
+    const workspace = await workspaceOf(ctx, persona)
     const messages = (
       await ctx.db
         .query('messages')
@@ -93,16 +99,31 @@ export const get = query({
         .withIndex('by_persona', (q) => q.eq('personaId', persona._id))
         .collect()
     ).find((link) => !link.episodeId && !link.platform)
+    // The codes in force, the persona-wide one first, then the episode-bound ones.
+    const codes = (await activeDiscountCodes(ctx, persona._id)).sort(
+      (a, b) => Number(a.episodeId !== undefined) - Number(b.episodeId !== undefined) || b.createdAt - a.createdAt
+    )
+    const discountCodes = codes.map((code) => ({
+      _id: code._id,
+      code: code.code,
+      offer: code.offer,
+      redemptions: code.redemptions,
+      active: code.active,
+      episodeId: code.episodeId,
+      episodeTitle: code.episodeId ? (episodes.find((episode) => episode._id === code.episodeId)?.title ?? null) : null,
+    }))
     return {
       persona,
-      sponsorName: workspace?.sponsorName ?? '',
-      appUrl: workspace?.appUrl ?? '',
+      sponsorName: workspace.sponsorName,
+      appUrl: workspace.appUrl,
+      currency: workspace.currency,
       messages,
       directives,
       checklist,
       episodes,
       jobs,
       bioLink,
+      discountCodes,
     }
   },
 })
@@ -110,8 +131,7 @@ export const get = query({
 export const create = mutation({
   args: personaFields,
   handler: async (ctx, args) => {
-    const workspace = await ctx.db.query('workspaces').first()
-    if (!workspace) throw new Error('Run the seed first: there is no workspace')
+    const workspace = await requireWorkspace(ctx)
     const taken = await ctx.db
       .query('personas')
       .withIndex('by_handle', (q) => q.eq('handle', args.handle))
@@ -188,4 +208,15 @@ export const withdrawDirective = mutation({
   handler: async (ctx, args) => {
     await ctx.db.patch(args.directiveId, { active: false, withdrawnAt: Date.now() })
   },
+})
+
+/** Hand the persona a code the operator created in Polar; with an episode, the code is for that episode only. */
+export const giveDiscountCode = mutation({
+  args: { personaId: v.id('personas'), code: v.string(), offer: v.string(), episodeId: v.optional(v.id('episodes')) },
+  handler: async (ctx, args) => giveDiscountCodeRule(ctx, args),
+})
+
+export const retireDiscountCode = mutation({
+  args: { discountCodeId: v.id('discountCodes') },
+  handler: async (ctx, args) => retireDiscountCodeRule(ctx, args.discountCodeId),
 })

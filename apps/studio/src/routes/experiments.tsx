@@ -15,6 +15,9 @@ import { Button, Empty, ErrorLine, Field, Input, Mono, PageHeader, Pill, Skeleto
 import { cn } from '@/lib/cn'
 import { formatCount, formatDateTime, formatPercent } from '@/lib/format'
 
+/** A variant is judged by the visitors its own link brought; a discount code names no variant, so redemptions stay out. */
+const LINK_ATTRIBUTED_METRICS = new Set<MetricKey>(['signups', 'paid'])
+
 export const Route = createFileRoute('/experiments')({ component: ExperimentsPage })
 
 type ExperimentRow = NonNullable<ReturnType<typeof useQuery<typeof api.private.experiments.list>>>[number]
@@ -87,8 +90,9 @@ function ExperimentCard(props: { experiment: ExperimentRow }) {
           <p className="mt-0.5 text-ash">{experiment.hypothesis}</p>
           <p className="mt-1 text-xs text-ash">
             {experiment.personaName} <Mono>@{experiment.personaHandle}</Mono> · {EXPERIMENT_KIND_LABELS[experiment.kind]} on{' '}
-            {METRIC_LABELS[experiment.metric].toLowerCase()} · decides at {experiment.minExposures} exposures per variant,{' '}
-            {formatPercent(experiment.minConfidence, 0)} confidence
+            {METRIC_LABELS[experiment.metric].toLowerCase()}
+            {LINK_ATTRIBUTED_METRICS.has(experiment.metric) && ' (link-attributed only; code redemptions do not count)'} · decides at{' '}
+            {experiment.minExposures} exposures per variant, {formatPercent(experiment.minConfidence, 0)} confidence
           </p>
         </div>
         <div className="flex gap-2">

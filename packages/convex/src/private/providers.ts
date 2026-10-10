@@ -21,12 +21,21 @@ export const status = query({
         POSTHOG_API_KEY: hasEnv('POSTHOG_API_KEY'),
         POSTHOG_PROJECT_ID: hasEnv('POSTHOG_PROJECT_ID'),
         POSTHOG_HOST: hasEnv('POSTHOG_HOST'),
+        POLAR_API_BASE: hasEnv('POLAR_API_BASE'),
+        POLAR_ACCESS_TOKEN: hasEnv('POLAR_ACCESS_TOKEN'),
+        POLAR_ORGANIZATION_ID: hasEnv('POLAR_ORGANIZATION_ID'),
         YOUTUBE_API_KEY: hasEnv('YOUTUBE_API_KEY'),
         RUNNER_TOKEN: hasEnv('RUNNER_TOKEN'),
       },
       providers: [
         { name: 'llm', real: 'Anthropic Messages API', hasReal: true, needs: ['ANTHROPIC_API_KEY'] },
         { name: 'analytics', real: 'PostHog HogQL', hasReal: true, needs: ['POSTHOG_API_KEY', 'POSTHOG_PROJECT_ID', 'POSTHOG_HOST'] },
+        {
+          name: 'discounts',
+          real: 'Polar (reads)',
+          hasReal: true,
+          needs: ['POLAR_API_BASE', 'POLAR_ACCESS_TOKEN', 'POLAR_ORGANIZATION_ID'],
+        },
         ...SIGNAL_SOURCES.map((source) => ({
           name: `signals: ${source}`,
           real: source === 'hackernews' ? 'HN Algolia' : source === 'reddit' ? 'Reddit JSON' : 'none yet',

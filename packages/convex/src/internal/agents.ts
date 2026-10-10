@@ -1,9 +1,10 @@
-import { v } from 'convex/values'
+import { v, type Infer } from 'convex/values'
 import {
   MEASUREMENT_WINDOW_MS,
   SIGNAL_SOURCES,
   decideExperiment,
   METRIC_DENOMINATOR,
+  normalizeDiscountCode,
   type SignalSource,
   type VariantStats,
 } from '@influstep/shared'
@@ -11,12 +12,14 @@ import { internal } from '../_generated/api'
 import type { Doc, Id } from '../_generated/dataModel'
 import { internalAction, internalMutation, internalQuery, type QueryCtx } from '../_generated/server'
 import { addDays, dayKey } from '../core/dates'
+import { discountCodesFor as discountCodesRule, redemptionOwner } from '../core/discounts'
 import { approveEpisode, createIdea, shotsFromDraft } from '../core/episodes'
 import { planWeek as planWeekRule } from '../core/planner'
 import { latestPerPublication } from '../core/report'
 import { providersMode } from '../lib/env'
 import { analyticsProvider } from '../providers/analytics'
 import { platformProvider } from '../providers/comments'
+import { discountsProvider } from '../providers/discounts'
 import { llmProvider } from '../providers/llm'
 import { signalSourceHasRealAdapter, signalsProvider } from '../providers/signals'
 import { conversionKindValidator, platformValidator, signalSourceValidator } from '../lib/validators'
@@ -271,7 +274,7 @@ export const livePublications = internalQuery({
 
 export const pullMetrics = internalAction({
   args: { personaId: v.string() },
-  handler: async (ctx, args): Promise<{ snapshots: number; conversions: number; measured: number }> => {
+  handler: async (ctx, args): Promise<{ snapshots: number; conversions: number; redemptions: number; measured: number }> => {
     const personaId = args.personaId as Id<'personas'>
     const { persona } = await ctx.runQuery(internal.internal.data.getPersona, { personaId })
     const publications = await ctx.runQuery(internal.internal.agents.livePublications, { personaId })
@@ -296,14 +299,67 @@ export const pullMetrics = internalAction({
     const since = Date.now() - 30 * 24 * 3_600_000
     const clicksSince = await ctx.runQuery(internal.internal.agents.clicksForPersona, { personaId, since })
     const found = await analyticsProvider().conversions({ personaHandle: persona.handle, since, clicksSince })
-    const conversions = await ctx.runMutation(internal.internal.agents.storeConversions, {
-      personaId,
-      conversions: found,
-      mock: providersMode() === 'mock',
+    const mock = providersMode() === 'mock'
+    // Every code the persona was ever given: a retired code stays in the videos that carried it and
+    // Polar still accepts it, so its orders keep arriving and keep counting.
+    const codes = await ctx.runQuery(internal.internal.agents.discountCodesFor, { personaId })
+    const codeStrings = new Set(codes.map((code) => code.code))
+    // A purchase made with one of the persona's codes reaches PostHog too. The billing side is the exact
+    // source for those, so the PostHog copy is dropped rather than counted twice.
+    const viaLink = found.filter((conversion) => {
+      if (conversion.kind !== 'paid' || conversion.discountCode === undefined) return true
+      const code = normalizeDiscountCode(conversion.discountCode)
+      return code === null || !codeStrings.has(code)
     })
+    let conversions = await ctx.runMutation(internal.internal.agents.storeConversions, {
+      personaId,
+      conversions: viaLink.map((conversion) => ({
+        via: 'utm' as const,
+        kind: conversion.kind,
+        distinctId: conversion.distinctId,
+        at: conversion.at,
+        utm: conversion.utm,
+      })),
+      mock,
+    })
+    // Every redemption is one paid conversion, exact and consent-independent. A code string is polled
+    // once from its first hand-out; each order belongs to the row that was in force when it was placed.
+    let redemptions = 0
+    for (const codeString of codeStrings) {
+      const rows = codes.filter((code) => code.code === codeString)
+      const redeemed = await discountsProvider().redemptions({ code: codeString, since: Math.min(...rows.map((row) => row.createdAt)) })
+      redemptions += redeemed.length
+      for (const row of rows) {
+        const own = redeemed.filter((redemption) => redemptionOwner(rows, redemption.at)?._id === row._id)
+        conversions += await ctx.runMutation(internal.internal.agents.storeConversions, {
+          personaId,
+          conversions: own.map((redemption) => ({
+            via: 'code' as const,
+            kind: 'paid' as const,
+            distinctId: redemption.orderId,
+            at: redemption.at,
+            episodeId: row.episodeId,
+          })),
+          mock,
+        })
+        await ctx.runMutation(internal.internal.agents.setDiscountCodeRedemptions, { discountCodeId: row._id, redemptions: own.length })
+      }
+    }
     const measured = await ctx.runMutation(internal.internal.agents.measureEpisodes, { personaId })
     await ctx.runAction(internal.internal.agents.evaluateExperiments, { personaId })
-    return { snapshots, conversions, measured }
+    return { snapshots, conversions, redemptions, measured }
+  },
+})
+
+export const discountCodesFor = internalQuery({
+  args: { personaId: v.id('personas') },
+  handler: async (ctx, args): Promise<Doc<'discountCodes'>[]> => discountCodesRule(ctx, args.personaId),
+})
+
+export const setDiscountCodeRedemptions = internalMutation({
+  args: { discountCodeId: v.id('discountCodes'), redemptions: v.number() },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.discountCodeId, { redemptions: args.redemptions })
   },
 })
 
@@ -354,23 +410,45 @@ export const storeSnapshot = internalMutation({
   },
 })
 
+/**
+ * A found conversion names how it was tied to the persona. A UTM one carries
+ * the tracked link's parameters and is matched to its episode by campaign
+ * slug (ADR 0003); a code one carries the episode its code was bound to.
+ */
+const foundConversionValidator = v.union(
+  v.object({
+    via: v.literal('utm'),
+    kind: conversionKindValidator,
+    distinctId: v.string(),
+    at: v.number(),
+    utm: v.object({
+      source: v.string(),
+      medium: v.optional(v.string()),
+      campaign: v.optional(v.string()),
+      content: v.optional(v.string()),
+    }),
+  }),
+  v.object({
+    via: v.literal('code'),
+    kind: conversionKindValidator,
+    distinctId: v.string(),
+    at: v.number(),
+    episodeId: v.optional(v.id('episodes')),
+  })
+)
+type FoundConversionArg = Infer<typeof foundConversionValidator>
+
+function episodeOfConversion(conversion: FoundConversionArg, episodes: Doc<'episodes'>[]): Doc<'episodes'> | undefined {
+  if (conversion.via === 'code') return episodes.find((candidate) => candidate._id === conversion.episodeId)
+  if (!conversion.utm.campaign) return undefined
+  return episodes.find((candidate) => candidate.slug === conversion.utm.campaign)
+}
+
 export const storeConversions = internalMutation({
   args: {
     personaId: v.id('personas'),
     mock: v.boolean(),
-    conversions: v.array(
-      v.object({
-        kind: conversionKindValidator,
-        distinctId: v.string(),
-        at: v.number(),
-        utm: v.object({
-          source: v.string(),
-          medium: v.optional(v.string()),
-          campaign: v.optional(v.string()),
-          content: v.optional(v.string()),
-        }),
-      })
-    ),
+    conversions: v.array(foundConversionValidator),
   },
   handler: async (ctx, args): Promise<number> => {
     let inserted = 0
@@ -385,12 +463,13 @@ export const storeConversions = internalMutation({
         .withIndex('by_distinct', (q) => q.eq('distinctId', conversion.distinctId).eq('kind', kind))
         .first()
       if (existing) continue
-      const episode = conversion.utm.campaign ? episodes.find((candidate) => candidate.slug === conversion.utm.campaign) : undefined
+      const episode = episodeOfConversion(conversion, episodes)
       await ctx.db.insert('conversions', {
         personaId: args.personaId,
         episodeId: episode?._id,
-        variantKey: conversion.utm.content ?? episode?.variantKey,
+        variantKey: conversion.via === 'utm' ? (conversion.utm.content ?? episode?.variantKey) : episode?.variantKey,
         kind,
+        via: conversion.via,
         distinctId: conversion.distinctId,
         at: conversion.at,
         mock: args.mock,
@@ -455,7 +534,12 @@ export const evaluateExperimentsMutation = internalMutation({
   },
 })
 
-/** Exposures and successes per variant, from measured episodes, by the experiment's metric. */
+/**
+ * Exposures and successes per variant, from measured episodes, by the
+ * experiment's metric. Signups and paid are rates over clicks, so only
+ * link-attributed conversions count: a code redemption has no click behind
+ * it and would hand the variant successes without exposures.
+ */
 export async function variantStatsFor(ctx: { db: QueryCtx['db'] }, experiment: Doc<'experiments'>): Promise<VariantStats[]> {
   const episodes = await ctx.db
     .query('episodes')
@@ -489,7 +573,7 @@ export async function variantStatsFor(ctx: { db: QueryCtx['db'] }, experiment: D
         .query('conversions')
         .withIndex('by_persona_time', (q) => q.eq('personaId', experiment.personaId))
         .collect()
-    ).filter((conversion) => conversion.episodeId === episode._id)
+    ).filter((conversion) => conversion.episodeId === episode._id && conversion.via === 'utm')
     const signups = conversions.filter((conversion) => conversion.kind === 'signup').length
     const paid = conversions.filter((conversion) => conversion.kind === 'paid').length
     const successes = { views, watch_rate: Math.round(watched), follows, clicks, signups, paid }[experiment.metric]

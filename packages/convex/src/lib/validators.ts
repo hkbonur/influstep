@@ -4,6 +4,7 @@ import {
   ASPECT_RATIOS,
   CHECKLIST_STATUSES,
   CONVERSION_KINDS,
+  CONVERSION_VIAS,
   EPISODE_STATUSES,
   EXPERIMENT_KINDS,
   EXPERIMENT_STATUSES,
@@ -40,6 +41,7 @@ export const experimentKindValidator = literals(EXPERIMENT_KINDS)
 export const experimentStatusValidator = literals(EXPERIMENT_STATUSES)
 export const checklistStatusValidator = literals(CHECKLIST_STATUSES)
 export const conversionKindValidator = literals(CONVERSION_KINDS)
+export const conversionViaValidator = literals(CONVERSION_VIAS)
 
 export const scriptValidator = v.object({
   hook: v.string(),

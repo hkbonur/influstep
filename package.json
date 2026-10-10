@@ -11,6 +11,7 @@
     "backend:push": "node --experimental-strip-types scripts/local-convex.ts push",
     "backend:down": "node --experimental-strip-types scripts/local-convex.ts down",
     "seed": "pnpm --filter @influstep/convex seed",
+    "seed:fresh": "pnpm --filter @influstep/convex seed:fresh",
     "build": "turbo run build",
     "test": "turbo run test --concurrency=2",
     "lint:check": "turbo run lint:check",

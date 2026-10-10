@@ -1,12 +1,13 @@
 import { api } from '@influstep/convex/_generated/api'
 import type { Id } from '@influstep/convex/_generated/dataModel'
-import { EXPERIMENT_KIND_LABELS, METRIC_LABELS } from '@influstep/shared'
+import { CONVERSION_KIND_LABELS, EXPERIMENT_KIND_LABELS, METRIC_LABELS, VALUE_LABEL } from '@influstep/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useQuery } from 'convex/react'
 import { Funnel, MetricStrip, Trend } from '@/components/charts'
 import { SponsorPill, StatusPill } from '@/components/status'
-import { Empty, Eyebrow, LinkButton, MockNote, Mono, PageHeader, Pill, Skeleton } from '@/components/ui'
-import { formatCount, formatDay, formatPercent } from '@/lib/format'
+import { AttributionNote, Empty, Eyebrow, LinkButton, MockNote, Mono, PageHeader, Pill, Skeleton } from '@/components/ui'
+import { cn } from '@/lib/cn'
+import { formatCount, formatDay, formatMoney, formatPercent } from '@/lib/format'
 
 export const Route = createFileRoute('/reports/$personaId')({ component: ReportPage })
 
@@ -39,24 +40,32 @@ function ReportPage() {
       {nothing && <Empty>Nothing measured yet. Once an episode is live for 72 hours the analyst fills this page.</Empty>}
       {!nothing && (
         <div className="space-y-10">
-          <MetricStrip
-            items={[
-              { label: 'Followers', value: formatCount(funnel.follows) },
-              { label: 'Views', value: formatCount(funnel.views) },
-              {
-                label: 'Clicks',
-                value: formatCount(funnel.clicks),
-                note: clickRate === null ? undefined : `${formatPercent(clickRate, 2)} of views`,
-              },
-              {
-                label: 'Attributed signups',
-                value: formatCount(funnel.signups),
-                note: signupRate === null ? undefined : `${formatPercent(signupRate)} of clicks`,
-              },
-              { label: 'Paid', value: formatCount(funnel.paid) },
-            ]}
-          />
-          <MockNote when={funnel.mock} />
+          <div className="space-y-3">
+            <MetricStrip
+              items={[
+                { label: 'Followers', value: formatCount(funnel.follows) },
+                { label: METRIC_LABELS.views, value: formatCount(funnel.views) },
+                {
+                  label: METRIC_LABELS.clicks,
+                  value: formatCount(funnel.clicks),
+                  note: clickRate === null ? undefined : `${formatPercent(clickRate, 2)} of views`,
+                },
+                {
+                  label: CONVERSION_KIND_LABELS.signup,
+                  value: formatCount(funnel.signups),
+                  note: signupRate === null ? undefined : `${formatPercent(signupRate)} of clicks`,
+                },
+                {
+                  label: CONVERSION_KIND_LABELS.paid,
+                  value: formatCount(funnel.paid),
+                  note: funnel.paidViaCode > 0 ? `${funnel.paidViaCode} via code` : undefined,
+                },
+                { label: VALUE_LABEL, value: formatMoney(funnel.value, report.currency) },
+              ]}
+            />
+            <AttributionNote />
+            <MockNote when={funnel.mock} />
+          </div>
 
           <div className="grid gap-10 lg:grid-cols-[1fr_1.3fr]">
             <section>
@@ -68,6 +77,30 @@ function ReportPage() {
               <Trend points={trend} />
             </section>
           </div>
+
+          <section>
+            <Eyebrow className="mb-3">Top episodes</Eyebrow>
+            {report.topByValue.length === 0 && <p className="text-ash">No episode has clicks or a paid conversion yet.</p>}
+            {report.topByValue.length > 0 && (
+              <ol className="divide-y divide-mist border-y border-mist">
+                {report.topByValue.map((episode) => (
+                  <li
+                    key={episode._id}
+                    className="tabular grid grid-cols-[1fr_auto] items-baseline gap-x-5 py-2 text-sm sm:grid-cols-[1fr_auto_auto_auto]"
+                  >
+                    <Link to="/episodes/$episodeId" params={{ episodeId: episode._id }} className="truncate font-medium hover:underline">
+                      {episode.title}
+                    </Link>
+                    <span className={cn('text-right', { 'text-ash': episode.value === 0 })}>
+                      {formatMoney(episode.value, report.currency)}
+                    </span>
+                    <span className="hidden text-right text-xs text-ash sm:inline">{episode.paid} paid</span>
+                    <span className="hidden text-right text-xs text-ash sm:inline">{formatCount(episode.clicks)} clicks</span>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
 
           <section>
             <Eyebrow className="mb-3">Experiments</Eyebrow>
@@ -102,43 +135,80 @@ function ReportPage() {
 
           <section>
             <Eyebrow className="mb-3">Episodes</Eyebrow>
-            <table className="w-full text-sm">
-              <thead className="text-xs text-ash">
-                <tr className="text-left">
-                  <th className="py-1 font-medium">Day</th>
-                  <th className="py-1 font-medium">Episode</th>
-                  <th className="py-1 text-right font-medium">Views</th>
-                  <th className="py-1 text-right font-medium">Follows</th>
-                  <th className="py-1 text-right font-medium">Clicks</th>
-                  <th className="py-1 text-right font-medium">Signups</th>
-                  <th className="py-1 text-right font-medium">Paid</th>
-                </tr>
-              </thead>
-              <tbody className="tabular">
-                {report.episodes.map((episode) => (
-                  <tr key={episode._id} className="border-t border-mist">
-                    <td className="py-1.5 font-mono text-xs text-ash">
-                      {formatDay(episode.plannedFor, { month: 'short', day: 'numeric' })}
-                    </td>
-                    <td className="py-1.5">
-                      <Link to="/episodes/$episodeId" params={{ episodeId: episode._id }} className="hover:underline">
-                        {episode.title}
-                      </Link>
-                      <span className="ml-2 inline-flex gap-1 align-middle">
-                        <StatusPill status={episode.status} />
-                        <SponsorPill segment={episode.sponsorSegment} />
-                        {episode.variantKey && <Pill tint="fog">{episode.variantKey}</Pill>}
-                      </span>
-                    </td>
-                    <td className="py-1.5 text-right">{formatCount(episode.views)}</td>
-                    <td className="py-1.5 text-right">{formatCount(episode.follows)}</td>
-                    <td className="py-1.5 text-right">{formatCount(episode.clicks)}</td>
-                    <td className="py-1.5 text-right">{episode.signups}</td>
-                    <td className="py-1.5 text-right">{episode.paid}</td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-xs text-ash">
+                  <tr className="text-left">
+                    <th className="py-1 font-medium">Day</th>
+                    <th className="py-1 font-medium">Episode</th>
+                    <th className="py-1 pl-3 text-right font-medium">{METRIC_LABELS.views}</th>
+                    <th className="py-1 pl-3 text-right font-medium">{METRIC_LABELS.follows}</th>
+                    <th className="py-1 pl-3 text-right font-medium">{METRIC_LABELS.clicks}</th>
+                    <th className="hidden py-1 pl-3 text-right font-medium lg:table-cell">{CONVERSION_KIND_LABELS.demo_started}</th>
+                    <th className="py-1 pl-3 text-right font-medium">{CONVERSION_KIND_LABELS.signup}</th>
+                    <th className="hidden py-1 pl-3 text-right font-medium lg:table-cell">{CONVERSION_KIND_LABELS.trial_started}</th>
+                    <th className="py-1 pl-3 text-right font-medium">{CONVERSION_KIND_LABELS.paid}</th>
+                    <th className="py-1 pl-3 text-right font-medium">{VALUE_LABEL}</th>
                   </tr>
+                </thead>
+                <tbody className="tabular">
+                  {report.episodes.map((episode) => (
+                    <tr key={episode._id} className="border-t border-mist">
+                      <td className="py-1.5 font-mono text-xs text-ash">
+                        {formatDay(episode.plannedFor, { month: 'short', day: 'numeric' })}
+                      </td>
+                      <td className="py-1.5">
+                        <Link to="/episodes/$episodeId" params={{ episodeId: episode._id }} className="hover:underline">
+                          {episode.title}
+                        </Link>
+                        <span className="ml-2 inline-flex gap-1 align-middle">
+                          <StatusPill status={episode.status} />
+                          <SponsorPill segment={episode.sponsorSegment} />
+                          {episode.variantKey && <Pill tint="fog">{episode.variantKey}</Pill>}
+                        </span>
+                      </td>
+                      <td className="py-1.5 pl-3 text-right">{formatCount(episode.views)}</td>
+                      <td className="py-1.5 pl-3 text-right">{formatCount(episode.follows)}</td>
+                      <td className="py-1.5 pl-3 text-right">{formatCount(episode.clicks)}</td>
+                      <td className="hidden py-1.5 pl-3 text-right lg:table-cell">{episode.demos}</td>
+                      <td className="py-1.5 pl-3 text-right">{episode.signups}</td>
+                      <td className="hidden py-1.5 pl-3 text-right lg:table-cell">{episode.trials}</td>
+                      <td className="py-1.5 pl-3 text-right">{episode.paid}</td>
+                      <td className="py-1.5 pl-3 text-right">{formatMoney(episode.value, report.currency)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section>
+            <Eyebrow className="mb-3">Discount codes</Eyebrow>
+            {report.discountCodes.length === 0 && (
+              <Empty
+                action={
+                  <LinkButton to="/personas/$personaId" params={{ personaId }}>
+                    Give a code
+                  </LinkButton>
+                }
+              >
+                No code yet.
+              </Empty>
+            )}
+            {report.discountCodes.length > 0 && (
+              <ul className="divide-y divide-mist border-y border-mist">
+                {report.discountCodes.map((discountCode) => (
+                  <li key={discountCode._id} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 py-2 text-sm">
+                    <Mono>{discountCode.code}</Mono>
+                    <span>{discountCode.offer}</span>
+                    <span className="tabular text-xs text-ash">{discountCode.redemptions} redemptions</span>
+                    {discountCode.episodeTitle && <span className="text-xs text-ash">for {discountCode.episodeTitle}</span>}
+                    {!discountCode.episodeTitle && <span className="text-xs text-ash">persona-wide</span>}
+                    {!discountCode.active && <Pill tint="fog">retired</Pill>}
+                  </li>
                 ))}
-              </tbody>
-            </table>
+              </ul>
+            )}
           </section>
         </div>
       )}

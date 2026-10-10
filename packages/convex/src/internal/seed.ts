@@ -1,11 +1,14 @@
 import { v } from 'convex/values'
 import { internal } from '../_generated/api'
-import type { Id } from '../_generated/dataModel'
+import type { Id, TableNames } from '../_generated/dataModel'
 import { internalAction, internalMutation } from '../_generated/server'
+import { describePublication } from '../core/attribution'
 import { addDays, dayKey, instantAt, weekStart } from '../core/dates'
 import { createIdea, createTrackedLink } from '../core/episodes'
-import { buildDescription } from '../core/attribution'
 import { enqueueJob } from '../jobs/queue'
+import type { FoundConversion } from '../providers/analytics'
+import { mockAnalytics } from '../providers/analytics/mock'
+import { mockDiscounts } from '../providers/discounts/mock'
 
 /**
  * The demo workspace: two personas, a planned week, a running experiment,
@@ -39,6 +42,8 @@ export const write = internalMutation({
       appUrl: args.appUrl,
       signInRequiredHosts: ['localhost:5678', 'app.formstep.io'],
       signedInHosts: [],
+      valuePerPaid: 29,
+      currency: 'EUR',
     })
 
     const adaId = await ctx.db.insert('personas', {
@@ -209,6 +214,33 @@ export const write = internalMutation({
       )
     }
 
+    // The code the operator handed Ada a month ago: every description since carries it. Its redemptions
+    // are the ones the mock billing provider will report on the first pull, same order ids, so the pull
+    // dedupes against these rows instead of counting them again.
+    const adaCodeCreatedAt = now - 30 * 86_400_000
+    const adaCodeId = await ctx.db.insert('discountCodes', {
+      personaId: adaId,
+      code: 'ADA20',
+      offer: '20% off Pro for 3 months',
+      active: true,
+      redemptions: 0,
+      createdAt: adaCodeCreatedAt,
+    })
+    const adaCode = await ctx.db.get(adaCodeId)
+    if (!adaCode) throw new Error('discount code vanished')
+    const redeemed = await mockDiscounts.redemptions({ code: adaCode.code, since: adaCodeCreatedAt })
+    for (const redemption of redeemed) {
+      await ctx.db.insert('conversions', {
+        personaId: adaId,
+        kind: 'paid',
+        via: 'code',
+        distinctId: redemption.orderId,
+        at: redemption.at,
+        mock: true,
+      })
+    }
+    await ctx.db.patch(adaCodeId, { redemptions: redeemed.length })
+
     // History: Ada's last four weeks, published and measured, so the report has a funnel.
     const ada = await ctx.db.get(adaId)
     const workspace = await ctx.db.get(workspaceId)
@@ -224,6 +256,7 @@ export const write = internalMutation({
       ['n8n vs Make for a five-person team', 'n8n tutorials', 'none', 'howto'],
       ['Agent that fills in a quote and waits for approval', 'AI agent workflows', 'demo', 'wrong'],
     ] as const
+    const history: { episodeId: Id<'episodes'>; variantKey: string; scheduledAt: number; clicks: number }[] = []
     for (const [index, [concept, pillar, sponsorSegment, variantKey]] of historyConcepts.entries()) {
       const plannedFor = addDays(today, -(26 - index * 3))
       const scheduledAt = instantAt(plannedFor, ada.publishHour, TIMEZONE)
@@ -288,13 +321,7 @@ export const write = internalMutation({
           platform,
           status: 'live',
           title: concept,
-          description: buildDescription({
-            concept,
-            sponsorSegment,
-            sponsorName: workspace.sponsorName,
-            trackedUrl: `${workspace.appUrl}/go/${link.slug}`,
-            platform,
-          }),
+          ...describePublication({ workspace, episode, platform, linkSlug: link.slug, discountCode: adaCode }),
           linkId,
           scheduledAt,
           externalId,
@@ -341,27 +368,54 @@ export const write = internalMutation({
           })
         }
       }
-      // Conversions proportional to clicks, tied to the episode by its slug (ADR 0003).
       const links = await ctx.db
         .query('links')
         .withIndex('by_episode', (q) => q.eq('episodeId', episodeId))
         .collect()
-      const totalClicks = links.reduce((sum, link) => sum + link.clicks, 0)
-      const signups = Math.floor(totalClicks / 25)
-      for (let s = 0; s < signups; s += 1) {
-        const distinctId = `seed-${episode.slug}-${s}`
-        const at = scheduledAt + (s + 1) * 7 * 3_600_000
-        await ctx.db.insert('conversions', { personaId: adaId, episodeId, variantKey, kind: 'signup', distinctId, at, mock: true })
-        if (s % 6 === 5)
+      history.push({ episodeId, variantKey, scheduledAt, clicks: links.reduce((sum, link) => sum + link.clicks, 0) })
+    }
+
+    // Conversions exactly as the mock analytics will report them on the first pull, same distinct ids,
+    // so the pull dedupes against these rows. The mock ties nothing to an episode (its UTM carries no
+    // campaign); the seed spreads its rows over the episodes in proportion to clicks and times each one
+    // after its episode went live, so the report has value per episode and the trend clusters on publish days.
+    const totalClicks = history.reduce((sum, row) => sum + row.clicks, 0)
+    const found = await mockAnalytics.conversions({ personaHandle: ada.handle, since: now - 30 * 86_400_000, clicksSince: totalClicks })
+    const demos = found.filter((conversion) => conversion.kind === 'demo_started')
+    // A journey is one person's signup and what followed it, in the mock's own timing.
+    const journeys: FoundConversion[][] = []
+    for (const conversion of found) {
+      if (conversion.kind === 'demo_started') continue
+      const journey = journeys.find((steps) => steps[0]?.distinctId === conversion.distinctId)
+      if (journey) journey.push(conversion)
+      else journeys.push([conversion])
+    }
+    const upTo = (count: number, clicks: number) => (totalClicks === 0 ? 0 : Math.round((count * clicks) / totalClicks))
+    let clicksBefore = 0
+    for (const row of history) {
+      const from = clicksBefore
+      clicksBefore += row.clicks
+      const base = { personaId: adaId, episodeId: row.episodeId, variantKey: row.variantKey, via: 'utm' as const, mock: true }
+      for (const [k, demo] of demos.slice(upTo(demos.length, from), upTo(demos.length, clicksBefore)).entries()) {
+        await ctx.db.insert('conversions', {
+          ...base,
+          kind: demo.kind,
+          distinctId: demo.distinctId,
+          at: row.scheduledAt + (k + 1) * 3 * 3_600_000,
+        })
+      }
+      for (const [k, journey] of journeys.slice(upTo(journeys.length, from), upTo(journeys.length, clicksBefore)).entries()) {
+        const [first] = journey
+        if (!first) continue
+        const signedUpAt = row.scheduledAt + (k + 1) * 7 * 3_600_000
+        for (const step of journey) {
           await ctx.db.insert('conversions', {
-            personaId: adaId,
-            episodeId,
-            variantKey,
-            kind: 'paid',
-            distinctId,
-            at: at + 86_400_000,
-            mock: true,
+            ...base,
+            kind: step.kind,
+            distinctId: step.distinctId,
+            at: signedUpAt + (step.at - first.at),
           })
+        }
       }
     }
 
@@ -463,13 +517,7 @@ export const write = internalMutation({
             platform,
             status: 'queued',
             title: item.concept,
-            description: buildDescription({
-              concept: item.concept,
-              sponsorSegment: 'mention',
-              sponsorName: workspace.sponsorName,
-              trackedUrl: `${workspace.appUrl}/go/${link.slug}`,
-              platform,
-            }),
+            ...describePublication({ workspace, episode, platform, linkSlug: link.slug, discountCode: adaCode }),
             linkId,
             scheduledAt,
             mock: true,
@@ -515,5 +563,53 @@ export const write = internalMutation({
       createdAt: now - 86_400_000,
     })
     return { workspaceId }
+  },
+})
+
+/**
+ * Every table in the schema, so `reset` cannot forget one: adding a table
+ * to schema.ts without adding it here is a type error.
+ */
+const TABLES = {
+  workspaces: true,
+  personas: true,
+  episodes: true,
+  publications: true,
+  metricSnapshots: true,
+  links: true,
+  linkClicks: true,
+  conversions: true,
+  discountCodes: true,
+  signals: true,
+  experiments: true,
+  directives: true,
+  messages: true,
+  checklistItems: true,
+  jobs: true,
+  runners: true,
+} satisfies Record<TableNames, true>
+
+/**
+ * Wipes the deployment so `run` seeds from nothing: every document in every
+ * table, plus the pending scheduled functions (they would wake up to jobs
+ * that no longer exist) and the stored files the seed and the runner wrote.
+ * One transaction, which fits a seed-sized deployment; a deployment with more
+ * than a few thousand rows needs this in batches.
+ */
+export const reset = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ deleted: number }> => {
+    let deleted = 0
+    for (const scheduled of await ctx.db.system.query('_scheduled_functions').collect()) {
+      if (scheduled.state.kind === 'pending') await ctx.scheduler.cancel(scheduled._id)
+    }
+    for (const table of Object.keys(TABLES) as TableNames[]) {
+      for (const row of await ctx.db.query(table).collect()) {
+        await ctx.db.delete(row._id)
+        deleted += 1
+      }
+    }
+    for (const file of await ctx.db.system.query('_storage').collect()) await ctx.storage.delete(file._id)
+    return { deleted }
   },
 })

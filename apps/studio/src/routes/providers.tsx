@@ -1,7 +1,8 @@
 import { api } from '@influstep/convex/_generated/api'
 import { createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
-import { Eyebrow, Mono, PageHeader, Pill, Skeleton } from '@/components/ui'
+import React from 'react'
+import { Button, ErrorLine, Eyebrow, Field, Input, Mono, PageHeader, Pill, Skeleton } from '@/components/ui'
 import { cn } from '@/lib/cn'
 import { relativeTime } from '@/lib/format'
 
@@ -71,6 +72,11 @@ function ProvidersPage() {
 
         <div className="space-y-10">
           <section>
+            <Eyebrow className="mb-3">Workspace</Eyebrow>
+            <WorkspaceForm />
+          </section>
+
+          <section>
             <Eyebrow className="mb-3">Runner</Eyebrow>
             {!runner && <p className="text-ash">No runner has checked in. Start one with pnpm --filter @influstep/runner dev.</p>}
             {runner && (
@@ -128,5 +134,72 @@ function ProvidersPage() {
         </div>
       </div>
     </>
+  )
+}
+
+const SAVED_FOR_MS = 2000
+
+/** The form is in exactly one of these; "Saved" shows for a moment, then the form is idle again. */
+type WorkspaceFormState = { status: 'idle' } | { status: 'saving' } | { status: 'saved' } | { status: 'error'; message: string }
+
+/** The sponsor the personas promote and what one paid conversion is worth to it (the report's estimate). */
+function WorkspaceForm() {
+  const workspace = useQuery(api.private.workspace.get, {})
+  const update = useMutation(api.private.workspace.update)
+  const [state, setState] = React.useState<WorkspaceFormState>({ status: 'idle' })
+  const savedTimer = React.useRef<number | null>(null)
+  if (workspace === undefined) return <Skeleton className="h-40" />
+  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    const text = (name: string) => String(form.get(name) ?? '').trim()
+    setState({ status: 'saving' })
+    try {
+      await update({
+        sponsorName: text('sponsorName'),
+        sponsorUrl: text('sponsorUrl'),
+        appUrl: text('appUrl'),
+        valuePerPaid: Number(form.get('valuePerPaid')),
+        currency: text('currency').toUpperCase(),
+      })
+      setState({ status: 'saved' })
+      if (savedTimer.current !== null) window.clearTimeout(savedTimer.current)
+      savedTimer.current = window.setTimeout(
+        () => setState((current) => (current.status === 'saved' ? { status: 'idle' } : current)),
+        SAVED_FOR_MS
+      )
+    } catch (caught) {
+      setState({ status: 'error', message: caught instanceof Error ? caught.message : String(caught) })
+    }
+  }
+  return (
+    <form onSubmit={submit} className="grid gap-3 sm:grid-cols-2">
+      <Field label="Sponsor name">
+        <Input name="sponsorName" defaultValue={workspace.sponsorName} required />
+      </Field>
+      <Field label="Sponsor URL">
+        <Input name="sponsorUrl" type="url" defaultValue={workspace.sponsorUrl} required />
+      </Field>
+      <Field label="App URL" hint="Where tracked links and link-in-bio pages live." className="sm:col-span-2">
+        <Input name="appUrl" type="url" defaultValue={workspace.appUrl} required />
+      </Field>
+      <Field label="Value per paid conversion">
+        <Input name="valuePerPaid" type="number" min={0} step="any" defaultValue={workspace.valuePerPaid} required />
+      </Field>
+      <Field label="Currency" hint="Three letters, like USD.">
+        <Input name="currency" defaultValue={workspace.currency} minLength={3} maxLength={3} pattern="[A-Za-z]{3}" required />
+      </Field>
+      {state.status === 'error' && (
+        <div className="sm:col-span-2">
+          <ErrorLine>{state.message}</ErrorLine>
+        </div>
+      )}
+      <div className="flex items-center gap-3 sm:col-span-2">
+        <Button type="submit" variant="primary" busy={state.status === 'saving'}>
+          Save
+        </Button>
+        {state.status === 'saved' && <span className="text-xs text-ash">Saved</span>}
+      </div>
+    </form>
   )
 }

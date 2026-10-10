@@ -14,6 +14,7 @@
     "deploy": "convex deploy",
     "codegen": "convex codegen",
     "seed": "convex run internal/seed:run",
+    "seed:fresh": "convex run internal/seed:reset && convex run internal/seed:run",
     "test": "vitest run",
     "test:watch": "vitest",
     "tsc:check": "tsc --noEmit",

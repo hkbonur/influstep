@@ -1,17 +1,21 @@
+import { CONVERSION_KIND_LABELS, METRIC_LABELS } from '@influstep/shared'
 import { cn } from '@/lib/cn'
 import { formatCount, formatDay, formatPercent } from '@/lib/format'
 
 /**
  * The report's two charts, hand-drawn SVG so the colors stay the fixed
  * series of DESIGN.md: follows cyan, views violet, clicks amber, signups
- * emerald, paid red.
+ * emerald, paid red. Demos and trials are the lighter shade of the step
+ * they lead from (clicks and signups), so the funnel stays five hues.
  */
 
 const SERIES = {
   views: 'var(--color-chart-2)',
   follows: 'var(--color-chart-1)',
   clicks: 'var(--color-chart-3)',
+  demos: 'color-mix(in oklch, var(--color-chart-3) 55%, transparent)',
   signups: 'var(--color-chart-4)',
+  trials: 'color-mix(in oklch, var(--color-chart-4) 55%, transparent)',
   paid: 'var(--color-chart-5)',
 } as const
 
@@ -19,26 +23,37 @@ export interface FunnelData {
   views: number
   follows: number
   clicks: number
+  demos: number
   signups: number
+  trials: number
   paid: number
 }
 
-const FUNNEL_STEPS: { key: keyof FunnelData; label: string }[] = [
-  { key: 'views', label: 'Views' },
-  { key: 'follows', label: 'Follows' },
-  { key: 'clicks', label: 'Clicks' },
-  { key: 'signups', label: 'Attributed signups' },
-  { key: 'paid', label: 'Paid' },
+/**
+ * Each step's rate is a share of the step it leads from, not of the bar above
+ * it: follows and clicks are both taken from views, demos and signups from
+ * clicks, trials and paid from signups. Demos and trials are optional
+ * sub-steps, so a strict previous-bar rate would read "signups of demos".
+ * The rates then say what the metric strip's notes say.
+ */
+const FUNNEL_STEPS: { key: keyof FunnelData; label: string; rateFrom?: keyof FunnelData }[] = [
+  { key: 'views', label: METRIC_LABELS.views },
+  { key: 'follows', label: METRIC_LABELS.follows, rateFrom: 'views' },
+  { key: 'clicks', label: METRIC_LABELS.clicks, rateFrom: 'views' },
+  { key: 'demos', label: CONVERSION_KIND_LABELS.demo_started, rateFrom: 'clicks' },
+  { key: 'signups', label: CONVERSION_KIND_LABELS.signup, rateFrom: 'clicks' },
+  { key: 'trials', label: CONVERSION_KIND_LABELS.trial_started, rateFrom: 'signups' },
+  { key: 'paid', label: CONVERSION_KIND_LABELS.paid, rateFrom: 'signups' },
 ]
 
-/** Five bars on a log-ish scale, each with its rate from the step before. */
+/** Seven bars on a log-ish scale, each with its rate from the step it leads from. */
 export function Funnel(props: { data: FunnelData }) {
   const max = Math.max(1, props.data.views)
   return (
     <ol className="grid gap-2">
-      {FUNNEL_STEPS.map((step, index) => {
+      {FUNNEL_STEPS.map((step) => {
         const value = props.data[step.key]
-        const previous = index === 0 ? value : props.data[FUNNEL_STEPS[index - 1]!.key]
+        const from = step.rateFrom === undefined ? null : props.data[step.rateFrom]
         const width = value === 0 ? 0 : Math.max(2, (Math.log10(value + 1) / Math.log10(max + 1)) * 100)
         return (
           <li key={step.key} className="grid grid-cols-[9rem_1fr_5rem] items-center gap-3 text-sm">
@@ -51,9 +66,7 @@ export function Funnel(props: { data: FunnelData }) {
             </span>
             <span className="text-right">
               <span className="tabular font-medium">{formatCount(value)}</span>
-              {index > 0 && (
-                <span className="tabular ml-1.5 text-xs text-ash">{previous === 0 ? '' : formatPercent(value / previous)}</span>
-              )}
+              {from !== null && from > 0 && <span className="tabular ml-1.5 text-xs text-ash">{formatPercent(value / from)}</span>}
             </span>
           </li>
         )
@@ -126,7 +139,7 @@ export function Trend(props: { points: TrendPoint[]; className?: string }) {
         {paths.map((path) => (
           <span key={path.key} className="inline-flex items-center gap-1.5">
             <span aria-hidden className="h-0.5 w-4 rounded-full" style={{ background: SERIES[path.key] }} />
-            {path.key === 'views' ? 'Views' : path.key === 'clicks' ? 'Clicks' : 'Signups'}
+            {path.key === 'signups' ? CONVERSION_KIND_LABELS.signup : METRIC_LABELS[path.key]}
             <span className="tabular text-graphite">{formatCount(path.total)}</span>
           </span>
         ))}
@@ -137,7 +150,7 @@ export function Trend(props: { points: TrendPoint[]; className?: string }) {
 
 export function MetricStrip(props: { items: { label: string; value: string; note?: string }[] }) {
   return (
-    <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3 lg:grid-cols-5">
+    <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3 lg:grid-cols-6">
       {props.items.map((item) => (
         <div key={item.label} className="min-w-0">
           <dt className="eyebrow">{item.label}</dt>

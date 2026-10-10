@@ -2,7 +2,10 @@ import { v } from 'convex/values'
 import { canTransition } from '@influstep/shared'
 import { mutation, query } from '../_generated/server'
 import { instantAt } from '../core/dates'
+import { activeDiscountCodeFor } from '../core/discounts'
 import { approveEpisode, startProduction } from '../core/episodes'
+import { countConversions } from '../core/report'
+import { workspaceOf } from '../core/workspace'
 import { applyEvent } from '../internal/data'
 import { enqueueJob } from '../jobs/queue'
 import { scriptValidator } from '../lib/validators'
@@ -14,7 +17,7 @@ export const get = query({
     if (!episode) return null
     const persona = await ctx.db.get(episode.personaId)
     if (!persona) return null
-    const workspace = await ctx.db.get(persona.workspaceId)
+    const workspace = await workspaceOf(ctx, persona)
     const publications = await ctx.db
       .query('publications')
       .withIndex('by_episode', (q) => q.eq('episodeId', episode._id))
@@ -45,11 +48,33 @@ export const get = query({
       .query('metricSnapshots')
       .withIndex('by_episode', (q) => q.eq('episodeId', episode._id))
       .collect()
+    // What this episode did for the sponsor: its clicks and the conversions tied to it.
+    const conversions = (
+      await ctx.db
+        .query('conversions')
+        .withIndex('by_persona_time', (q) => q.eq('personaId', persona._id))
+        .collect()
+    ).filter((conversion) => conversion.episodeId === episode._id)
+    const value = {
+      clicks: links.reduce((sum, link) => sum + link.clicks, 0),
+      ...countConversions(conversions, workspace.valuePerPaid),
+      mock: conversions.some((conversion) => conversion.mock) || publications.some((publication) => publication.mock),
+    }
+    // The code in force now (what the next render gets) and the codes the written descriptions carry.
+    const discountCode = await activeDiscountCodeFor(ctx, persona._id, episode._id)
+    const codesInDescriptions = []
+    for (const discountCodeId of new Set(publications.map((publication) => publication.discountCodeId))) {
+      if (!discountCodeId) continue
+      const code = await ctx.db.get(discountCodeId)
+      if (!code) throw new Error(`discount code ${discountCodeId} of a publication of episode ${episode._id} not found`)
+      codesInDescriptions.push({ code: code.code, offer: code.offer })
+    }
     return {
       episode,
       persona,
-      appUrl: workspace?.appUrl ?? '',
-      sponsorName: workspace?.sponsorName ?? '',
+      appUrl: workspace.appUrl,
+      sponsorName: workspace.sponsorName,
+      currency: workspace.currency,
       publications,
       links,
       checklist,
@@ -58,6 +83,9 @@ export const get = query({
       experiment,
       renders,
       snapshots,
+      value,
+      discountCode: discountCode ? { code: discountCode.code, offer: discountCode.offer } : null,
+      codesInDescriptions,
     }
   },
 })

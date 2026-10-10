@@ -15,8 +15,10 @@ import type { MutationCtx } from '../_generated/server'
 import { applyEvent } from '../internal/data'
 import { enqueueJob } from '../jobs/queue'
 import type { ScriptDraft } from '../providers/llm'
-import { buildDescription } from './attribution'
+import { describePublication } from './attribution'
 import { instantAt } from './dates'
+import { activeDiscountCodeFor } from './discounts'
+import { workspaceOf } from './workspace'
 
 /**
  * Episode rules that touch several tables at once: approval and its sign-in
@@ -121,8 +123,7 @@ export async function approveEpisode(ctx: MutationCtx, episodeId: Id<'episodes'>
   if (!episode) throw new Error(`episode ${episodeId} not found`)
   const persona = await ctx.db.get(episode.personaId)
   if (!persona) throw new Error(`persona ${episode.personaId} not found`)
-  const workspace = await ctx.db.get(persona.workspaceId)
-  if (!workspace) throw new Error(`workspace ${persona.workspaceId} not found`)
+  const workspace = await workspaceOf(ctx, persona)
 
   await ctx.db.patch(episodeId, { approvedAt: Date.now() })
   const missing = toolsNeededBy(episode.shots).filter(
@@ -170,8 +171,7 @@ export async function completeProduction(ctx: MutationCtx, episodeId: Id<'episod
   if (!episode) throw new Error(`episode ${episodeId} not found`)
   const persona = await ctx.db.get(episode.personaId)
   if (!persona) throw new Error(`persona ${episode.personaId} not found`)
-  const workspace = await ctx.db.get(persona.workspaceId)
-  if (!workspace) throw new Error(`workspace ${persona.workspaceId} not found`)
+  const workspace = await workspaceOf(ctx, persona)
 
   await ctx.db.patch(episodeId, {
     renders: result.renders.map((render) => ({ ...render, storageId: render.storageId as Id<'_storage'> })),
@@ -179,6 +179,8 @@ export async function completeProduction(ctx: MutationCtx, episodeId: Id<'episod
   })
   await applyEvent(ctx, episodeId, { type: 'produced' })
 
+  // The same code on every platform: the episode's own, else the persona's.
+  const discountCode = await activeDiscountCodeFor(ctx, persona._id, episodeId)
   for (const platform of persona.platforms) {
     const existing = await ctx.db
       .query('publications')
@@ -195,13 +197,7 @@ export async function completeProduction(ctx: MutationCtx, episodeId: Id<'episod
       platform,
       status: 'queued',
       title: episode.title,
-      description: buildDescription({
-        concept: episode.concept,
-        sponsorSegment: episode.sponsorSegment,
-        sponsorName: workspace.sponsorName,
-        trackedUrl: `${workspace.appUrl}/go/${link.slug}`,
-        platform,
-      }),
+      ...describePublication({ workspace, episode, platform, linkSlug: link.slug, discountCode }),
       linkId,
       scheduledAt: episode.scheduledAt,
       mock: result.renders.some((render) => render.mock),

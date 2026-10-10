@@ -3,6 +3,7 @@ import { canTransition, type EpisodeStatus } from '@influstep/shared'
 import type { Doc, Id } from '../_generated/dataModel'
 import { internalMutation, internalQuery, type MutationCtx } from '../_generated/server'
 import { transition, type PipelineEvent } from '../core/pipeline'
+import { workspaceOf } from '../core/workspace'
 import { episodeStatusValidator } from '../lib/validators'
 
 /**
@@ -21,8 +22,7 @@ export const getPersona = internalQuery({
   handler: async (ctx, args): Promise<{ persona: Doc<'personas'>; workspace: Doc<'workspaces'> }> => {
     const persona = await ctx.db.get(args.personaId)
     if (!persona) throw new Error(`persona ${args.personaId} not found`)
-    const workspace = await ctx.db.get(persona.workspaceId)
-    if (!workspace) throw new Error(`workspace ${persona.workspaceId} not found`)
+    const workspace = await workspaceOf(ctx, persona)
     return { persona, workspace }
   },
 })
@@ -43,8 +43,7 @@ export const getEpisodeContext = internalQuery({
     if (!episode) throw new Error(`episode ${args.episodeId} not found`)
     const persona = await ctx.db.get(episode.personaId)
     if (!persona) throw new Error(`persona ${episode.personaId} not found`)
-    const workspace = await ctx.db.get(persona.workspaceId)
-    if (!workspace) throw new Error(`workspace ${persona.workspaceId} not found`)
+    const workspace = await workspaceOf(ctx, persona)
     const directives = await ctx.db
       .query('directives')
       .withIndex('by_persona_active', (q) => q.eq('personaId', persona._id).eq('active', true))

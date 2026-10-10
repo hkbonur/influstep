@@ -1,3 +1,4 @@
+import type { ConversionKind, ConversionVia } from '@influstep/shared'
 import type { Doc } from '../_generated/dataModel'
 
 /**
@@ -10,8 +11,14 @@ export interface Funnel {
   views: number
   follows: number
   clicks: number
+  demos: number
   signups: number
+  trials: number
   paid: number
+  /** Paid conversions that came through a discount code rather than a tracked link. */
+  paidViaCode: number
+  /** Paid times the workspace's value per paid conversion. */
+  value: number
   /** True when any input was mock data, so the report can say so. */
   mock: boolean
 }
@@ -34,14 +41,32 @@ export function latestPerPublication(snapshots: Doc<'metricSnapshots'>[]): Doc<'
   return [...latest.values()]
 }
 
-export function buildFunnel(args: { snapshots: Doc<'metricSnapshots'>[]; clicks: number; conversions: Doc<'conversions'>[] }): Funnel {
+export type ConversionLike = { kind: ConversionKind; via: ConversionVia; mock: boolean }
+
+export function countConversions(conversions: ConversionLike[], valuePerPaid: number) {
+  const count = (kind: ConversionKind) => conversions.filter((conversion) => conversion.kind === kind).length
+  const paid = count('paid')
+  return {
+    demos: count('demo_started'),
+    signups: count('signup'),
+    trials: count('trial_started'),
+    paid,
+    paidViaCode: conversions.filter((conversion) => conversion.kind === 'paid' && conversion.via === 'code').length,
+    value: paid * valuePerPaid,
+  }
+}
+
+export function buildFunnel(args: {
+  snapshots: Doc<'metricSnapshots'>[]
+  clicks: number
+  conversions: ConversionLike[]
+  valuePerPaid: number
+}): Funnel {
   const latest = latestPerPublication(args.snapshots)
   const views = latest.reduce((sum, snapshot) => sum + snapshot.counts.views, 0)
   const follows = latest.reduce((sum, snapshot) => sum + snapshot.counts.follows, 0)
-  const signups = args.conversions.filter((conversion) => conversion.kind === 'signup').length
-  const paid = args.conversions.filter((conversion) => conversion.kind === 'paid').length
   const mock = latest.some((snapshot) => snapshot.mock) || args.conversions.some((conversion) => conversion.mock)
-  return { views, follows, clicks: args.clicks, signups, paid, mock }
+  return { views, follows, clicks: args.clicks, ...countConversions(args.conversions, args.valuePerPaid), mock }
 }
 
 export function buildTrend(args: {

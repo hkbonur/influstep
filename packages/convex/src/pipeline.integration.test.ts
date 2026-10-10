@@ -2,6 +2,7 @@ import { runnerJobSchema } from '@influstep/shared'
 import { describe, expect, it } from 'vitest'
 import { api, internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
+import { addDays, dayKey, weekStart } from './core/dates'
 import { setup } from '../test/setup'
 
 /**
@@ -121,6 +122,127 @@ describe('episode pipeline', () => {
     expect(await t.mutation(internal.internal.runner.claimNext, { runnerName: 'test' })).toBeNull()
     await t.mutation(api.private.personas.setPaused, { personaId: ada._id, paused: false })
     expect((await t.mutation(internal.internal.runner.claimNext, { runnerName: 'test' }))?.kind).toBe('produce')
+  })
+
+  it('puts a persona discount code into every new description and counts its redemptions', async () => {
+    const t = setup()
+    await t.action(internal.internal.seed.run, { appUrl: 'http://localhost:3300' })
+    await t.finishAllScheduledFunctions(() => {})
+    const personas = await t.query(api.private.personas.list, {})
+    const ada = personas.find((persona) => persona.handle === 'ada.automates')
+    if (!ada) throw new Error('seed has no Ada')
+
+    // The seed's conversions are the ones the mock providers report, so the first pull adds nothing.
+    const before = await t.query(api.private.report.forPersona, { personaId: ada._id })
+    const firstPull = await t.action(internal.internal.agents.pullMetrics, { personaId: ada._id })
+    expect(firstPull.conversions).toBe(0)
+    expect(firstPull.redemptions).toBe(3)
+    const after = await t.query(api.private.report.forPersona, { personaId: ada._id })
+    expect(after?.funnel.paid).toBe(before?.funnel.paid)
+    expect(after?.funnel.paidViaCode).toBe(3)
+    expect(after?.funnel.value).toBe(before?.funnel.value)
+
+    // A Polar discount is one per organization: Max cannot take Ada's code while it is active.
+    const max = personas.find((persona) => persona.handle === 'max.builds.agents')
+    if (!max) throw new Error('seed has no Max')
+    await expect(t.mutation(api.private.personas.giveDiscountCode, { personaId: max._id, code: 'ADA20', offer: 'x' })).rejects.toThrow(
+      "ADA20 is already Ada Automates's code"
+    )
+
+    // The operator hands Ada a code in her settings. It replaces the seeded ADA20 (same scope), Ada says where it
+    // goes, and the queued descriptions of her scheduled episode carry it from now on.
+    const offer = '20% off Pro for 3 months'
+    const codeId = await t.mutation(api.private.personas.giveDiscountCode, { personaId: ada._id, code: ' ada20 ', offer })
+    const page = await t.query(api.private.personas.get, { personaId: ada._id })
+    expect(page?.discountCodes.map((code) => code._id)).toEqual([codeId])
+    expect(page?.messages.at(-1)?.text).toContain('Code ADA20')
+    const newer = await t.mutation(api.private.personas.giveDiscountCode, { personaId: ada._id, code: 'ADA30', offer: '30% off' })
+    const queuedEpisode = page?.episodes.find((episode) => episode.status === 'scheduled')
+    if (!queuedEpisode) throw new Error('the seed has no scheduled episode for Ada')
+    const queued = await t.query(api.private.episodes.get, { episodeId: queuedEpisode._id })
+    expect(queued?.publications.map((publication) => publication.status)).toEqual(['queued', 'queued', 'queued'])
+    for (const publication of queued?.publications ?? []) {
+      expect(publication.description).toContain('Code ADA30: 30% off.')
+      expect(publication.description).not.toContain('ADA20')
+    }
+    expect(queued?.codesInDescriptions).toEqual([{ code: 'ADA30', offer: '30% off' }])
+    // Retiring it puts the queued descriptions back to no code; the live ones keep what they shipped with.
+    await t.mutation(api.private.personas.retireDiscountCode, { discountCodeId: newer })
+    const reverted = await t.query(api.private.episodes.get, { episodeId: queuedEpisode._id })
+    expect(reverted?.publications.every((publication) => !publication.description.includes('Code ADA'))).toBe(true)
+    expect(reverted?.codesInDescriptions).toEqual([])
+    const live = await t.query(api.private.episodes.get, { episodeId: before!.episodes[0]!._id })
+    expect(live?.codesInDescriptions).toEqual([{ code: 'ADA20', offer: '20% off Pro for 3 months' }])
+    // ADA20 can come back now that nothing else holds it.
+    const again = await t.mutation(api.private.personas.giveDiscountCode, { personaId: ada._id, code: 'ADA20', offer })
+    // The mock billing provider reports one redemption every nine days since the code was created, and the
+    // mutation stamps now. Backdating the row by a month is the only way a test can see redemptions.
+    await t.run((ctx) => ctx.db.patch(again, { createdAt: Date.now() - 30 * 86_400_000 }))
+
+    // The writer plans next week (this week is full from the seed) and scripts every idea.
+    const nextMonday = addDays(weekStart(dayKey(Date.now(), ada.timezone)), 7)
+    await t.mutation(api.private.personas.planWeek, { personaId: ada._id, weekStart: nextMonday })
+    await t.finishAllScheduledFunctions(() => {})
+    const planned = await t.query(api.private.personas.get, { personaId: ada._id })
+    const scripted = planned?.episodes.find((episode) => episode.status === 'scripted' && episode.plannedFor >= nextMonday)
+    if (!scripted) throw new Error('the planner left Ada nothing to approve')
+
+    // Approval blocks on the n8n sign-in; done, the producer records.
+    await t.mutation(api.private.episodes.approve, { episodeId: scripted._id })
+    const checklist = await t.query(api.private.checklist.list, {})
+    const signIn = checklist.find((item) => item.status === 'open' && item.episodeId === scripted._id)
+    if (!signIn) throw new Error('approval did not block on a sign-in')
+    await t.mutation(api.private.checklist.complete, { itemId: signIn._id })
+    const produceJob = await claimUntil(t, 'produce', scripted._id)
+    const storageId = await t.run((ctx) => ctx.storage.store(new Blob(['video'])))
+    await t.mutation(internal.internal.runner.complete, {
+      jobId: produceJob.id as Id<'jobs'>,
+      result: {
+        renders: [
+          { aspect: '16:9', storageId, durationSec: 50, mock: true },
+          { aspect: '9:16', storageId, durationSec: 50, mock: true },
+        ],
+      },
+    })
+
+    // Every publication, on every platform, carries the code and the sponsor line.
+    const scheduled = await t.query(api.private.episodes.get, { episodeId: scripted._id })
+    expect(scheduled?.episode.status).toBe('scheduled')
+    expect(scheduled?.publications.length).toBe(3)
+    for (const publication of scheduled?.publications ?? []) {
+      expect(publication.description).toContain(`Code ADA20: ${offer}.`)
+      expect(publication.description).toContain('Formstep collects')
+    }
+    expect(scheduled?.discountCode).toEqual({ code: 'ADA20', offer })
+    expect(scheduled?.currency).toBe('EUR')
+
+    // The analyst polls the code once, hands each order to the row in force when it was placed (the newest
+    // row here, backdated to the seed's instant plus a few milliseconds) and keeps the count on that row.
+    const pulled = await t.action(internal.internal.agents.pullMetrics, { personaId: ada._id })
+    expect(pulled.redemptions).toBe(3)
+    expect(pulled.conversions).toBe(0)
+    const code = await t.run((ctx) => ctx.db.get(again))
+    expect(code?.redemptions).toBe(3)
+    const viaCode = await t.run(async (ctx) =>
+      (
+        await ctx.db
+          .query('conversions')
+          .withIndex('by_persona_time', (q) => q.eq('personaId', ada._id))
+          .collect()
+      ).filter((conversion) => conversion.via === 'code' && conversion.distinctId.startsWith('mock-order-ada20'))
+    )
+    expect(viaCode.length).toBe(3)
+    expect(viaCode.every((conversion) => conversion.kind === 'paid' && conversion.episodeId === undefined)).toBe(true)
+
+    // The report shows every ADA20 row: the current one active with its redemptions, the two earlier ones retired.
+    const report = await t.query(api.private.report.forPersona, { personaId: ada._id })
+    expect(report?.currency).toBe('EUR')
+    expect(report?.discountCodes.filter((row) => row.code === 'ADA20').map((row) => row.active)).toEqual([true, false, false])
+    expect(report?.discountCodes[0]?.redemptions).toBe(3)
+    expect(report?.funnel.paidViaCode).toBe(3)
+    expect(report?.funnel.value).toBe(report!.funnel.paid * 29)
+    expect(report?.topByValue.length).toBeGreaterThan(0)
+    expect(report?.topByValue.length).toBeLessThanOrEqual(5)
   })
 
   it('turns a chat instruction into a directive the writer reads', async () => {

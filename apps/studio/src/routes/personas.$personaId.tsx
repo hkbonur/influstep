@@ -20,6 +20,7 @@ function PersonaPage() {
   const planWeek = useMutation(api.private.personas.planWeek)
   const pollSignals = useMutation(api.private.personas.pollSignals)
   const pullMetrics = useMutation(api.private.personas.pullMetrics)
+  const retireDiscountCode = useMutation(api.private.personas.retireDiscountCode)
   const [settings, setSettings] = React.useState(false)
 
   if (data === undefined) return <Skeleton className="h-96" />
@@ -81,29 +82,35 @@ function PersonaPage() {
         <div>
           <Eyebrow className="mb-3">Episodes</Eyebrow>
           {data.episodes.length === 0 && <p className="text-ash">No episodes yet. Plan the week to get five.</p>}
-          <ol className="divide-y divide-mist border-y border-mist">
-            {data.episodes.map((episode) => (
-              <li key={episode._id} className={cn('flex items-start gap-3 py-2.5', { 'opacity-60': episode.status === 'killed' })}>
-                <span className="tabular w-16 shrink-0 pt-0.5 font-mono text-xs text-ash">
-                  {formatDay(episode.plannedFor, { month: 'short', day: 'numeric' })}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <Link to="/episodes/$episodeId" params={{ episodeId: episode._id }} className="line-clamp-1 font-medium hover:underline">
-                    {episode.title}
-                  </Link>
-                  <p className="line-clamp-1 text-xs text-ash">{episode.hook || episode.concept}</p>
-                  {episode.error && <p className="mt-0.5 line-clamp-1 font-mono text-[11px] text-signal-red-deep">{episode.error}</p>}
-                  {(episode.sponsorSegment !== 'none' || episode.variantKey) && (
-                    <div className="mt-1 flex gap-1">
-                      <SponsorPill segment={episode.sponsorSegment} />
-                      {episode.variantKey && <Pill tint="fog">{episode.variantKey}</Pill>}
-                    </div>
-                  )}
-                </div>
-                <StatusPill status={episode.status} />
-              </li>
-            ))}
-          </ol>
+          {data.episodes.length > 0 && (
+            <ol className="divide-y divide-mist border-y border-mist">
+              {data.episodes.map((episode) => (
+                <li key={episode._id} className={cn('flex items-start gap-3 py-2.5', { 'opacity-60': episode.status === 'killed' })}>
+                  <span className="tabular w-16 shrink-0 pt-0.5 font-mono text-xs text-ash">
+                    {formatDay(episode.plannedFor, { month: 'short', day: 'numeric' })}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <Link
+                      to="/episodes/$episodeId"
+                      params={{ episodeId: episode._id }}
+                      className="line-clamp-1 font-medium hover:underline"
+                    >
+                      {episode.title}
+                    </Link>
+                    <p className="line-clamp-1 text-xs text-ash">{episode.hook || episode.concept}</p>
+                    {episode.error && <p className="mt-0.5 line-clamp-1 font-mono text-[11px] text-signal-red-deep">{episode.error}</p>}
+                    {(episode.sponsorSegment !== 'none' || episode.variantKey) && (
+                      <div className="mt-1 flex gap-1">
+                        <SponsorPill segment={episode.sponsorSegment} />
+                        {episode.variantKey && <Pill tint="fog">{episode.variantKey}</Pill>}
+                      </div>
+                    )}
+                  </div>
+                  <StatusPill status={episode.status} />
+                </li>
+              ))}
+            </ol>
+          )}
           <MockNote when={providersMock} />
         </div>
 
@@ -141,6 +148,32 @@ function PersonaPage() {
               <dd>{persona.pillars.join(', ')}</dd>
               <dt className="text-ash">Approval</dt>
               <dd>{persona.autoApprove ? 'Automatic' : 'You approve each script'}</dd>
+              <dt className="text-ash">Discount codes</dt>
+              <dd className="space-y-1">
+                {data.discountCodes.length === 0 && (
+                  <span>
+                    None yet.{' '}
+                    <button type="button" className="text-ash hover:text-ink" onClick={() => setSettings(true)}>
+                      Give a code
+                    </button>
+                  </span>
+                )}
+                {data.discountCodes.map((discountCode) => (
+                  <div key={discountCode._id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <Mono>{discountCode.code}</Mono>
+                    <span>{discountCode.offer}</span>
+                    <span className="tabular text-ash">{discountCode.redemptions} redemptions</span>
+                    {discountCode.episodeTitle && <span className="text-ash">for {discountCode.episodeTitle}</span>}
+                    <button
+                      type="button"
+                      className="text-ash hover:text-ink"
+                      onClick={() => retireDiscountCode({ discountCodeId: discountCode._id })}
+                    >
+                      Retire
+                    </button>
+                  </div>
+                ))}
+              </dd>
               {data.bioLink && (
                 <>
                   <dt className="text-ash">Link in bio</dt>
@@ -230,17 +263,34 @@ function ChecklistRow(props: {
   )
 }
 
+/** One form is idle, saving, or showing why the save failed; never two of those at once. */
+type FormState = { status: 'idle' } | { status: 'saving' } | { status: 'error'; message: string }
+
 function SettingsForm(props: { persona: Doc<'personas'>; onDone: () => void }) {
   const update = useMutation(api.private.personas.update)
-  const [error, setError] = React.useState<string | null>(null)
-  const [busy, setBusy] = React.useState(false)
+  const giveDiscountCode = useMutation(api.private.personas.giveDiscountCode)
+  const [state, setState] = React.useState<FormState>({ status: 'idle' })
   const [platforms, setPlatforms] = React.useState<Platform[]>(props.persona.platforms)
+  const [code, setCode] = React.useState('')
+  const [offer, setOffer] = React.useState('')
+  const [codeState, setCodeState] = React.useState<FormState>({ status: 'idle' })
+  const giveCode = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setCodeState({ status: 'saving' })
+    try {
+      await giveDiscountCode({ personaId: props.persona._id, code: code.trim(), offer: offer.trim() })
+      setCode('')
+      setOffer('')
+      setCodeState({ status: 'idle' })
+    } catch (caught) {
+      setCodeState({ status: 'error', message: caught instanceof Error ? caught.message : String(caught) })
+    }
+  }
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
     const text = (name: string) => String(form.get(name) ?? '').trim()
-    setBusy(true)
-    setError(null)
+    setState({ status: 'saving' })
     try {
       await update({
         personaId: props.persona._id,
@@ -265,84 +315,114 @@ function SettingsForm(props: { persona: Doc<'personas'>; onDone: () => void }) {
       })
       props.onDone()
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
-    } finally {
-      setBusy(false)
+      setState({ status: 'error', message: caught instanceof Error ? caught.message : String(caught) })
     }
   }
   const p = props.persona
   return (
-    <form onSubmit={submit} className="card mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      <Field label="Name">
-        <Input name="name" defaultValue={p.name} required />
-      </Field>
-      <Field label="Niche" className="lg:col-span-2">
-        <Input name="niche" defaultValue={p.niche} required />
-      </Field>
-      <Field label="Tone">
-        <Input name="tone" defaultValue={p.tone} required />
-      </Field>
-      <Field label="Content pillars" hint="Comma separated." className="lg:col-span-2">
-        <Input name="pillars" defaultValue={p.pillars.join(', ')} required />
-      </Field>
-      <Field label="Bio" className="sm:col-span-2 lg:col-span-3">
-        <Input name="bio" defaultValue={p.bio} required />
-      </Field>
-      <Field label="Persona bible" className="sm:col-span-2 lg:col-span-3">
-        <Textarea name="bible" defaultValue={p.bible} required className="min-h-28" />
-      </Field>
-      <Field label="Episodes a week">
-        <Input name="episodesPerWeek" type="number" min={1} max={7} defaultValue={p.episodesPerWeek} />
-      </Field>
-      <Field label="Sponsor dial" hint="0 to 1">
-        <Input name="sponsorDial" type="number" min={0} max={1} step={0.05} defaultValue={p.sponsorDial} />
-      </Field>
-      <Field label="Unsponsored ramp" hint="Episodes before the dial applies.">
-        <Input name="sponsorRampEpisodes" type="number" min={0} defaultValue={p.sponsorRampEpisodes} />
-      </Field>
-      <Field label="Publish hour" hint="Local hour, 0 to 23.">
-        <Input name="publishHour" type="number" min={0} max={23} defaultValue={p.publishHour} />
-      </Field>
-      <Field label="Timezone">
-        <Input name="timezone" defaultValue={p.timezone} required />
-      </Field>
-      <Field label="Voice id">
-        <Input name="voiceId" defaultValue={p.voiceId} />
-      </Field>
-      <fieldset className="flex flex-col gap-1.5">
-        <legend className="text-xs font-medium text-graphite">Platforms</legend>
-        <div className="flex gap-3">
-          {PLATFORMS.map((platform) => (
-            <label key={platform} className="flex items-center gap-1.5 text-sm">
-              <input
-                type="checkbox"
-                checked={platforms.includes(platform)}
-                onChange={(event) =>
-                  setPlatforms((current) => (event.target.checked ? [...current, platform] : current.filter((item) => item !== platform)))
-                }
-              />
-              {PLATFORM_LABELS[platform]}
-            </label>
-          ))}
+    <div className="card mb-8 space-y-4">
+      <form onSubmit={submit} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <Field label="Name">
+          <Input name="name" defaultValue={p.name} required />
+        </Field>
+        <Field label="Niche" className="lg:col-span-2">
+          <Input name="niche" defaultValue={p.niche} required />
+        </Field>
+        <Field label="Tone">
+          <Input name="tone" defaultValue={p.tone} required />
+        </Field>
+        <Field label="Content pillars" hint="Comma separated." className="lg:col-span-2">
+          <Input name="pillars" defaultValue={p.pillars.join(', ')} required />
+        </Field>
+        <Field label="Bio" className="sm:col-span-2 lg:col-span-3">
+          <Input name="bio" defaultValue={p.bio} required />
+        </Field>
+        <Field label="Persona bible" className="sm:col-span-2 lg:col-span-3">
+          <Textarea name="bible" defaultValue={p.bible} required className="min-h-28" />
+        </Field>
+        <Field label="Episodes a week">
+          <Input name="episodesPerWeek" type="number" min={1} max={7} defaultValue={p.episodesPerWeek} />
+        </Field>
+        <Field label="Sponsor dial" hint="0 to 1">
+          <Input name="sponsorDial" type="number" min={0} max={1} step={0.05} defaultValue={p.sponsorDial} />
+        </Field>
+        <Field label="Unsponsored ramp" hint="Episodes before the dial applies.">
+          <Input name="sponsorRampEpisodes" type="number" min={0} defaultValue={p.sponsorRampEpisodes} />
+        </Field>
+        <Field label="Publish hour" hint="Local hour, 0 to 23.">
+          <Input name="publishHour" type="number" min={0} max={23} defaultValue={p.publishHour} />
+        </Field>
+        <Field label="Timezone">
+          <Input name="timezone" defaultValue={p.timezone} required />
+        </Field>
+        <Field label="Voice id">
+          <Input name="voiceId" defaultValue={p.voiceId} />
+        </Field>
+        <fieldset className="flex flex-col gap-1.5">
+          <legend className="text-xs font-medium text-graphite">Platforms</legend>
+          <div className="flex gap-3">
+            {PLATFORMS.map((platform) => (
+              <label key={platform} className="flex items-center gap-1.5 text-sm">
+                <input
+                  type="checkbox"
+                  checked={platforms.includes(platform)}
+                  onChange={(event) =>
+                    setPlatforms((current) => (event.target.checked ? [...current, platform] : current.filter((item) => item !== platform)))
+                  }
+                />
+                {PLATFORM_LABELS[platform]}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <label className="flex items-center gap-2 self-end text-sm">
+          <input type="checkbox" name="autoApprove" defaultChecked={p.autoApprove} />
+          Approve scripts automatically
+        </label>
+        {state.status === 'error' && (
+          <div className="sm:col-span-2 lg:col-span-3">
+            <ErrorLine>{state.message}</ErrorLine>
+          </div>
+        )}
+        <div className="flex gap-2 sm:col-span-2 lg:col-span-3">
+          <Button type="submit" variant="primary" busy={state.status === 'saving'} disabled={platforms.length === 0}>
+            Save
+          </Button>
+          <Button variant="ghost" onClick={props.onDone}>
+            Cancel
+          </Button>
         </div>
-      </fieldset>
-      <label className="flex items-center gap-2 self-end text-sm">
-        <input type="checkbox" name="autoApprove" defaultChecked={p.autoApprove} />
-        Approve scripts automatically
-      </label>
-      {error && (
+      </form>
+      <form onSubmit={giveCode} className="grid gap-4 border-t border-mist pt-4 sm:grid-cols-2 lg:grid-cols-3">
         <div className="sm:col-span-2 lg:col-span-3">
-          <ErrorLine>{error}</ErrorLine>
+          <Eyebrow>Discount code</Eyebrow>
+          <p className="mt-1 text-xs text-ash">
+            Create the code in Polar first. The persona puts it into every description from the next publication on.
+          </p>
         </div>
-      )}
-      <div className="flex gap-2 sm:col-span-2 lg:col-span-3">
-        <Button type="submit" variant="primary" busy={busy} disabled={platforms.length === 0}>
-          Save
-        </Button>
-        <Button variant="ghost" onClick={props.onDone}>
-          Cancel
-        </Button>
-      </div>
-    </form>
+        <Field label="Code">
+          <Input name="code" value={code} onChange={(event) => setCode(event.target.value)} placeholder="ADA20" required />
+        </Field>
+        <Field label="Offer" className="lg:col-span-2">
+          <Input
+            name="offer"
+            value={offer}
+            onChange={(event) => setOffer(event.target.value)}
+            placeholder="20% off Pro for 3 months"
+            required
+          />
+        </Field>
+        {codeState.status === 'error' && (
+          <div className="sm:col-span-2 lg:col-span-3">
+            <ErrorLine>{codeState.message}</ErrorLine>
+          </div>
+        )}
+        <div className="sm:col-span-2 lg:col-span-3">
+          <Button type="submit" busy={codeState.status === 'saving'}>
+            Give code
+          </Button>
+        </div>
+      </form>
+    </div>
   )
 }

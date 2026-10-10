@@ -118,7 +118,7 @@ Same palette as Formstep (see frontmatter). Rules that matter here:
 
 **One saturated voice per screen.** The calendar shows every tint at once because they are content. The chrome around it (nav, buttons, headers) stays ink on paper.
 
-**Charts.** The report's funnel and trend lines use the chart series in canonical order: cyan, violet, amber, emerald, red. Followers always cyan, views violet, clicks amber, signups emerald, paid red. Fixed assignment, so the operator learns the colors once.
+**Charts.** The report's funnel and trend lines use the chart series in canonical order: cyan, violet, amber, emerald, red. Followers always cyan, views violet, clicks amber, signups emerald, paid red. Fixed assignment, so the operator learns the colors once. Demos and trials are the lighter shade (55%) of the step they lead from: demos of clicks amber, trials of signups emerald.
 
 ## 3. Typography
 
@@ -135,7 +135,7 @@ Same palette as Formstep (see frontmatter). Rules that matter here:
 - Content column with 24px padding, max 1280px.
 - Calendar: seven equal columns, today's column paper-warm, cards stacked by scheduled time.
 - Persona page: three panes on wide screens (chat 1fr, script 1.4fr, checklist 0.8fr); stacked on narrow.
-- Report: metric strip (five values), then one funnel, then one trend line, then the experiments list. Fits one screen at 1440x900.
+- Report: metric strip (six values), then one funnel, then one trend line, then the experiments list. Fits one screen at 1440x900.
 
 ## 5. Components
 

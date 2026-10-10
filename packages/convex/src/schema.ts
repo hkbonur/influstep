@@ -5,6 +5,7 @@ import {
   checklistActionValidator,
   checklistStatusValidator,
   conversionKindValidator,
+  conversionViaValidator,
   decisionValidator,
   episodeStatusValidator,
   experimentKindValidator,
@@ -37,6 +38,9 @@ export default defineSchema({
     // runner's browser profile (the checklist's open_browser action).
     signInRequiredHosts: v.array(v.string()),
     signedInHosts: v.array(v.string()),
+    // What one paid conversion is worth to the sponsor, for the report's estimate.
+    valuePerPaid: v.number(),
+    currency: v.string(),
   }),
 
   personas: defineTable({
@@ -103,6 +107,8 @@ export default defineSchema({
     status: v.union(v.literal('queued'), v.literal('uploading'), v.literal('live'), v.literal('failed')),
     title: v.string(),
     description: v.string(),
+    // The code the description was written with, so a page shows what viewers see, not the code in force now.
+    discountCodeId: v.optional(v.id('discountCodes')),
     linkId: v.id('links'),
     scheduledAt: v.number(),
     externalId: v.optional(v.string()),
@@ -157,12 +163,31 @@ export default defineSchema({
     episodeId: v.optional(v.id('episodes')),
     variantKey: v.optional(v.string()),
     kind: conversionKindValidator,
+    via: conversionViaValidator,
     distinctId: v.string(),
     at: v.number(),
     mock: v.boolean(),
   })
     .index('by_persona_time', ['personaId', 'at'])
     .index('by_distinct', ['distinctId', 'kind']),
+
+  // Discount codes the operator created in Polar and handed to a persona, in
+  // chat or in its settings. A code bound to an episode goes into that
+  // episode's descriptions; a persona code goes into every other one.
+  discountCodes: defineTable({
+    personaId: v.id('personas'),
+    episodeId: v.optional(v.id('episodes')),
+    code: v.string(),
+    // What the code offers, in the operator's words ("20% off for 3 months").
+    offer: v.string(),
+    active: v.boolean(),
+    redemptions: v.number(),
+    createdAt: v.number(),
+    retiredAt: v.optional(v.number()),
+  })
+    .index('by_persona_active', ['personaId', 'active'])
+    .index('by_episode', ['episodeId'])
+    .index('by_code', ['code']),
 
   signals: defineTable({
     personaId: v.id('personas'),

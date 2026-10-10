@@ -1,14 +1,21 @@
 import { api } from '@influstep/convex/_generated/api'
 import type { Id } from '@influstep/convex/_generated/dataModel'
-import { EXPERIMENT_KIND_LABELS, PLATFORM_LABELS, SIGNAL_SOURCE_LABELS } from '@influstep/shared'
+import {
+  CONVERSION_KIND_LABELS,
+  EXPERIMENT_KIND_LABELS,
+  METRIC_LABELS,
+  PLATFORM_LABELS,
+  SIGNAL_SOURCE_LABELS,
+  VALUE_LABEL,
+} from '@influstep/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
 import React from 'react'
 import { ScriptEditor } from '@/components/script-editor'
 import { SponsorPill, StatusPill } from '@/components/status'
-import { Button, ErrorLine, Eyebrow, Input, MockNote, Mono, PageHeader, Pill, Skeleton } from '@/components/ui'
+import { AttributionNote, Button, ErrorLine, Eyebrow, Input, MockNote, Mono, PageHeader, Pill, Skeleton } from '@/components/ui'
 import { cn } from '@/lib/cn'
-import { formatCount, formatDateTime, formatDay, relativeTime } from '@/lib/format'
+import { formatCount, formatDateTime, formatDay, formatMoney, relativeTime } from '@/lib/format'
 
 export const Route = createFileRoute('/episodes/$episodeId')({ component: EpisodePage })
 
@@ -38,8 +45,9 @@ function EpisodePage() {
     }
   }
   const terminal = episode.status === 'measured' || episode.status === 'killed'
-  const mock = data.renders.some((render) => render.mock) || data.publications.some((publication) => publication.mock)
+  const mock = data.renders.some((render) => render.mock) || data.publications.some((publication) => publication.mock) || data.value.mock
   const openItems = data.checklist.filter((item) => item.status === 'open')
+  const showValue = episode.status === 'published' || episode.status === 'measured' || data.value.clicks > 0
 
   return (
     <>
@@ -180,51 +188,84 @@ function EpisodePage() {
           <section>
             <Eyebrow className="mb-3">Publications</Eyebrow>
             {data.publications.length === 0 && <p className="text-ash">Queued when the episode is approved and rendered.</p>}
-            <ul className="divide-y divide-mist border-y border-mist">
-              {data.publications.map((publication) => {
-                const link = data.links.find((candidate) => candidate._id === publication.linkId)
-                return (
-                  <li key={publication._id} className="grid gap-0.5 py-2 text-sm">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{PLATFORM_LABELS[publication.platform]}</span>
-                      <Pill
-                        tint={
-                          publication.status === 'live'
-                            ? 'field-green'
-                            : publication.status === 'failed'
-                              ? 'signal-red'
-                              : publication.status === 'uploading'
-                                ? 'note-blue'
-                                : 'fog'
-                        }
-                      >
-                        {publication.status}
-                      </Pill>
-                      <span className="tabular ml-auto font-mono text-[11px] text-ash">
-                        {publication.publishedAt ? formatDateTime(publication.publishedAt) : `due ${relativeTime(publication.scheduledAt)}`}
-                      </span>
-                    </div>
-                    {publication.url && (
-                      <a
-                        href={publication.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="truncate font-mono text-[11px] text-graphite hover:underline"
-                      >
-                        {publication.url}
-                      </a>
-                    )}
-                    {link && (
-                      <span className="font-mono text-[11px] text-ash">
-                        {data.appUrl}/go/{link.slug} · {link.clicks} clicks
-                      </span>
-                    )}
-                    {publication.error && <ErrorLine>{publication.error}</ErrorLine>}
-                  </li>
-                )
-              })}
-            </ul>
+            <DescriptionCode
+              codesInDescriptions={data.codesInDescriptions}
+              nextCode={data.discountCode}
+              written={data.publications.length > 0}
+            />
+            {data.publications.length > 0 && (
+              <ul className="divide-y divide-mist border-y border-mist">
+                {data.publications.map((publication) => {
+                  const link = data.links.find((candidate) => candidate._id === publication.linkId)
+                  return (
+                    <li key={publication._id} className="grid gap-0.5 py-2 text-sm">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{PLATFORM_LABELS[publication.platform]}</span>
+                        <Pill
+                          tint={
+                            publication.status === 'live'
+                              ? 'field-green'
+                              : publication.status === 'failed'
+                                ? 'signal-red'
+                                : publication.status === 'uploading'
+                                  ? 'note-blue'
+                                  : 'fog'
+                          }
+                        >
+                          {publication.status}
+                        </Pill>
+                        <span className="tabular ml-auto font-mono text-[11px] text-ash">
+                          {publication.publishedAt
+                            ? formatDateTime(publication.publishedAt)
+                            : `due ${relativeTime(publication.scheduledAt)}`}
+                        </span>
+                      </div>
+                      {publication.url && (
+                        <a
+                          href={publication.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="truncate font-mono text-[11px] text-graphite hover:underline"
+                        >
+                          {publication.url}
+                        </a>
+                      )}
+                      {link && (
+                        <span className="font-mono text-[11px] text-ash">
+                          {data.appUrl}/go/{link.slug} · {link.clicks} clicks
+                        </span>
+                      )}
+                      {publication.error && <ErrorLine>{publication.error}</ErrorLine>}
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
           </section>
+
+          {showValue && (
+            <section className="space-y-3">
+              <Eyebrow>{VALUE_LABEL}</Eyebrow>
+              <dl className="tabular grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
+                <dt className="text-ash">{METRIC_LABELS.clicks}</dt>
+                <dd>{formatCount(data.value.clicks)}</dd>
+                <dt className="text-ash">{CONVERSION_KIND_LABELS.demo_started}</dt>
+                <dd>{data.value.demos}</dd>
+                <dt className="text-ash">{CONVERSION_KIND_LABELS.signup}</dt>
+                <dd>{data.value.signups}</dd>
+                <dt className="text-ash">{CONVERSION_KIND_LABELS.trial_started}</dt>
+                <dd>{data.value.trials}</dd>
+                <dt className="text-ash">{CONVERSION_KIND_LABELS.paid}</dt>
+                <dd>
+                  {data.value.paid}
+                  {data.value.paidViaCode > 0 && <span className="text-xs text-ash"> ({data.value.paidViaCode} via code)</span>}
+                </dd>
+                <dt className="text-ash">{VALUE_LABEL}</dt>
+                <dd className="font-medium">{formatMoney(data.value.value, data.currency)}</dd>
+              </dl>
+              <AttributionNote />
+            </section>
+          )}
 
           {data.snapshots.length > 0 && (
             <section>
@@ -311,6 +352,38 @@ function EpisodePage() {
         </div>
       </div>
     </>
+  )
+}
+
+/**
+ * Which code the viewer sees. Written descriptions carry the code they were
+ * built with, whatever is in force now; an episode without descriptions yet
+ * gets the code in force at its next render.
+ */
+function DescriptionCode(props: {
+  codesInDescriptions: { code: string; offer: string }[]
+  nextCode: { code: string; offer: string } | null
+  written: boolean
+}) {
+  if (!props.written) {
+    if (!props.nextCode) return <p className="mb-2 text-sm text-ash">No discount code for the next render.</p>
+    return (
+      <p className="mb-2 text-sm">
+        Next render gets code <Mono>{props.nextCode.code}</Mono> <span className="text-ash">({props.nextCode.offer})</span>
+      </p>
+    )
+  }
+  if (props.codesInDescriptions.length === 0) return <p className="mb-2 text-sm text-ash">No discount code in the descriptions.</p>
+  return (
+    <p className="mb-2 text-sm">
+      Code in descriptions:{' '}
+      {props.codesInDescriptions.map((code, index) => (
+        <React.Fragment key={code.code}>
+          {index > 0 && ', '}
+          <Mono>{code.code}</Mono> <span className="text-ash">({code.offer})</span>
+        </React.Fragment>
+      ))}
+    </p>
   )
 }
 

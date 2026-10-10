@@ -129,6 +129,16 @@ export function MockNote(props: { when: boolean; children?: React.ReactNode }) {
   return <p className="text-xs text-ash">{props.children ?? 'Mock providers: these numbers are generated, not measured.'}</p>
 }
 
+/** What the report can vouch for and what it cannot (docs/plan.md, v0.2). Shown wherever conversions are counted. */
+export function AttributionNote() {
+  return (
+    <p className="max-w-[65ch] text-xs text-ash">
+      Clicks and code redemptions are exact. Demos, signups, trials and link-attributed paid come from PostHog, first touch, and undercount
+      visitors who declined cookies. A persona-wide code's redemptions count for the persona, not for an episode.
+    </p>
+  )
+}
+
 export function Skeleton(props: { className?: string }) {
   return <div className={cn('animate-pulse rounded-md bg-hairline-strong', props.className)} />
 }
