@@ -36,6 +36,23 @@
   --color-chart-4: oklch(69.6% 0.17 162);
   --color-chart-5: oklch(63.7% 0.237 25);
 
+  /* Persona colors: identity hues that live only inside avatars and the color
+     swatches, never on text, pills or status marks. Contrast against paper,
+     WCAG 1.4.11 (graphical objects need 3:1), computed OKLCH to linear sRGB to
+     relative luminance: ink 16.17, plum 7.22, violet 6.38, iris 4.64, teal 4.57,
+     olive 4.63, clay 4.82, rose 4.81. All sit inside sRGB. Teal's chroma is 0.09
+     because 0.1 fell outside sRGB; violet and iris are pulled apart in hue and
+     lightness so they stay distinct at 24px (closest pair, clay and rose, is
+     0.114 apart in OKLab). */
+  --color-persona-ink: var(--color-ink);
+  --color-persona-plum: oklch(47% 0.13 342);
+  --color-persona-violet: oklch(50% 0.17 298);
+  --color-persona-iris: oklch(56% 0.14 260);
+  --color-persona-teal: oklch(55% 0.09 200);
+  --color-persona-olive: oklch(55% 0.1 125);
+  --color-persona-clay: oklch(56% 0.13 45);
+  --color-persona-rose: oklch(57% 0.17 3);
+
   --radius-sm: 0.375rem;
   --radius-md: 0.5rem;
   --radius-lg: 0.625rem;

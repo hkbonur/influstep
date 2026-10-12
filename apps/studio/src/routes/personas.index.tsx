@@ -1,9 +1,11 @@
-import type { Platform, PlatformFormat } from '@influstep/shared'
+import { firstUnusedPersonaColor, type PersonaColor, type Platform, type PlatformFormat } from '@influstep/shared'
 import { api } from '@influstep/convex/_generated/api'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
 import React from 'react'
+import { z } from 'zod'
 import { FormatFields, defaultFormat } from '@/components/format-fields'
+import { PersonaAvatar, PersonaColorSwatches, personaAvatarState } from '@/components/persona-avatar'
 import { PlatformGlyphs } from '@/components/status'
 import {
   Button,
@@ -22,23 +24,31 @@ import {
 import { cn } from '@/lib/cn'
 import { errorMessage } from '@/lib/errors'
 
-export const Route = createFileRoute('/personas/')({ component: PersonasPage })
+/** `new` opens the new persona form, so the sidebar's + lands on it open. */
+const searchSchema = z.object({ new: z.boolean().optional() })
+
+export const Route = createFileRoute('/personas/')({ component: PersonasPage, validateSearch: searchSchema })
 
 function PersonasPage() {
   const personas = useQuery(api.private.personas.list, {})
-  const [creating, setCreating] = React.useState(false)
+  const search = Route.useSearch()
+  const navigate = Route.useNavigate()
+  // The address is the one source: the + in the sidebar and the button here both open the form through it.
+  const creating = search.new === true
+  const setCreating = (open: boolean) => navigate({ search: { new: open ? true : undefined } })
   return (
     <>
       <PageHeader
         title="Personas"
         lead="Each persona is a profile its five agents work for. Compare them in Reports."
         actions={
-          <Button variant="primary" onClick={() => setCreating((value) => !value)}>
+          <Button variant="primary" onClick={() => setCreating(!creating)}>
             {creating ? 'Close' : 'New persona'}
           </Button>
         }
       />
-      {creating && <NewPersonaForm onDone={() => setCreating(false)} />}
+      {/* The form waits for the roster: its default color is the first one no persona wears. */}
+      {creating && personas && <NewPersonaForm usedColors={personas.map((persona) => persona.color)} onDone={() => setCreating(false)} />}
       {!personas && <Skeleton className="h-40" />}
       {personas && personas.length === 0 && (
         <Empty action={<Button onClick={() => setCreating(true)}>New persona</Button>}>No personas yet. Run the seed, or create one.</Empty>
@@ -47,21 +57,31 @@ function PersonasPage() {
         <div className="divide-y divide-mist border-y border-mist">
           {personas.map((persona) => (
             <div key={persona._id} className="grid items-center gap-x-6 gap-y-2 py-3 sm:grid-cols-[1fr_auto_auto]">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Link to="/personas/$personaId" params={{ personaId: persona._id }} className="font-medium hover:underline">
-                    {persona.name}
-                  </Link>
-                  <Mono className="text-ash">@{persona.handle}</Mono>
-                  {persona.paused && <Pill tint="alert-amber">Paused</Pill>}
-                  {persona.autoApprove && <Pill tint="fog">Auto-approves</Pill>}
-                </div>
-                <p className="mt-0.5 line-clamp-1 text-ash">{persona.niche}</p>
-                <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ash">
-                  <PlatformGlyphs platforms={persona.formats.map((format) => format.platform)} />
-                  <span className="tabular">{persona.episodesPerWeek} a week</span>
-                  <span className="tabular">sponsor {Math.round(persona.sponsorDial * 100)}%</span>
-                  <span>{persona.pillars.join(' · ')}</span>
+              <div className="flex min-w-0 items-start gap-3">
+                <PersonaAvatar
+                  color={persona.color}
+                  state={personaAvatarState(persona)}
+                  size={32}
+                  className={cn({ 'text-fog': persona.paused })}
+                />
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link to="/personas/$personaId" params={{ personaId: persona._id }} className="font-medium hover:underline">
+                      {persona.name}
+                    </Link>
+                    {/* The avatar shows the thinking dots but is hidden from screen readers; this says it in words. */}
+                    {personaAvatarState(persona) === 'thinking' && <span className="sr-only">working</span>}
+                    <Mono className="text-ash">@{persona.handle}</Mono>
+                    {persona.paused && <Pill tint="alert-amber">Paused</Pill>}
+                    {persona.autoApprove && <Pill tint="fog">Auto-approves</Pill>}
+                  </div>
+                  <p className="mt-0.5 line-clamp-1 text-ash">{persona.niche}</p>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ash">
+                    <PlatformGlyphs platforms={persona.formats.map((format) => format.platform)} />
+                    <span className="tabular">{persona.episodesPerWeek} a week</span>
+                    <span className="tabular">sponsor {Math.round(persona.sponsorDial * 100)}%</span>
+                    <span>{persona.pillars.join(' · ')}</span>
+                  </div>
                 </div>
               </div>
               <dl className="flex gap-5 text-xs">
@@ -109,9 +129,10 @@ const NEW_PERSONA_PLATFORMS: Platform[] = ['youtube', 'tiktok']
 /** How many episodes a new persona publishes unsponsored before the dial applies (CONTEXT.md, "Sponsor dial"). */
 const SPONSOR_RAMP_EPISODES = 10
 
-function NewPersonaForm(props: { onDone: () => void }) {
+function NewPersonaForm(props: { usedColors: PersonaColor[]; onDone: () => void }) {
   const create = useMutation(api.private.personas.create)
   const [state, setState] = React.useState<FormState>({ status: 'idle' })
+  const [color, setColor] = React.useState<PersonaColor>(() => firstUnusedPersonaColor(props.usedColors))
   const [formats, setFormats] = React.useState<PlatformFormat[]>(() => NEW_PERSONA_PLATFORMS.map(defaultFormat))
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -121,6 +142,7 @@ function NewPersonaForm(props: { onDone: () => void }) {
     try {
       await create({
         name: text('name'),
+        color,
         handle: text('handle').replace(/^@/, ''),
         niche: text('niche'),
         tone: text('tone'),
@@ -151,6 +173,9 @@ function NewPersonaForm(props: { onDone: () => void }) {
       <Field label="Handle" hint="The same on every platform; it is also the utm_source.">
         <Input name="handle" required placeholder="ada.automates" pattern="@?[a-z0-9._-]+" />
       </Field>
+      <div className="sm:col-span-2">
+        <PersonaColorSwatches value={color} onChange={setColor} taken={props.usedColors} />
+      </div>
       <Field label="Niche" className="sm:col-span-2">
         <Input name="niche" required placeholder="n8n and workflow automation for small teams" />
       </Field>

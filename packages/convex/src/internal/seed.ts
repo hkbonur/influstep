@@ -69,6 +69,7 @@ export const write = internalMutation({
     const adaId = await ctx.db.insert('personas', {
       workspaceId,
       name: 'Ada Automates',
+      color: 'teal',
       handle: 'ada.automates',
       niche: 'n8n and workflow automation for small teams',
       tone: 'calm, precise, a little dry',
@@ -89,6 +90,7 @@ export const write = internalMutation({
     const maxId = await ctx.db.insert('personas', {
       workspaceId,
       name: 'Max Builds Agents',
+      color: 'clay',
       handle: 'max.builds.agents',
       niche: 'Claude Code, MCP, and agents that do real work',
       tone: 'curious, fast, honest about failures',

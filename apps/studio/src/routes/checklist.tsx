@@ -96,7 +96,7 @@ function ChecklistRow(props: { item: Item }) {
         </div>
       )}
       {item.action?.kind === 'set_provider_key' && (
-        <LinkButton to="/providers" className="h-7 px-2.5 text-xs">
+        <LinkButton to="/providers" size="sm">
           Set {item.action.key}
         </LinkButton>
       )}

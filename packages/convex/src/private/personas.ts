@@ -11,13 +11,15 @@ import {
 } from '../core/discounts'
 import { createTrackedLink, reconcilePlatformDrop } from '../core/episodes'
 import { assertFormats, platformsOf } from '../core/formats'
+import { workingPersonaIds } from '../core/jobs'
 import { requireWorkspace, workspaceOf } from '../core/workspace'
 import { enqueueJob } from '../jobs/queue'
-import { platformFormatValidator } from '../lib/validators'
+import { personaColorValidator, platformFormatValidator } from '../lib/validators'
 import { refusal } from '../lib/errors'
 
 const personaFields = {
   name: v.string(),
+  color: personaColorValidator,
   handle: v.string(),
   niche: v.string(),
   tone: v.string(),
@@ -38,6 +40,7 @@ export const list = query({
   args: {},
   handler: async (ctx) => {
     const personas = await ctx.db.query('personas').collect()
+    const working = await workingPersonaIds(ctx)
     const out = []
     for (const persona of personas) {
       const episodes = await ctx.db
@@ -50,6 +53,7 @@ export const list = query({
         .collect()
       out.push({
         ...persona,
+        working: working.has(persona._id),
         counts: {
           episodes: episodes.length,
           published: episodes.filter((episode) => episode.status === 'published' || episode.status === 'measured').length,
@@ -95,6 +99,8 @@ export const get = query({
       .withIndex('by_persona', (q) => q.eq('personaId', persona._id))
       .order('desc')
       .take(12)
+    // Not from `jobs` above: those are only the newest few, and a job queued for hours can sit behind them.
+    const working = (await workingPersonaIds(ctx)).has(persona._id)
     const bioLink = (
       await ctx.db
         .query('links')
@@ -124,6 +130,7 @@ export const get = query({
       checklist,
       episodes,
       jobs,
+      working,
       bioLink,
       discountCodes,
     }

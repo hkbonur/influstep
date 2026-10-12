@@ -6,11 +6,13 @@ import React from 'react'
 import { cn } from '@/lib/cn'
 import { errorMessage } from '@/lib/errors'
 import { formatDateTime } from '@/lib/format'
+import { PersonaAvatar } from './persona-avatar'
 import { Button, ErrorLine, Eyebrow } from './ui'
 
 /**
  * The persona's chat (DESIGN.md, Chat): operator right on paper-warm, persona
- * left with a hairline. Active directives sit pinned above the composer.
+ * left with a hairline and its still avatar. Active directives sit pinned
+ * above the composer.
  */
 export function PersonaChat(props: { persona: Doc<'personas'>; messages: Doc<'messages'>[]; directives: Doc<'directives'>[] }) {
   const send = useMutation(api.private.personas.sendMessage)
@@ -51,19 +53,28 @@ export function PersonaChat(props: { persona: Doc<'personas'>; messages: Doc<'me
           </p>
         )}
         {props.messages.map((message) => (
-          <div key={message._id} className={cn('flex flex-col gap-0.5', { 'items-end': message.author === 'operator' })}>
+          <div key={message._id} className={cn('flex items-start gap-2', { 'justify-end': message.author === 'operator' })}>
+            {/* 10px down puts the 20px avatar's middle on the bubble's first line (1px border, 8px padding, 22.75px line). */}
+            {message.author === 'persona' && <PersonaAvatar color={props.persona.color} state="idle" size={20} className="mt-2.5" />}
             <div
-              className={cn('max-w-[85%] rounded-xl px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap', {
-                'bg-paper-warm': message.author === 'operator',
-                'border border-mist bg-paper': message.author === 'persona',
+              className={cn('flex max-w-[85%] min-w-0 flex-col gap-0.5', {
+                'items-end': message.author === 'operator',
+                'items-start': message.author === 'persona',
               })}
             >
-              {message.text}
+              <div
+                className={cn('rounded-xl px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap', {
+                  'bg-paper-warm': message.author === 'operator',
+                  'border border-mist bg-paper': message.author === 'persona',
+                })}
+              >
+                {message.text}
+              </div>
+              <span className="tabular px-1 font-mono text-[11px] text-ash">
+                {message.author === 'operator' ? 'You' : `@${props.persona.handle}`} · {formatDateTime(message.createdAt)}
+                {message.directiveId && ' · directive'}
+              </span>
             </div>
-            <span className="tabular px-1 font-mono text-[11px] text-ash">
-              {message.author === 'operator' ? 'You' : `@${props.persona.handle}`} · {formatDateTime(message.createdAt)}
-              {message.directiveId && ' · directive'}
-            </span>
           </div>
         ))}
         <div ref={endRef} />

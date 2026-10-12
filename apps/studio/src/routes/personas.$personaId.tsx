@@ -1,10 +1,11 @@
 import { api } from '@influstep/convex/_generated/api'
 import type { Doc, Id } from '@influstep/convex/_generated/dataModel'
-import { DELIVERY_LABELS, formatLength, type PlatformFormat } from '@influstep/shared'
+import { DELIVERY_LABELS, formatLength, type PersonaColor, type PlatformFormat } from '@influstep/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
 import React from 'react'
 import { FormatFields } from '@/components/format-fields'
+import { PersonaColorSwatches, PersonaMascot, personaAvatarState } from '@/components/persona-avatar'
 import { PersonaChat } from '@/components/persona-chat'
 import { PlatformGlyphs, SponsorPill, StatusPill } from '@/components/status'
 import {
@@ -47,46 +48,57 @@ function PersonaPage() {
 
   return (
     <>
-      <PageHeader
-        title={persona.name}
-        lead={
-          <>
-            <Mono>@{persona.handle}</Mono> · {persona.niche}
-            {persona.paused && (
+      <div className="flex items-start gap-4">
+        <PersonaMascot
+          color={persona.color}
+          state={personaAvatarState({ working: data.working, paused: persona.paused })}
+          size={48}
+          // Fog, as in the sidebar: a paused persona reads as switched off on every screen.
+          className={cn({ 'text-fog': persona.paused })}
+        />
+        <div className="min-w-0 flex-1">
+          <PageHeader
+            title={persona.name}
+            lead={
               <>
-                {' '}
-                <Pill tint="alert-amber">Paused</Pill>
+                <Mono>@{persona.handle}</Mono> · {persona.niche}
+                {persona.paused && (
+                  <>
+                    {' '}
+                    <Pill tint="alert-amber">Paused</Pill>
+                  </>
+                )}
               </>
-            )}
-          </>
-        }
-        actions={
-          <>
-            <Button size="sm" onClick={() => pollSignals({ personaId })}>
-              Poll signals
-            </Button>
-            <Button size="sm" onClick={() => planWeek({ personaId })}>
-              Plan this week
-            </Button>
-            <Button size="sm" onClick={() => pullMetrics({ personaId })}>
-              Pull metrics
-            </Button>
-            <LinkButton to="/reports/$personaId" params={{ personaId }}>
-              Report
-            </LinkButton>
-            <Button size="sm" variant="ghost" onClick={() => setSettings((value) => !value)}>
-              {settings ? 'Close settings' : 'Settings'}
-            </Button>
-            <Button
-              size="sm"
-              variant={persona.paused ? 'primary' : 'destructive'}
-              onClick={() => setPaused({ personaId, paused: !persona.paused })}
-            >
-              {persona.paused ? 'Resume' : 'Pause'}
-            </Button>
-          </>
-        }
-      />
+            }
+            actions={
+              <>
+                <Button size="sm" onClick={() => pollSignals({ personaId })}>
+                  Poll signals
+                </Button>
+                <Button size="sm" onClick={() => planWeek({ personaId })}>
+                  Plan this week
+                </Button>
+                <Button size="sm" onClick={() => pullMetrics({ personaId })}>
+                  Pull metrics
+                </Button>
+                <LinkButton to="/reports/$personaId" params={{ personaId }} size="sm">
+                  Report
+                </LinkButton>
+                <Button size="sm" variant="ghost" onClick={() => setSettings((value) => !value)}>
+                  {settings ? 'Close settings' : 'Settings'}
+                </Button>
+                <Button
+                  size="sm"
+                  variant={persona.paused ? 'primary' : 'destructive'}
+                  onClick={() => setPaused({ personaId, paused: !persona.paused })}
+                >
+                  {persona.paused ? 'Resume' : 'Pause'}
+                </Button>
+              </>
+            }
+          />
+        </div>
+      </div>
       {settings && <SettingsForm persona={persona} onDone={() => setSettings(false)} />}
 
       <div className="grid gap-8 xl:grid-cols-[1fr_1.4fr_0.8fr] xl:gap-6">
@@ -276,7 +288,7 @@ function ChecklistRow(props: {
             </Button>
           )}
           {props.item.action?.kind === 'set_provider_key' && (
-            <LinkButton to="/providers" className="h-7 px-2.5 text-xs">
+            <LinkButton to="/providers" size="sm">
               Set {props.item.action.key}
             </LinkButton>
           )}
@@ -291,7 +303,9 @@ function ChecklistRow(props: {
 function SettingsForm(props: { persona: Doc<'personas'>; onDone: () => void }) {
   const update = useMutation(api.private.personas.update)
   const giveDiscountCode = useMutation(api.private.personas.giveDiscountCode)
+  const personas = useQuery(api.private.personas.list, {})
   const [state, setState] = React.useState<FormState>({ status: 'idle' })
+  const [color, setColor] = React.useState<PersonaColor>(props.persona.color)
   const [formats, setFormats] = React.useState<PlatformFormat[]>(props.persona.formats)
   const [code, setCode] = React.useState('')
   const [offer, setOffer] = React.useState('')
@@ -317,6 +331,7 @@ function SettingsForm(props: { persona: Doc<'personas'>; onDone: () => void }) {
       await update({
         personaId: props.persona._id,
         name: text('name'),
+        color,
         handle: props.persona.handle,
         niche: text('niche'),
         tone: text('tone'),
@@ -340,6 +355,8 @@ function SettingsForm(props: { persona: Doc<'personas'>; onDone: () => void }) {
     }
   }
   const p = props.persona
+  // Unknown until the roster loads; the swatches then name the colors other personas wear.
+  const takenColors = personas?.filter((persona) => persona._id !== p._id).map((persona) => persona.color)
   return (
     <div className="card mb-8 space-y-4">
       <form onSubmit={submit} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -349,6 +366,9 @@ function SettingsForm(props: { persona: Doc<'personas'>; onDone: () => void }) {
         <Field label="Niche" className="lg:col-span-2">
           <Input name="niche" defaultValue={p.niche} required />
         </Field>
+        <div className="sm:col-span-2 lg:col-span-3">
+          <PersonaColorSwatches value={color} onChange={setColor} taken={takenColors} />
+        </div>
         <Field label="Tone">
           <Input name="tone" defaultValue={p.tone} required />
         </Field>

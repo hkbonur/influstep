@@ -17,6 +17,7 @@ import {
   jobStatusValidator,
   metricCountsValidator,
   metricKeyValidator,
+  personaColorValidator,
   platformFormatValidator,
   platformValidator,
   renderValidator,
@@ -50,6 +51,8 @@ export default defineSchema({
   personas: defineTable({
     workspaceId: v.id('workspaces'),
     name: v.string(),
+    // The avatar's identity color, so the operator tells personas apart; never a status.
+    color: personaColorValidator,
     handle: v.string(),
     niche: v.string(),
     tone: v.string(),

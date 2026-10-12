@@ -18,39 +18,36 @@ const BUTTON: Record<ButtonVariant, string> = {
   destructive: 'text-signal-red-deep hover:bg-signal-red/10',
 }
 
+type ButtonSize = 'sm' | 'md'
+
+/** Shared by Button and LinkButton, so a link that looks like a button is the same size, focus ring and all. */
+function buttonClass(variant: ButtonVariant, size: ButtonSize, className: string | undefined): string {
+  return cn(
+    'inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg font-medium whitespace-nowrap transition-colors duration-150 ease-out-quint outline-none focus-visible:ring-2 focus-visible:ring-fog disabled:cursor-not-allowed disabled:opacity-50',
+    { 'h-8 px-3 text-sm': size === 'md', 'h-7 px-2.5 text-xs': size === 'sm' },
+    BUTTON[variant],
+    className
+  )
+}
+
 export function Button(
-  props: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; size?: 'sm' | 'md'; busy?: boolean }
+  props: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; size?: ButtonSize; busy?: boolean }
 ) {
   const { variant = 'outline', size = 'md', busy, className, children, ...rest } = props
   return (
-    <button
-      type="button"
-      {...rest}
-      disabled={rest.disabled || busy}
-      className={cn(
-        'inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg font-medium whitespace-nowrap transition-colors duration-150 ease-out-quint outline-none focus-visible:ring-2 focus-visible:ring-fog disabled:cursor-not-allowed disabled:opacity-50',
-        { 'h-8 px-3 text-sm': size === 'md', 'h-7 px-2.5 text-xs': size === 'sm' },
-        BUTTON[variant],
-        className
-      )}
-    >
+    <button type="button" {...rest} disabled={rest.disabled || busy} className={buttonClass(variant, size, className)}>
       {busy && <Spinner />}
       {children}
     </button>
   )
 }
 
-export function LinkButton(props: LinkProps & { className?: string; variant?: ButtonVariant; children: React.ReactNode }) {
-  const { className, variant = 'outline', children, ...rest } = props
+export function LinkButton(
+  props: LinkProps & { className?: string; variant?: ButtonVariant; size?: ButtonSize; children: React.ReactNode }
+) {
+  const { className, variant = 'outline', size = 'md', children, ...rest } = props
   return (
-    <Link
-      {...rest}
-      className={cn(
-        'inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-sm font-medium transition-colors duration-150',
-        BUTTON[variant],
-        className
-      )}
-    >
+    <Link {...rest} className={buttonClass(variant, size, className)}>
       {children}
     </Link>
   )

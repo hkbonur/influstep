@@ -1,4 +1,4 @@
-import { platformsOpen, runnerJobSchema } from '@influstep/shared'
+import { DEFAULT_FORMATS, platformsOpen, runnerJobSchema } from '@influstep/shared'
 import type { FunctionReturnType } from 'convex/server'
 import { describe, expect, it } from 'vitest'
 import { api, internal } from './_generated/api'
@@ -362,6 +362,57 @@ describe('episode pipeline', () => {
     expect(['running', 'decided']).toContain(after[0]?.status)
   })
 
+  it('shows a persona as working while one of its jobs is queued or running', async () => {
+    const t = setup()
+    await t.action(internal.internal.seed.run, {})
+    await t.finishAllScheduledFunctions(() => {})
+    const seeded = await t.query(api.private.personas.list, {})
+    // Ada's seeded produce job waits for the runner.
+    expect(seeded.find((persona) => persona.handle === 'ada.automates')?.working).toBe(true)
+
+    // A new persona queues its first signal poll on the backend, and is idle once the poll is done.
+    const personaId = await t.mutation(api.private.personas.create, {
+      name: 'Iris Ships',
+      color: 'iris',
+      handle: 'iris.ships',
+      niche: 'shipping small SaaS products',
+      tone: 'plain',
+      bio: 'One shipped feature a week.',
+      bible: 'Iris shows the change before she names it.',
+      pillars: ['Shipping'],
+      formats: [{ platform: 'tiktok', ...DEFAULT_FORMATS.tiktok }],
+      voiceId: 'mock-iris',
+      sponsorDial: 0.3,
+      sponsorRampEpisodes: 10,
+      episodesPerWeek: 3,
+      autoApprove: false,
+      timezone: TIMEZONE,
+    })
+    const queued = await t.query(api.private.personas.list, {})
+    expect(queued.find((persona) => persona._id === personaId)).toMatchObject({ color: 'iris', working: true })
+    await t.finishAllScheduledFunctions(() => {})
+    const idle = await t.query(api.private.personas.list, {})
+    expect(idle.find((persona) => persona._id === personaId)?.working).toBe(false)
+  })
+
+  it('keeps the persona page working while its queued job sits behind a dozen newer ones', async () => {
+    const t = setup()
+    await t.action(internal.internal.seed.run, {})
+    await t.finishAllScheduledFunctions(() => {})
+    const ada = (await t.query(api.private.personas.list, {})).find((persona) => persona.handle === 'ada.automates')
+    if (!ada) throw new Error('seed has no Ada')
+
+    // The runner stays offline, so her produce job waits while hourly polls pile up after it.
+    for (let poll = 0; poll < 12; poll++) await t.mutation(api.private.personas.pollSignals, { personaId: ada._id })
+    await t.finishAllScheduledFunctions(() => {})
+
+    const page = await t.query(api.private.personas.get, { personaId: ada._id })
+    expect(page?.jobs.some((job) => job.kind === 'produce')).toBe(false)
+    expect(page?.working).toBe(true)
+    const roster = await t.query(api.private.personas.list, {})
+    expect(roster.find((persona) => persona._id === ada._id)?.working).toBe(true)
+  })
+
   it('pauses a persona: the runner gets nothing until it resumes', async () => {
     const t = setup()
     await t.action(internal.internal.seed.run, {})
@@ -518,6 +569,7 @@ function settingsOf(persona: FunctionReturnType<typeof api.private.personas.list
   return {
     personaId: persona._id,
     name: persona.name,
+    color: persona.color,
     handle: persona.handle,
     niche: persona.niche,
     tone: persona.tone,

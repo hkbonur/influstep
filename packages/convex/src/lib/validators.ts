@@ -13,6 +13,7 @@ import {
   JOB_RUNTIMES,
   JOB_STATUSES,
   METRIC_KEYS,
+  PERSONA_COLORS,
   PLATFORMS,
   SIGNAL_SOURCES,
   SIGNAL_STATUSES,
@@ -44,6 +45,7 @@ export const checklistStatusValidator = literals(CHECKLIST_STATUSES)
 export const conversionKindValidator = literals(CONVERSION_KINDS)
 export const conversionViaValidator = literals(CONVERSION_VIAS)
 export const deliveryValidator = literals(DELIVERIES)
+export const personaColorValidator = literals(PERSONA_COLORS)
 
 /** A persona's format for one platform (shared `PlatformFormat`). Ranges are checked by core/formats.ts. */
 export const platformFormatValidator = v.object({
