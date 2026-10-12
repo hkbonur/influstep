@@ -3,6 +3,7 @@ import { variantRate } from '@influstep/shared'
 import { mutation, query } from '../_generated/server'
 import { variantStatsFor } from '../internal/agents'
 import { experimentKindValidator, metricKeyValidator, variantValidator } from '../lib/validators'
+import { refusal } from '../lib/errors'
 
 export const list = query({
   args: { personaId: v.optional(v.id('personas')) },
@@ -36,14 +37,14 @@ export const create = mutation({
     minConfidence: v.number(),
   },
   handler: async (ctx, args) => {
-    if (args.variants.length < 2) throw new Error('an experiment needs at least two variants')
+    if (args.variants.length < 2) throw refusal('An experiment needs at least two variants.')
     const keys = new Set(args.variants.map((variant) => variant.key))
-    if (keys.size !== args.variants.length) throw new Error('variant keys must be unique')
+    if (keys.size !== args.variants.length) throw refusal('Variant keys must be unique.')
     const running = await ctx.db
       .query('experiments')
       .withIndex('by_persona_status', (q) => q.eq('personaId', args.personaId).eq('status', 'running'))
       .first()
-    if (running) throw new Error(`"${running.name}" is still running; stop it first so episodes carry one variant`)
+    if (running) throw refusal(`"${running.name}" is still running; stop it first so episodes carry one variant.`)
     return ctx.db.insert('experiments', { ...args, status: 'running', createdAt: Date.now() })
   },
 })
@@ -61,7 +62,7 @@ export const override = mutation({
   handler: async (ctx, args) => {
     const experiment = await ctx.db.get(args.experimentId)
     if (!experiment) throw new Error('experiment not found')
-    if (!experiment.variants.some((variant) => variant.key === args.winnerKey)) throw new Error(`no variant "${args.winnerKey}"`)
+    if (!experiment.variants.some((variant) => variant.key === args.winnerKey)) throw refusal(`There is no variant "${args.winnerKey}".`)
     await ctx.db.patch(experiment._id, {
       status: 'decided',
       decision: { winnerKey: args.winnerKey, lift: 0, confidence: 0, note: args.note, decidedAt: Date.now(), byOperator: true },

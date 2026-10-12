@@ -1,4 +1,4 @@
-import { EPISODE_STATUS_TINTS } from '@influstep/shared'
+import { EPISODE_STATUS_TINTS, SPONSOR_SEGMENT_LABELS } from '@influstep/shared'
 import { Link } from '@tanstack/react-router'
 import { api } from '@influstep/convex/_generated/api'
 import type { FunctionReturnType } from 'convex/server'
@@ -10,7 +10,8 @@ export type CalendarEpisode = FunctionReturnType<typeof api.private.calendar.wee
 
 /**
  * One episode on the calendar. The status is a wash and a dot; title at
- * weight 500; persona handle in mono; platforms right-aligned (DESIGN.md).
+ * weight 500; persona handle in mono; the episode's own platforms on the last
+ * row, since an episode can go to fewer platforms than its persona has (DESIGN.md).
  */
 export function EpisodeCard(props: { episode: CalendarEpisode }) {
   const { episode } = props
@@ -39,10 +40,8 @@ export function EpisodeCard(props: { episode: CalendarEpisode }) {
             <span className="tabular shrink-0 text-[11px] text-ash">{formatTime(episode.scheduledAt)}</span>
           </div>
           <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-ash">
-            <PlatformGlyphs platforms={episode.persona.platforms} />
-            {episode.sponsorSegment !== 'none' && (
-              <span className="truncate">{episode.sponsorSegment === 'demo' ? 'Sponsor demo' : 'Sponsor mention'}</span>
-            )}
+            <PlatformGlyphs platforms={episode.platforms} />
+            {episode.sponsorSegment !== 'none' && <span className="truncate">{SPONSOR_SEGMENT_LABELS[episode.sponsorSegment]}</span>}
           </div>
           {episode.error && <div className="mt-1 line-clamp-2 font-mono text-[11px] text-signal-red-deep">{episode.error}</div>}
         </div>

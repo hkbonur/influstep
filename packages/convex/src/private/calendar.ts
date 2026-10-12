@@ -1,4 +1,5 @@
 import { v } from 'convex/values'
+import type { Platform } from '@influstep/shared'
 import type { Doc } from '../_generated/dataModel'
 import { query } from '../_generated/server'
 import { addDays } from '../core/dates'
@@ -8,11 +9,13 @@ export interface CalendarEpisode {
   title: string
   status: Doc<'episodes'>['status']
   sponsorSegment: Doc<'episodes'>['sponsorSegment']
+  /** Where this episode goes (the episode's own platforms, not the persona's). */
+  platforms: Platform[]
   scheduledAt: number
   plannedFor: string
   variantKey?: string
   error?: string
-  persona: { _id: Doc<'personas'>['_id']; name: string; handle: string; platforms: Doc<'personas'>['platforms'] }
+  persona: { _id: Doc<'personas'>['_id']; name: string; handle: string }
 }
 
 /** Seven days from `weekStart`, every persona, episodes ordered by publish time. */
@@ -37,11 +40,12 @@ export const week = query({
           title: episode.title,
           status: episode.status,
           sponsorSegment: episode.sponsorSegment,
+          platforms: episode.platforms,
           scheduledAt: episode.scheduledAt,
           plannedFor: episode.plannedFor,
           variantKey: episode.variantKey,
           error: episode.error,
-          persona: { _id: persona._id, name: persona.name, handle: persona.handle, platforms: persona.platforms },
+          persona: { _id: persona._id, name: persona.name, handle: persona.handle },
         })
       }
       episodes.sort((a, b) => a.scheduledAt - b.scheduledAt)

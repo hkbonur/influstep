@@ -2,6 +2,7 @@ import { v } from 'convex/values'
 import { internal } from '../_generated/api'
 import { mutation, query } from '../_generated/server'
 import { enqueueJob } from '../jobs/queue'
+import { refusal } from '../lib/errors'
 
 export const list = query({
   args: {},
@@ -62,8 +63,8 @@ export const runAction = mutation({
   handler: async (ctx, args) => {
     const item = await ctx.db.get(args.itemId)
     if (!item) throw new Error('checklist item not found')
-    if (!item.action) throw new Error('this item has no action')
-    if (item.action.kind !== 'open_browser') throw new Error(`"${item.action.kind}" is done on the Providers page, not by the runner`)
+    if (!item.action) throw refusal('This item has no action.')
+    if (item.action.kind !== 'open_browser') throw refusal(`"${item.action.kind}" is done on the Providers page, not by the runner.`)
     return enqueueJob(ctx, {
       kind: 'open_browser',
       payload: { url: item.action.url, checklistItemId: item._id },

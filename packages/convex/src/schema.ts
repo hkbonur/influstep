@@ -2,11 +2,13 @@ import { defineSchema, defineTable } from 'convex/server'
 import { v } from 'convex/values'
 import {
   agentRoleValidator,
+  aspectRatioValidator,
   checklistActionValidator,
   checklistStatusValidator,
   conversionKindValidator,
   conversionViaValidator,
   decisionValidator,
+  episodeFormatValidator,
   episodeStatusValidator,
   experimentKindValidator,
   experimentStatusValidator,
@@ -15,9 +17,11 @@ import {
   jobStatusValidator,
   metricCountsValidator,
   metricKeyValidator,
+  platformFormatValidator,
   platformValidator,
   renderValidator,
   scriptValidator,
+  shotPlanValidator,
   shotValidator,
   signalSourceValidator,
   signalStatusValidator,
@@ -53,7 +57,8 @@ export default defineSchema({
     // The persona "bible": how it speaks, what it never says. Read by the writer.
     bible: v.string(),
     pillars: v.array(v.string()),
-    platforms: v.array(platformValidator),
+    // One format per platform the persona publishes on; the list is the persona's platforms (core/formats.ts).
+    formats: v.array(platformFormatValidator),
     voiceId: v.string(),
     // 0..1 share of episodes that carry the sponsor (CONTEXT.md, "Sponsor dial").
     sponsorDial: v.number(),
@@ -63,8 +68,6 @@ export default defineSchema({
     autoApprove: v.boolean(),
     paused: v.boolean(),
     timezone: v.string(),
-    // Local hour (0-23) publications default to.
-    publishHour: v.number(),
     createdAt: v.number(),
   })
     .index('by_workspace', ['workspaceId'])
@@ -79,9 +82,16 @@ export default defineSchema({
     hook: v.string(),
     script: scriptValidator,
     sponsorSegment: sponsorSegmentValidator,
+    // The platforms this episode goes to: a non-empty subset of the persona's.
+    platforms: v.array(platformValidator),
+    // Set when the episode is scripted, from the persona's formats for its platforms at that moment,
+    // so a later settings change does not alter a written script.
+    format: v.optional(episodeFormatValidator),
+    // The writer's beats, kept so the shots can be derived again when the platforms change.
+    shotPlan: v.optional(shotPlanValidator),
     shots: v.array(shotValidator),
     renders: v.array(renderValidator),
-    // Calendar day (YYYY-MM-DD in the persona's timezone) and the publish instant.
+    // Calendar day (YYYY-MM-DD in the persona's timezone) and the first publish instant among its platforms.
     plannedFor: v.string(),
     scheduledAt: v.number(),
     experimentId: v.optional(v.id('experiments')),
@@ -104,6 +114,8 @@ export default defineSchema({
     episodeId: v.id('episodes'),
     personaId: v.id('personas'),
     platform: platformValidator,
+    // The render this publication uploads: the aspect of the persona's format for its platform.
+    aspect: aspectRatioValidator,
     status: v.union(v.literal('queued'), v.literal('uploading'), v.literal('live'), v.literal('failed')),
     title: v.string(),
     description: v.string(),

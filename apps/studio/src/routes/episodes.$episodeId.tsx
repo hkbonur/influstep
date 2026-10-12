@@ -2,19 +2,36 @@ import { api } from '@influstep/convex/_generated/api'
 import type { Id } from '@influstep/convex/_generated/dataModel'
 import {
   CONVERSION_KIND_LABELS,
+  DELIVERY_LABELS,
   EXPERIMENT_KIND_LABELS,
   METRIC_LABELS,
   PLATFORM_LABELS,
   SIGNAL_SOURCE_LABELS,
   VALUE_LABEL,
+  formatLength,
+  platformsOpen,
+  type Platform,
 } from '@influstep/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
 import React from 'react'
 import { ScriptEditor } from '@/components/script-editor'
-import { SponsorPill, StatusPill } from '@/components/status'
-import { AttributionNote, Button, ErrorLine, Eyebrow, Input, MockNote, Mono, PageHeader, Pill, Skeleton } from '@/components/ui'
+import { PlatformGlyphs, SponsorPill, StatusPill } from '@/components/status'
+import {
+  AttributionNote,
+  Button,
+  ErrorLine,
+  Eyebrow,
+  type FormState,
+  Input,
+  MockNote,
+  Mono,
+  PageHeader,
+  Pill,
+  Skeleton,
+} from '@/components/ui'
 import { cn } from '@/lib/cn'
+import { errorMessage } from '@/lib/errors'
 import { formatCount, formatDateTime, formatDay, formatMoney, relativeTime } from '@/lib/format'
 
 export const Route = createFileRoute('/episodes/$episodeId')({ component: EpisodePage })
@@ -41,7 +58,7 @@ function EpisodePage() {
     try {
       await action()
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      setError(errorMessage(caught))
     }
   }
   const terminal = episode.status === 'measured' || episode.status === 'killed'
@@ -60,7 +77,15 @@ function EpisodePage() {
             </Link>{' '}
             <Mono className="text-ash">@{persona.handle}</Mono> ·{' '}
             {formatDay(episode.plannedFor, { weekday: 'long', month: 'long', day: 'numeric' })} · <StatusPill status={episode.status} />{' '}
-            <SponsorPill segment={episode.sponsorSegment} />
+            <SponsorPill segment={episode.sponsorSegment} /> <PlatformGlyphs platforms={episode.platforms} />
+            {episode.format && (
+              <>
+                {' '}
+                <Mono className="whitespace-nowrap text-ash">
+                  {formatLength(episode.format.lengthSec)} · {DELIVERY_LABELS[episode.format.delivery]}
+                </Mono>
+              </>
+            )}
           </>
         }
         actions={
@@ -85,6 +110,12 @@ function EpisodePage() {
             )}
           </>
         }
+      />
+      <PlatformsSection
+        episodeId={episodeId}
+        platforms={episode.platforms}
+        personaPlatforms={data.personaPlatforms}
+        locked={!platformsOpen(episode.status)}
       />
       {error && (
         <div className="mb-4">
@@ -122,7 +153,14 @@ function EpisodePage() {
               Concept: {episode.concept}
               {episode.pillar && <span> · pillar: {episode.pillar}</span>}
             </p>
-            <ScriptEditor key={episode.updatedAt} episode={episode} sponsorName={data.sponsorName} />
+            {/* Keyed on the text it edits: a saved or rewritten script remounts it, a platform change or a move does not. */}
+            <ScriptEditor
+              key={[episode.title, episode.hook, episode.script.hook, episode.script.body, episode.script.sponsor, episode.script.cta].join(
+                '\u0000'
+              )}
+              episode={episode}
+              sponsorName={data.sponsorName}
+            />
           </section>
 
           <section>
@@ -201,6 +239,7 @@ function EpisodePage() {
                     <li key={publication._id} className="grid gap-0.5 py-2 text-sm">
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{PLATFORM_LABELS[publication.platform]}</span>
+                        <Mono className="text-ash">{publication.aspect}</Mono>
                         <Pill
                           tint={
                             publication.status === 'live'
@@ -352,6 +391,57 @@ function EpisodePage() {
         </div>
       </div>
     </>
+  )
+}
+
+/**
+ * Where this episode goes: a subset of the persona's platforms, editable
+ * until it is approved. The checked state is the server's; a failed save
+ * snaps the box back and says why. The last box the persona still offers
+ * cannot be cleared.
+ */
+function PlatformsSection(props: { episodeId: Id<'episodes'>; platforms: Platform[]; personaPlatforms: Platform[]; locked: boolean }) {
+  const setPlatforms = useMutation(api.private.episodes.setPlatforms)
+  const [state, setState] = React.useState<FormState>({ status: 'idle' })
+  const toggle = async (platform: Platform, on: boolean) => {
+    const next = props.personaPlatforms.filter((candidate) => {
+      if (candidate === platform) return on
+      return props.platforms.includes(candidate)
+    })
+    setState({ status: 'saving' })
+    try {
+      await setPlatforms({ episodeId: props.episodeId, platforms: next })
+      setState({ status: 'idle' })
+    } catch (caught) {
+      setState({ status: 'error', message: errorMessage(caught) })
+    }
+  }
+  return (
+    <section className="mb-6 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm">
+      <Eyebrow>Platforms</Eyebrow>
+      {props.personaPlatforms.map((platform) => {
+        const on = props.platforms.includes(platform)
+        const lastOffered = on && props.platforms.filter((candidate) => props.personaPlatforms.includes(candidate)).length === 1
+        return (
+          <label key={platform} className="flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              className="size-3.5 accent-ink"
+              checked={on}
+              disabled={props.locked || state.status === 'saving' || lastOffered}
+              onChange={(event) => toggle(platform, event.target.checked)}
+            />
+            {PLATFORM_LABELS[platform]}
+          </label>
+        )
+      })}
+      {props.locked && <span className="text-xs text-ash">Platforms lock at approval.</span>}
+      {state.status === 'error' && (
+        <div className="basis-full">
+          <ErrorLine>{state.message}</ErrorLine>
+        </div>
+      )}
+    </section>
   )
 }
 

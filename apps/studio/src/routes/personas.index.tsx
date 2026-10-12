@@ -1,11 +1,26 @@
-import { PLATFORMS, PLATFORM_LABELS, type Platform } from '@influstep/shared'
+import type { Platform, PlatformFormat } from '@influstep/shared'
 import { api } from '@influstep/convex/_generated/api'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
 import React from 'react'
+import { FormatFields, defaultFormat } from '@/components/format-fields'
 import { PlatformGlyphs } from '@/components/status'
-import { Button, Empty, ErrorLine, Field, Input, LinkButton, Mono, PageHeader, Pill, Skeleton, Textarea } from '@/components/ui'
+import {
+  Button,
+  Empty,
+  ErrorLine,
+  Field,
+  type FormState,
+  Input,
+  LinkButton,
+  Mono,
+  PageHeader,
+  Pill,
+  Skeleton,
+  Textarea,
+} from '@/components/ui'
 import { cn } from '@/lib/cn'
+import { errorMessage } from '@/lib/errors'
 
 export const Route = createFileRoute('/personas/')({ component: PersonasPage })
 
@@ -43,7 +58,7 @@ function PersonasPage() {
                 </div>
                 <p className="mt-0.5 line-clamp-1 text-ash">{persona.niche}</p>
                 <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ash">
-                  <PlatformGlyphs platforms={persona.platforms} />
+                  <PlatformGlyphs platforms={persona.formats.map((format) => format.platform)} />
                   <span className="tabular">{persona.episodesPerWeek} a week</span>
                   <span className="tabular">sponsor {Math.round(persona.sponsorDial * 100)}%</span>
                   <span>{persona.pillars.join(' · ')}</span>
@@ -88,17 +103,21 @@ function Count(props: { label: string; value: number; tone?: 'blue' | 'red' | 'a
   )
 }
 
+/** A new persona starts on YouTube and TikTok with the default format of each; the operator edits them before creating it. */
+const NEW_PERSONA_PLATFORMS: Platform[] = ['youtube', 'tiktok']
+
+/** How many episodes a new persona publishes unsponsored before the dial applies (CONTEXT.md, "Sponsor dial"). */
+const SPONSOR_RAMP_EPISODES = 10
+
 function NewPersonaForm(props: { onDone: () => void }) {
   const create = useMutation(api.private.personas.create)
-  const [error, setError] = React.useState<string | null>(null)
-  const [busy, setBusy] = React.useState(false)
-  const [platforms, setPlatforms] = React.useState<Platform[]>(['youtube', 'tiktok'])
+  const [state, setState] = React.useState<FormState>({ status: 'idle' })
+  const [formats, setFormats] = React.useState<PlatformFormat[]>(() => NEW_PERSONA_PLATFORMS.map(defaultFormat))
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
     const text = (name: string) => String(form.get(name) ?? '').trim()
-    setBusy(true)
-    setError(null)
+    setState({ status: 'saving' })
     try {
       await create({
         name: text('name'),
@@ -111,20 +130,17 @@ function NewPersonaForm(props: { onDone: () => void }) {
           .split(',')
           .map((pillar) => pillar.trim())
           .filter(Boolean),
-        platforms,
+        formats,
         voiceId: text('voiceId') || 'mock-voice',
         sponsorDial: Number(form.get('sponsorDial') ?? 0.3),
-        sponsorRampEpisodes: 10,
+        sponsorRampEpisodes: SPONSOR_RAMP_EPISODES,
         episodesPerWeek: Number(form.get('episodesPerWeek') ?? 3),
         autoApprove: false,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        publishHour: 16,
       })
       props.onDone()
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
-    } finally {
-      setBusy(false)
+      setState({ status: 'error', message: errorMessage(caught) })
     }
   }
   return (
@@ -153,36 +169,20 @@ function NewPersonaForm(props: { onDone: () => void }) {
       <Field label="Episodes a week">
         <Input name="episodesPerWeek" type="number" min={1} max={7} defaultValue={3} />
       </Field>
-      <Field label="Sponsor dial" hint="Share of episodes that carry Formstep, after the first ten.">
+      <Field label="Sponsor dial" hint={`Share of episodes that carry the sponsor, after the first ${SPONSOR_RAMP_EPISODES}.`}>
         <Input name="sponsorDial" type="number" min={0} max={1} step={0.1} defaultValue={0.3} />
       </Field>
       <Field label="Voice id" hint="ElevenLabs voice id in real mode.">
         <Input name="voiceId" placeholder="mock-voice" />
       </Field>
-      <fieldset className="flex flex-col gap-1.5">
-        <legend className="text-xs font-medium text-graphite">Platforms</legend>
-        <div className="flex gap-3">
-          {PLATFORMS.map((platform) => (
-            <label key={platform} className="flex items-center gap-1.5 text-sm">
-              <input
-                type="checkbox"
-                checked={platforms.includes(platform)}
-                onChange={(event) =>
-                  setPlatforms((current) => (event.target.checked ? [...current, platform] : current.filter((item) => item !== platform)))
-                }
-              />
-              {PLATFORM_LABELS[platform]}
-            </label>
-          ))}
-        </div>
-      </fieldset>
-      {error && (
+      <FormatFields value={formats} onChange={setFormats} className="sm:col-span-2" />
+      {state.status === 'error' && (
         <div className="sm:col-span-2">
-          <ErrorLine>{error}</ErrorLine>
+          <ErrorLine>{state.message}</ErrorLine>
         </div>
       )}
       <div className="flex gap-2 sm:col-span-2">
-        <Button type="submit" variant="primary" busy={busy} disabled={platforms.length === 0}>
+        <Button type="submit" variant="primary" busy={state.status === 'saving'}>
           Create persona
         </Button>
         <Button variant="ghost" onClick={props.onDone}>

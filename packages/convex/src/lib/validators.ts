@@ -5,6 +5,7 @@ import {
   CHECKLIST_STATUSES,
   CONVERSION_KINDS,
   CONVERSION_VIAS,
+  DELIVERIES,
   EPISODE_STATUSES,
   EXPERIMENT_KINDS,
   EXPERIMENT_STATUSES,
@@ -42,6 +43,27 @@ export const experimentStatusValidator = literals(EXPERIMENT_STATUSES)
 export const checklistStatusValidator = literals(CHECKLIST_STATUSES)
 export const conversionKindValidator = literals(CONVERSION_KINDS)
 export const conversionViaValidator = literals(CONVERSION_VIAS)
+export const deliveryValidator = literals(DELIVERIES)
+
+/** A persona's format for one platform (shared `PlatformFormat`). Ranges are checked by core/formats.ts. */
+export const platformFormatValidator = v.object({
+  platform: platformValidator,
+  lengthSec: v.number(),
+  aspect: aspectRatioValidator,
+  delivery: deliveryValidator,
+  hookNote: v.string(),
+  publishHour: v.number(),
+})
+
+/** The format an episode was scripted to (shared `EpisodeFormat`): its length, delivery, and one frozen cut per platform. */
+export const episodeFormatValidator = v.object({
+  lengthSec: v.number(),
+  delivery: deliveryValidator,
+  cuts: v.array(v.object({ platform: platformValidator, aspect: aspectRatioValidator })),
+})
+
+/** The writer's beats: a named tool and what to show. Stored so the shots can be derived again for another delivery. */
+export const shotPlanValidator = v.array(v.object({ title: v.string(), voiceover: v.string(), tool: v.string(), url: v.string() }))
 
 export const scriptValidator = v.object({
   hook: v.string(),

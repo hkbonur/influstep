@@ -1,5 +1,5 @@
 import { v } from 'convex/values'
-import { PLATFORM_ASPECT, produceResultSchema, publishResultSchema, type RunnerJob } from '@influstep/shared'
+import { produceResultSchema, publishResultSchema, type RunnerJob } from '@influstep/shared'
 import type { Doc, Id } from '../_generated/dataModel'
 import { internalMutation, internalQuery } from '../_generated/server'
 import { completeProduction, completePublication, failPublication, startProduction } from '../core/episodes'
@@ -125,9 +125,10 @@ export const dispatchDuePublications = internalMutation({
       if (!episode || episode.status !== 'scheduled') continue
       const persona = await ctx.db.get(publication.personaId)
       if (!persona || persona.paused) continue
-      const render = episode.renders.find((candidate) => candidate.aspect === PLATFORM_ASPECT[publication.platform])
+      // The publication names its cut: the aspect of the persona's format for its platform.
+      const render = episode.renders.find((candidate) => candidate.aspect === publication.aspect)
       if (!render) {
-        await failPublication(ctx, publication._id, `no ${PLATFORM_ASPECT[publication.platform]} render`)
+        await failPublication(ctx, publication._id, `no ${publication.aspect} render`)
         continue
       }
       const renderUrl = await ctx.storage.getUrl(render.storageId)

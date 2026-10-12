@@ -1,9 +1,14 @@
 import {
-  PLATFORM_ASPECT,
+  EPISODE_STATUS_LABELS,
+  PLATFORM_LABELS,
   canTransition,
+  formatAspects,
   makeSlug,
+  platformsOpen,
+  resolveEpisodeFormat,
   slugify,
-  type AspectRatio,
+  type Delivery,
+  type EpisodeFormat,
   type Platform,
   type ProducePayload,
   type ProduceResult,
@@ -14,11 +19,13 @@ import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx } from '../_generated/server'
 import { applyEvent } from '../internal/data'
 import { enqueueJob } from '../jobs/queue'
-import type { ScriptDraft } from '../providers/llm'
+import { PRESENTER_TOOL, type ScriptDraft } from '../providers/llm'
 import { describePublication } from './attribution'
 import { instantAt } from './dates'
 import { activeDiscountCodeFor } from './discounts'
+import { earliestPublishAt, formatFor, formatsFor, platformsOf } from './formats'
 import { workspaceOf } from './workspace'
+import { refusal } from '../lib/errors'
 
 /**
  * Episode rules that touch several tables at once: approval and its sign-in
@@ -38,8 +45,10 @@ export interface PlannedEpisodeInput {
   variantKey?: string
 }
 
+/** A new idea goes to every platform the persona has; the operator narrows it per episode. */
 export async function createIdea(ctx: MutationCtx, persona: Doc<'personas'>, input: PlannedEpisodeInput): Promise<Id<'episodes'>> {
   const now = Date.now()
+  const platforms = platformsOf(persona)
   const episodeId = await ctx.db.insert('episodes', {
     personaId: input.personaId,
     slug: `${slugify(input.concept) || 'episode'}-${makeSlug(4)}`,
@@ -49,10 +58,11 @@ export async function createIdea(ctx: MutationCtx, persona: Doc<'personas'>, inp
     hook: '',
     script: { hook: '', body: '', sponsor: '', cta: '' },
     sponsorSegment: input.sponsorSegment,
+    platforms,
     shots: [],
     renders: [],
     plannedFor: input.plannedFor,
-    scheduledAt: instantAt(input.plannedFor, persona.publishHour, persona.timezone),
+    scheduledAt: earliestPublishAt(persona, platforms, input.plannedFor),
     experimentId: input.experimentId,
     variantKey: input.variantKey,
     signalIds: input.signalIds,
@@ -65,18 +75,29 @@ export async function createIdea(ctx: MutationCtx, persona: Doc<'personas'>, inp
   return episodeId
 }
 
-/** The writer's draft becomes the episode's script and shot list. */
-export function shotsFromDraft(draft: ScriptDraft, sponsorName: string): Shot[] {
-  return draft.shotPlan.map((shot, index) => {
+/**
+ * The writer's beats become shots the way the delivery asks: a talking head
+ * speaks every beat to camera, a screen-only episode records every beat, and
+ * screen with avatar opens on the presenter saying the hook before the screens.
+ * A presenter beat has no screen to record, so it is a take under every
+ * delivery: the beats a talking-head script stored survive a widening to a
+ * screen delivery.
+ */
+export function shotsFromDraft(draft: Pick<ScriptDraft, 'hook' | 'shotPlan'>, sponsorName: string, delivery: Delivery): Shot[] {
+  return draft.shotPlan.map((beat, index) => {
     const id = `shot-${index + 1}`
-    if (shot.tool.toLowerCase() === sponsorName.toLowerCase()) {
+    if (delivery === 'talking_head' || beat.tool === PRESENTER_TOOL) {
+      return { kind: 'avatar', id, title: beat.title, voiceover: beat.voiceover }
+    }
+    if (delivery === 'screen_with_avatar' && index === 0) return { kind: 'avatar', id, title: beat.title, voiceover: draft.hook }
+    if (beat.tool.toLowerCase() === sponsorName.toLowerCase()) {
       return {
         kind: 'screen',
         id,
-        title: shot.title,
-        voiceover: shot.voiceover,
+        title: beat.title,
+        voiceover: beat.voiceover,
         recipe: [
-          { step: 'goto', url: shot.url },
+          { step: 'goto', url: beat.url },
           { step: 'wait', ms: 1500 },
           { step: 'scroll', y: 400 },
           { step: 'wait', ms: 1500 },
@@ -86,13 +107,102 @@ export function shotsFromDraft(draft: ScriptDraft, sponsorName: string): Shot[] 
     return {
       kind: 'screen',
       id,
-      title: shot.title,
-      voiceover: shot.voiceover,
+      title: beat.title,
+      voiceover: beat.voiceover,
       recipe: [
-        { step: 'goto', url: shot.url },
+        { step: 'goto', url: beat.url },
         { step: 'wait', ms: 2000 },
       ],
     }
+  })
+}
+
+/**
+ * The format an episode is written to for the platforms it goes to, and the
+ * shots that format's delivery records. Scripting stores both; changing the
+ * platforms of a scripted episode derives them again from the stored beats.
+ */
+export function formatAndShots(args: {
+  persona: Pick<Doc<'personas'>, 'formats'>
+  platforms: Platform[]
+  draft: Pick<ScriptDraft, 'hook' | 'shotPlan'>
+  sponsorName: string
+}): { format: EpisodeFormat; shots: Shot[] } {
+  const format = resolveEpisodeFormat(formatsFor(args.persona, args.platforms))
+  return { format, shots: shotsFromDraft(args.draft, args.sponsorName, format.delivery) }
+}
+
+/**
+ * Where an episode goes, narrowed or widened within the persona's platforms.
+ * Open while nothing is recorded: an idea only moves its publish time, a
+ * scripted episode also gets the format and shots of its new platforms.
+ */
+export async function setEpisodePlatforms(ctx: MutationCtx, episodeId: Id<'episodes'>, platforms: Platform[]): Promise<void> {
+  const episode = await ctx.db.get(episodeId)
+  if (!episode) throw new Error(`episode ${episodeId} not found`)
+  if (!platformsOpen(episode.status))
+    throw refusal(`The platforms are locked once recording starts; this episode is at "${EPISODE_STATUS_LABELS[episode.status]}".`)
+  const persona = await ctx.db.get(episode.personaId)
+  if (!persona) throw new Error(`persona ${episode.personaId} not found`)
+  const chosen = formatsFor(persona, platforms).map((format) => format.platform)
+  if (chosen.length === 0) throw refusal('An episode needs at least one platform.')
+  const base = { platforms: chosen, scheduledAt: earliestPublishAt(persona, chosen, episode.plannedFor), updatedAt: Date.now() }
+  if (episode.status === 'idea') {
+    await ctx.db.patch(episodeId, base)
+    return
+  }
+  if (!episode.shotPlan) throw new Error(`episode ${episodeId} is scripted but has no shot plan to derive its shots from`)
+  const workspace = await workspaceOf(ctx, persona)
+  const derived = formatAndShots({
+    persona,
+    platforms: chosen,
+    draft: { hook: episode.hook, shotPlan: episode.shotPlan },
+    sponsorName: workspace.sponsorName,
+  })
+  await ctx.db.patch(episodeId, { ...base, ...derived })
+}
+
+/**
+ * A platform leaves the persona's settings. Every episode still going there
+ * is narrowed to what remains while its platforms are open, left alone once
+ * it is live, measured or killed, and refused by name while an agent is in
+ * the middle of it. Every refusal is found before anything is narrowed, so a
+ * refused save changes nothing. Runs after the persona's formats are saved,
+ * so the narrowed episodes derive their format from the new settings.
+ */
+export async function reconcilePlatformDrop(ctx: MutationCtx, personaId: Id<'personas'>, dropped: Platform[]): Promise<void> {
+  if (dropped.length === 0) return
+  const episodes = await ctx.db
+    .query('episodes')
+    .withIndex('by_persona', (q) => q.eq('personaId', personaId))
+    .collect()
+  const narrowing: { episodeId: Id<'episodes'>; title: string; platforms: Platform[] }[] = []
+  for (const episode of episodes) {
+    const gone = dropped.filter((platform) => episode.platforms.includes(platform))
+    if (gone.length === 0) continue
+    if (episode.status === 'published' || episode.status === 'measured' || episode.status === 'killed') continue
+    const goneLabel = gone.map((platform) => PLATFORM_LABELS[platform]).join(' and ')
+    if (!platformsOpen(episode.status)) {
+      throw refusal(
+        `"${episode.title}" is at "${EPISODE_STATUS_LABELS[episode.status]}" with ${goneLabel} in its cuts. Kill it, or remove ${goneLabel} once it is published.`
+      )
+    }
+    const remaining = episode.platforms.filter((platform) => !dropped.includes(platform))
+    if (remaining.length === 0) throw refusal(`"${episode.title}" goes only to ${goneLabel}. Kill it, or keep ${goneLabel}.`)
+    narrowing.push({ episodeId: episode._id, title: episode.title, platforms: remaining })
+  }
+  if (narrowing.length === 0) return
+  for (const next of narrowing) await setEpisodePlatforms(ctx, next.episodeId, next.platforms)
+  // Nothing silent (PRODUCT.md): the persona says in its chat which episodes it moved off the platform.
+  const droppedLabel = dropped.map((platform) => PLATFORM_LABELS[platform]).join(' and ')
+  const lines = narrowing.map(
+    (next) => `"${next.title}" now goes to ${next.platforms.map((platform) => PLATFORM_LABELS[platform]).join(', ')}.`
+  )
+  await ctx.db.insert('messages', {
+    personaId,
+    author: 'persona',
+    text: `${droppedLabel} is off my list, so I took it out of my open episodes. ${lines.join(' ')}`,
+    createdAt: Date.now(),
   })
 }
 
@@ -116,7 +226,7 @@ export function toolsNeededBy(shots: Shot[]): string[] {
 /**
  * Approval: either the producer can start, or a sign-in is missing and the
  * episode waits on the operator with a checklist item that opens the runner's
- * browser at the tool.
+ * browser at the tool. A talking-head episode opens no screen, so it never waits.
  */
 export async function approveEpisode(ctx: MutationCtx, episodeId: Id<'episodes'>): Promise<void> {
   const episode = await ctx.db.get(episodeId)
@@ -150,25 +260,33 @@ export async function approveEpisode(ctx: MutationCtx, episodeId: Id<'episodes'>
     }
     return
   }
+  await applyEvent(ctx, episodeId, { type: 'approved' })
   await startProduction(ctx, episode, persona)
 }
 
+/** The producer renders one cut per aspect the episode's platforms publish, as fixed when it was scripted. */
 export async function startProduction(ctx: MutationCtx, episode: Doc<'episodes'>, persona: Doc<'personas'>): Promise<void> {
-  const aspects = [...new Set(persona.platforms.map((platform) => PLATFORM_ASPECT[platform]))] as AspectRatio[]
+  if (!episode.format) throw new Error(`episode ${episode._id} has no format: it cannot be produced before it is scripted`)
   const payload: ProducePayload = {
     episodeId: episode._id,
     personaHandle: persona.handle,
     voiceId: persona.voiceId,
     shots: episode.shots,
-    aspects,
+    aspects: formatAspects(episode.format),
   }
   await enqueueJob(ctx, { kind: 'produce', payload, personaId: persona._id, episodeId: episode._id })
 }
 
-/** The runner rendered the episode: store renders, then queue one publication per platform. */
+/**
+ * The runner rendered the episode: store renders, then queue one publication
+ * per cut the episode was produced to, each with the cut's aspect at that
+ * platform's current hour. The cut is the episode's own, frozen when it was
+ * scripted; the hour and timezone are the persona's today.
+ */
 export async function completeProduction(ctx: MutationCtx, episodeId: Id<'episodes'>, result: ProduceResult): Promise<void> {
   const episode = await ctx.db.get(episodeId)
   if (!episode) throw new Error(`episode ${episodeId} not found`)
+  if (!episode.format) throw new Error(`episode ${episodeId} has no format: it cannot be scheduled before it is scripted`)
   const persona = await ctx.db.get(episode.personaId)
   if (!persona) throw new Error(`persona ${episode.personaId} not found`)
   const workspace = await workspaceOf(ctx, persona)
@@ -181,7 +299,8 @@ export async function completeProduction(ctx: MutationCtx, episodeId: Id<'episod
 
   // The same code on every platform: the episode's own, else the persona's.
   const discountCode = await activeDiscountCodeFor(ctx, persona._id, episodeId)
-  for (const platform of persona.platforms) {
+  for (const cut of episode.format.cuts) {
+    const platform = cut.platform
     const existing = await ctx.db
       .query('publications')
       .withIndex('by_episode', (q) => q.eq('episodeId', episodeId))
@@ -195,14 +314,16 @@ export async function completeProduction(ctx: MutationCtx, episodeId: Id<'episod
       episodeId,
       personaId: persona._id,
       platform,
+      aspect: cut.aspect,
       status: 'queued',
       title: episode.title,
       ...describePublication({ workspace, episode, platform, linkSlug: link.slug, discountCode }),
       linkId,
-      scheduledAt: episode.scheduledAt,
+      scheduledAt: instantAt(episode.plannedFor, formatFor(persona, platform).publishHour, persona.timezone),
       mock: result.renders.some((render) => render.mock),
     })
   }
+  await ctx.db.patch(episodeId, { scheduledAt: earliestPublishAt(persona, episode.platforms, episode.plannedFor) })
   await applyEvent(ctx, episodeId, { type: 'scheduled' })
 }
 

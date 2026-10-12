@@ -3,6 +3,7 @@ import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
 import React from 'react'
 import { Button, Empty, ErrorLine, Eyebrow, LinkButton, Mono, PageHeader, Skeleton } from '@/components/ui'
+import { errorMessage } from '@/lib/errors'
 import { formatDateTime } from '@/lib/format'
 
 export const Route = createFileRoute('/checklist')({ component: ChecklistPage })
@@ -54,7 +55,7 @@ function ChecklistRow(props: { item: Item }) {
       await runAction({ itemId: props.item._id })
       setQueued(true)
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      setError(errorMessage(caught))
     }
   }
   const { item } = props

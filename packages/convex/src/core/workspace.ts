@@ -1,5 +1,6 @@
 import type { Doc } from '../_generated/dataModel'
 import type { QueryCtx } from '../_generated/server'
+import { refusal } from '../lib/errors'
 
 /**
  * The one workspace today. Every handler that needs the sponsor, the app URL
@@ -12,7 +13,7 @@ type Reader = { db: QueryCtx['db'] }
 /** The single workspace, for handlers that start from nothing (the Providers page, creating a persona). */
 export async function requireWorkspace(ctx: Reader): Promise<Doc<'workspaces'>> {
   const workspace = await ctx.db.query('workspaces').first()
-  if (!workspace) throw new Error('Run the seed first: there is no workspace')
+  if (!workspace) throw refusal('There is no workspace yet. Run the seed first.')
   return workspace
 }
 

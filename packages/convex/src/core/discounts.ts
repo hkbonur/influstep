@@ -1,8 +1,9 @@
-import { normalizeDiscountCode } from '@influstep/shared'
+import { EPISODE_STATUS_LABELS, normalizeDiscountCode } from '@influstep/shared'
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import { describePublication } from './attribution'
 import { workspaceOf } from './workspace'
+import { refusal } from '../lib/errors'
 
 /**
  * Discount codes (docs/plan.md, "Value per episode"). The operator creates a
@@ -66,16 +67,16 @@ export async function giveDiscountCode(
   args: { personaId: Id<'personas'>; code: string; offer: string; episodeId?: Id<'episodes'> }
 ): Promise<Id<'discountCodes'>> {
   const code = normalizeDiscountCode(args.code)
-  if (!code) throw new Error('a code is 3 to 24 letters or digits')
+  if (!code) throw refusal('A code is 3 to 24 letters or digits.')
   const offer = args.offer.trim()
-  if (!offer) throw new Error('say what the code offers, such as "20% off Pro for 3 months"')
+  if (!offer) throw refusal('Say what the code offers, such as "20% off Pro for 3 months".')
   const persona = await ctx.db.get(args.personaId)
   if (!persona) throw new Error(`persona ${args.personaId} not found`)
   const episode = args.episodeId ? await ctx.db.get(args.episodeId) : null
   if (args.episodeId && !episode) throw new Error(`episode ${args.episodeId} not found`)
   if (episode && episode.personaId !== persona._id) throw new Error(`episode ${episode._id} belongs to another persona`)
   if (episode && !CODE_BINDABLE_STATUSES.has(episode.status)) {
-    throw new Error(`"${episode.title}" is ${episode.status}; its descriptions cannot change any more`)
+    throw refusal(`"${episode.title}" is at "${EPISODE_STATUS_LABELS[episode.status]}"; its descriptions cannot change any more.`)
   }
 
   const elsewhere = (
@@ -84,7 +85,7 @@ export async function giveDiscountCode(
       .withIndex('by_code', (q) => q.eq('code', code))
       .collect()
   ).find((row) => row.active && (row.personaId !== persona._id || row.episodeId !== args.episodeId))
-  if (elsewhere) throw new Error(await inUseMessage(ctx, persona, elsewhere))
+  if (elsewhere) throw refusal(await inUseMessage(ctx, persona, elsewhere))
 
   const now = Date.now()
   // Exact scope: the same episode, or persona-wide when neither has one.
@@ -116,12 +117,12 @@ async function inUseMessage(ctx: Reader, persona: Doc<'personas'>, row: Doc<'dis
   if (row.personaId !== persona._id) {
     const owner = await ctx.db.get(row.personaId)
     if (!owner) throw new Error(`persona ${row.personaId} of code ${row._id} not found`)
-    return `${row.code} is already ${owner.name}'s code; retire it first`
+    return `${row.code} is already ${owner.name}'s code; retire it first.`
   }
-  if (row.episodeId === undefined) return `${row.code} is already ${persona.name}'s persona-wide code; retire it first`
+  if (row.episodeId === undefined) return `${row.code} is already ${persona.name}'s persona-wide code; retire it first.`
   const bound = await ctx.db.get(row.episodeId)
   if (!bound) throw new Error(`episode ${row.episodeId} of code ${row._id} not found`)
-  return `${row.code} is already bound to "${bound.title}"; retire it first`
+  return `${row.code} is already bound to "${bound.title}"; retire it first.`
 }
 
 /** Retiring a code takes it out of the queued descriptions it was in; a live description keeps it, and Polar still accepts it. */

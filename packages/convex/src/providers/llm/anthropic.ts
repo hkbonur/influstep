@@ -1,8 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod'
 import { z } from 'zod'
+import { DELIVERY_LABELS, formatLength } from '@influstep/shared'
 import { requireEnv } from '../../lib/env'
-import type { LlmProvider, ScriptBrief, ScriptDraft } from './types'
+import { PRESENTER_TOOL, WORDS_PER_SECOND, type LlmProvider, type ScriptBrief, type ScriptDraft } from './types'
 
 const MODEL = 'claude-opus-5-5'
 
@@ -39,7 +40,7 @@ export const anthropicLlm: LlmProvider = {
         {
           role: 'user',
           content: [
-            `Write a 45 to 75 second spoken script for a short video on ${brief.platforms.join(', ')}.`,
+            lengthInstruction(brief),
             `Concept: ${brief.concept}`,
             `Pillar: ${brief.pillar}`,
             brief.variant ? `This episode is the "${brief.variant.key}" variant of an experiment: ${brief.variant.description}` : '',
@@ -48,7 +49,8 @@ export const anthropicLlm: LlmProvider = {
             brief.signals.length > 0
               ? `What the audience is talking about:\n${brief.signals.map((signal) => `- ${signal.title}: ${signal.summary} (${signal.url})`).join('\n')}`
               : '',
-            `Return the hook as its own field and again as script.hook. The shot plan lists the screens to record: a tool name and the URL to open, two to four shots.`,
+            `Hook conventions of the platforms this goes to, all of which the hook must satisfy:\n- ${brief.format.hookNotes.join('\n- ')}`,
+            `Return the hook as its own field and again as script.hook. ${deliveryInstruction(brief)}`,
           ]
             .filter(Boolean)
             .join('\n\n'),
@@ -77,6 +79,20 @@ export const anthropicLlm: LlmProvider = {
     if (!text) throw new Error('The model returned no text')
     return text.text
   },
+}
+
+function lengthInstruction(brief: ScriptBrief): string {
+  const { lengthSec, delivery } = brief.format
+  const words = Math.round(lengthSec * WORDS_PER_SECOND)
+  return `Write a spoken script of about ${formatLength(lengthSec)} (${lengthSec} seconds) for a video delivered as "${DELIVERY_LABELS[delivery]}". At ${WORDS_PER_SECOND} words per second that is a budget of about ${words} words across hook, body, sponsor and call to action.`
+}
+
+function deliveryInstruction(brief: ScriptBrief): string {
+  if (brief.format.delivery === 'talking_head')
+    return `Delivery is talking head: the presenter speaks to camera and no screen is recorded. The shot plan is a list of beats, each with tool "${PRESENTER_TOOL}" and an empty url.`
+  if (brief.format.delivery === 'screen_only')
+    return `Delivery is screen only: the shot plan lists the screens to record, two to four shots, and every beat names the tool on screen and the URL to open.`
+  return `Delivery is screen with avatar: the first beat of the shot plan is the presenter speaking the hook (tool "${PRESENTER_TOOL}", empty url); the beats after it are the screens to record, each naming the tool on screen and the URL to open.`
 }
 
 function sponsorInstruction(brief: ScriptBrief): string {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addDays, formatCount, formatMoney, weekStart } from './format'
+import { addDays, formatCount, formatHour, formatMoney, weekStart } from './format'
 
 describe('format', () => {
   it('shortens counts the way a report reads them', () => {
@@ -13,6 +13,10 @@ describe('format', () => {
     expect(usd.replace(/\D/g, '')).toBe('1235')
     expect(usd).toMatch(/\$|USD/)
     expect(formatMoney(0, 'EUR').replace(/\D/g, '')).toBe('0')
+  })
+  it('writes a publish hour with two digits and no minutes', () => {
+    expect(formatHour(9)).toBe('09:00')
+    expect(formatHour(16)).toBe('16:00')
   })
   it('finds Monday and walks days across a month end', () => {
     expect(weekStart('2026-10-09')).toBe('2026-10-05')

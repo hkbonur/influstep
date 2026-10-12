@@ -2,6 +2,7 @@ import { api } from '@influstep/convex/_generated/api'
 import type { Doc } from '@influstep/convex/_generated/dataModel'
 import { useMutation } from 'convex/react'
 import React from 'react'
+import { errorMessage } from '@/lib/errors'
 import { Button, ErrorLine, Field, Input, Textarea } from './ui'
 
 const EDITABLE = new Set<Doc<'episodes'>['status']>(['idea', 'scripted', 'waiting_on_you', 'failed'])
@@ -26,7 +27,7 @@ export function ScriptEditor(props: { episode: Doc<'episodes'>; sponsorName: str
       await update({ episodeId: props.episode._id, title, script })
       setSavedAt(Date.now())
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      setError(errorMessage(caught))
     } finally {
       setSaving(false)
     }

@@ -1,4 +1,6 @@
-import type { SponsorSegment } from '@influstep/shared'
+import type { Infer } from 'convex/values'
+import type { Delivery, SponsorSegment } from '@influstep/shared'
+import type { shotPlanValidator } from '../../lib/validators'
 
 /**
  * What the writer asks of a language model. Both adapters return the same
@@ -13,16 +15,22 @@ export interface ScriptBrief {
   variant?: { key: string; description: string }
   directives: string[]
   signals: { title: string; summary: string; url: string }[]
-  /** Platforms the episode goes to, so the writer keeps the length right. */
-  platforms: string[]
+  /** The episode's format: how long, who is on camera, and the hook convention of every platform it goes to. */
+  format: { lengthSec: number; delivery: Delivery; hookNotes: string[] }
 }
+
+/** Spoken pace the length budget is written for. */
+export const WORDS_PER_SECOND = 2.4
+
+/** The "tool" of a beat the presenter speaks to camera: no screen, no URL, an avatar take whatever the delivery. */
+export const PRESENTER_TOOL = 'presenter'
 
 export interface ScriptDraft {
   title: string
   hook: string
   script: { hook: string; body: string; sponsor: string; cta: string }
-  /** The screen the producer records, as a named tool and what to show. */
-  shotPlan: { title: string; voiceover: string; tool: string; url: string }[]
+  /** The beats the producer records: a named tool and what to show, or the presenter (tool PRESENTER_TOOL, no URL). */
+  shotPlan: Infer<typeof shotPlanValidator>
   /** Short labels the researcher later matches comments and signals against. */
   topics: string[]
 }

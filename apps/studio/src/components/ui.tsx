@@ -6,6 +6,9 @@ import { TINT_CLASS } from './status'
 
 /** The small vocabulary every screen shares (DESIGN.md, Components). */
 
+/** One form is idle, saving, or showing why the save failed; never two of those at once. */
+export type FormState = { status: 'idle' } | { status: 'saving' } | { status: 'error'; message: string }
+
 type ButtonVariant = 'primary' | 'ghost' | 'destructive' | 'outline'
 
 const BUTTON: Record<ButtonVariant, string> = {

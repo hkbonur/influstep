@@ -4,6 +4,7 @@ import { useMutation, useQuery } from 'convex/react'
 import React from 'react'
 import { Button, ErrorLine, Eyebrow, Field, Input, Mono, PageHeader, Pill, Skeleton } from '@/components/ui'
 import { cn } from '@/lib/cn'
+import { errorMessage } from '@/lib/errors'
 import { relativeTime } from '@/lib/format'
 
 export const Route = createFileRoute('/providers')({ component: ProvidersPage })
@@ -169,7 +170,7 @@ function WorkspaceForm() {
         SAVED_FOR_MS
       )
     } catch (caught) {
-      setState({ status: 'error', message: caught instanceof Error ? caught.message : String(caught) })
+      setState({ status: 'error', message: errorMessage(caught) })
     }
   }
   return (

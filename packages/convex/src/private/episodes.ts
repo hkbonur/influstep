@@ -1,14 +1,16 @@
 import { v } from 'convex/values'
-import { canTransition } from '@influstep/shared'
+import { canTransition, EPISODE_STATUS_LABELS } from '@influstep/shared'
 import { mutation, query } from '../_generated/server'
 import { instantAt } from '../core/dates'
 import { activeDiscountCodeFor } from '../core/discounts'
-import { approveEpisode, startProduction } from '../core/episodes'
+import { approveEpisode, setEpisodePlatforms, startProduction } from '../core/episodes'
+import { earliestPublishAt, formatFor, platformsOf } from '../core/formats'
 import { countConversions } from '../core/report'
 import { workspaceOf } from '../core/workspace'
 import { applyEvent } from '../internal/data'
 import { enqueueJob } from '../jobs/queue'
-import { scriptValidator } from '../lib/validators'
+import { platformValidator, scriptValidator } from '../lib/validators'
+import { refusal } from '../lib/errors'
 
 export const get = query({
   args: { episodeId: v.id('episodes') },
@@ -72,6 +74,8 @@ export const get = query({
     return {
       episode,
       persona,
+      // Where the episode may go: the page offers a subset of these.
+      personaPlatforms: platformsOf(persona),
       appUrl: workspace.appUrl,
       sponsorName: workspace.sponsorName,
       currency: workspace.currency,
@@ -96,10 +100,16 @@ export const updateScript = mutation({
     const episode = await ctx.db.get(args.episodeId)
     if (!episode) throw new Error('episode not found')
     if (episode.status !== 'scripted' && episode.status !== 'idea' && episode.status !== 'waiting_on_you' && episode.status !== 'failed') {
-      throw new Error(`the script of a ${episode.status} episode is locked`)
+      throw refusal(`The script is locked once recording starts; this episode is at "${EPISODE_STATUS_LABELS[episode.status]}".`)
     }
     await ctx.db.patch(args.episodeId, { title: args.title, hook: args.script.hook, script: args.script, updatedAt: Date.now() })
   },
+})
+
+/** Narrow or widen where the episode goes, within the persona's platforms. Open until recording starts. */
+export const setPlatforms = mutation({
+  args: { episodeId: v.id('episodes'), platforms: v.array(platformValidator) },
+  handler: async (ctx, args) => setEpisodePlatforms(ctx, args.episodeId, args.platforms),
 })
 
 export const approve = mutation({
@@ -107,8 +117,9 @@ export const approve = mutation({
   handler: async (ctx, args) => {
     const episode = await ctx.db.get(args.episodeId)
     if (!episode) throw new Error('episode not found')
-    if (episode.status !== 'scripted') throw new Error(`only a scripted episode can be approved, this one is ${episode.status}`)
-    if (episode.shots.length === 0) throw new Error('the episode has no shots to record')
+    if (episode.status !== 'scripted')
+      throw refusal(`Only an episode at "Needs approval" can be approved; this one is at "${EPISODE_STATUS_LABELS[episode.status]}".`)
+    if (episode.shots.length === 0) throw refusal('The episode has no shots to record.')
     await approveEpisode(ctx, args.episodeId)
   },
 })
@@ -142,7 +153,8 @@ export const retry = mutation({
   handler: async (ctx, args) => {
     const episode = await ctx.db.get(args.episodeId)
     if (!episode) throw new Error('episode not found')
-    if (episode.status !== 'failed') throw new Error(`only a failed episode can be retried, this one is ${episode.status}`)
+    if (episode.status !== 'failed')
+      throw refusal(`Only a failed episode can be retried; this one is at "${EPISODE_STATUS_LABELS[episode.status]}".`)
     const persona = await ctx.db.get(episode.personaId)
     if (!persona) throw new Error('persona not found')
     const publications = await ctx.db
@@ -175,15 +187,21 @@ export const reschedule = mutation({
   handler: async (ctx, args) => {
     const episode = await ctx.db.get(args.episodeId)
     if (!episode) throw new Error('episode not found')
-    if (!canTransition(episode.status, 'killed')) throw new Error(`a ${episode.status} episode cannot move`)
+    if (!canTransition(episode.status, 'killed'))
+      throw refusal(`An episode at "${EPISODE_STATUS_LABELS[episode.status]}" cannot be killed.`)
     const persona = await ctx.db.get(episode.personaId)
     if (!persona) throw new Error('persona not found')
-    const scheduledAt = instantAt(args.plannedFor, persona.publishHour, persona.timezone)
+    const scheduledAt = earliestPublishAt(persona, episode.platforms, args.plannedFor)
     await ctx.db.patch(args.episodeId, { plannedFor: args.plannedFor, scheduledAt, updatedAt: Date.now() })
+    // Each queued publication keeps its platform's hour on the new day.
     const publications = await ctx.db
       .query('publications')
       .withIndex('by_episode', (q) => q.eq('episodeId', episode._id))
       .collect()
-    for (const publication of publications) if (publication.status === 'queued') await ctx.db.patch(publication._id, { scheduledAt })
+    for (const publication of publications) {
+      if (publication.status !== 'queued') continue
+      const hour = formatFor(persona, publication.platform).publishHour
+      await ctx.db.patch(publication._id, { scheduledAt: instantAt(args.plannedFor, hour, persona.timezone) })
+    }
   },
 })

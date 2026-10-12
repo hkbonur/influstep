@@ -1,6 +1,7 @@
 import { v } from 'convex/values'
 import { mutation, query } from '../_generated/server'
 import { requireWorkspace } from '../core/workspace'
+import { refusal } from '../lib/errors'
 
 /**
  * The operator's workspace: who the sponsor is, where tracked links go, and
@@ -26,8 +27,8 @@ export const update = mutation({
   handler: async (ctx, args) => {
     const workspace = await requireWorkspace(ctx)
     const sponsorName = args.sponsorName.trim()
-    if (!sponsorName) throw new Error('the sponsor needs a name')
-    if (!(args.valuePerPaid >= 0)) throw new Error('the value per paid conversion is 0 or more')
+    if (!sponsorName) throw refusal('The sponsor needs a name.')
+    if (!(args.valuePerPaid >= 0)) throw refusal('The value per paid conversion is 0 or more.')
     if (!CURRENCY_PATTERN.test(args.currency)) throw new Error('a currency is three upper-case letters, such as EUR')
     await ctx.db.patch(workspace._id, {
       sponsorName,
@@ -45,7 +46,7 @@ function fullUrl(raw: string, label: string): string {
   try {
     new URL(value)
   } catch {
-    throw new Error(`the ${label} must be a full URL, such as https://formstep.io`)
+    throw refusal(`The ${label} must be a full URL, such as https://formstep.io.`)
   }
   return value
 }

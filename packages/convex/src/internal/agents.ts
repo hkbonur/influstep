@@ -5,6 +5,7 @@ import {
   decideExperiment,
   METRIC_DENOMINATOR,
   normalizeDiscountCode,
+  resolveEpisodeFormat,
   type SignalSource,
   type VariantStats,
 } from '@influstep/shared'
@@ -13,16 +14,18 @@ import type { Doc, Id } from '../_generated/dataModel'
 import { internalAction, internalMutation, internalQuery, type QueryCtx } from '../_generated/server'
 import { addDays, dayKey } from '../core/dates'
 import { discountCodesFor as discountCodesRule, redemptionOwner } from '../core/discounts'
-import { approveEpisode, createIdea, shotsFromDraft } from '../core/episodes'
+import { approveEpisode, createIdea, formatAndShots } from '../core/episodes'
+import { formatsFor } from '../core/formats'
 import { planWeek as planWeekRule } from '../core/planner'
 import { latestPerPublication } from '../core/report'
+import { workspaceOf } from '../core/workspace'
 import { providersMode } from '../lib/env'
 import { analyticsProvider } from '../providers/analytics'
 import { platformProvider } from '../providers/comments'
 import { discountsProvider } from '../providers/discounts'
 import { llmProvider } from '../providers/llm'
 import { signalSourceHasRealAdapter, signalsProvider } from '../providers/signals'
-import { conversionKindValidator, platformValidator, signalSourceValidator } from '../lib/validators'
+import { conversionKindValidator, platformValidator, scriptValidator, shotPlanValidator, signalSourceValidator } from '../lib/validators'
 import { applyEvent, type EpisodeContext } from './data'
 
 /**
@@ -174,6 +177,10 @@ export const writeScript = internalAction({
     const context: EpisodeContext = await ctx.runQuery(internal.internal.data.getEpisodeContext, { episodeId })
     const { episode, persona, workspace, directives, signals, experiment } = context
     const variant = experiment?.variants.find((candidate) => candidate.key === episode.variantKey)
+    // One script for every platform the episode goes to: the writer gets the resolved length and
+    // delivery, and the hook convention of each platform, in PLATFORMS order.
+    const formats = formatsFor(persona, episode.platforms)
+    const format = resolveEpisodeFormat(formats)
     const draft = await llmProvider().writeScript({
       persona: {
         name: persona.name,
@@ -190,35 +197,53 @@ export const writeScript = internalAction({
       variant: variant ? { key: variant.key, description: variant.description } : undefined,
       directives: directives.map((directive) => directive.text),
       signals: signals.map((signal) => ({ title: signal.title, summary: signal.summary, url: signal.url })),
-      platforms: persona.platforms,
+      format: { lengthSec: format.lengthSec, delivery: format.delivery, hookNotes: formats.map((candidate) => candidate.hookNote) },
     })
     await ctx.runMutation(internal.internal.agents.storeScript, {
       episodeId,
       title: draft.title,
       hook: draft.hook,
       script: draft.script,
-      shots: shotsFromDraft(draft, workspace.sponsorName),
+      shotPlan: draft.shotPlan,
       autoApprove: persona.autoApprove,
     })
     return { title: draft.title }
   },
 })
 
+/**
+ * The draft becomes the episode's script, beats, format and shots. The format
+ * is fixed here, from the persona's formats at this moment, so a later
+ * settings change does not alter a written script.
+ */
 export const storeScript = internalMutation({
   args: {
     episodeId: v.id('episodes'),
     title: v.string(),
     hook: v.string(),
-    script: v.object({ hook: v.string(), body: v.string(), sponsor: v.string(), cta: v.string() }),
-    shots: v.any(),
+    script: scriptValidator,
+    shotPlan: shotPlanValidator,
     autoApprove: v.boolean(),
   },
   handler: async (ctx, args) => {
+    const episode = await ctx.db.get(args.episodeId)
+    if (!episode) throw new Error(`episode ${args.episodeId} not found`)
+    const persona = await ctx.db.get(episode.personaId)
+    if (!persona) throw new Error(`persona ${episode.personaId} not found`)
+    const workspace = await workspaceOf(ctx, persona)
+    const { format, shots } = formatAndShots({
+      persona,
+      platforms: episode.platforms,
+      draft: { hook: args.hook, shotPlan: args.shotPlan },
+      sponsorName: workspace.sponsorName,
+    })
     await ctx.db.patch(args.episodeId, {
       title: args.title,
       hook: args.hook,
       script: args.script,
-      shots: args.shots,
+      shotPlan: args.shotPlan,
+      format,
+      shots,
       updatedAt: Date.now(),
     })
     await applyEvent(ctx, args.episodeId, { type: 'script_written' })

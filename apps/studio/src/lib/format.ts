@@ -20,6 +20,11 @@ export function formatTime(at: number): string {
   return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(new Date(at))
 }
 
+/** A publish hour (0 to 23) as it reads on a schedule: 16 is "16:00". */
+export function formatHour(hour: number): string {
+  return `${String(hour).padStart(2, '0')}:00`
+}
+
 export function formatDateTime(at: number): string {
   return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(at))
 }

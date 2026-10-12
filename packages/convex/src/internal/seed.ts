@@ -1,14 +1,17 @@
 import { v } from 'convex/values'
+import { DEFAULT_FORMATS, formatAspects, resolveEpisodeFormat, type PlatformFormat } from '@influstep/shared'
 import { internal } from '../_generated/api'
 import type { Id, TableNames } from '../_generated/dataModel'
 import { internalAction, internalMutation } from '../_generated/server'
 import { describePublication } from '../core/attribution'
 import { addDays, dayKey, instantAt, weekStart } from '../core/dates'
-import { createIdea, createTrackedLink } from '../core/episodes'
+import { createIdea, createTrackedLink, shotsFromDraft } from '../core/episodes'
+import { earliestPublishAt, formatsFor, platformsOf } from '../core/formats'
 import { enqueueJob } from '../jobs/queue'
 import type { FoundConversion } from '../providers/analytics'
 import { mockAnalytics } from '../providers/analytics/mock'
 import { mockDiscounts } from '../providers/discounts/mock'
+import { PRESENTER_TOOL, type ScriptDraft } from '../providers/llm'
 
 /**
  * The demo workspace: two personas, a planned week, a running experiment,
@@ -18,6 +21,23 @@ import { mockDiscounts } from '../providers/discounts/mock'
  */
 
 const TIMEZONE = 'Europe/Oslo'
+
+/** Ada posts everywhere, on the defaults, with a shorter YouTube tutorial and a slightly longer TikTok. */
+const ADA_FORMATS: PlatformFormat[] = [
+  { platform: 'youtube', ...DEFAULT_FORMATS.youtube, lengthSec: 240 },
+  { platform: 'tiktok', ...DEFAULT_FORMATS.tiktok, lengthSec: 40 },
+  { platform: 'instagram', ...DEFAULT_FORMATS.instagram },
+]
+
+/** Max is a TikTok-only talking-head creator: no screen, no sign-in, one cut, his own hook and hour. */
+const MAX_FORMATS: PlatformFormat[] = [
+  {
+    platform: 'tiktok',
+    ...DEFAULT_FORMATS.tiktok,
+    hookNote: 'Open mid-sentence, as if the agent just failed. Show the fix. One takeaway.',
+    publishHour: 17,
+  },
+]
 
 export const run = internalAction({
   args: { appUrl: v.optional(v.string()) },
@@ -56,7 +76,7 @@ export const write = internalMutation({
       bible:
         'Ada speaks in short sentences and shows the screen before she explains it. She never says "game changer" or "insane". She admits when a tool is the wrong choice. She calls viewers "you", never "guys".',
       pillars: ['n8n tutorials', 'AI agent workflows', 'Automation fails'],
-      platforms: ['youtube', 'tiktok', 'instagram'],
+      formats: ADA_FORMATS,
       voiceId: 'mock-ada',
       sponsorDial: 0.4,
       sponsorRampEpisodes: 10,
@@ -64,7 +84,6 @@ export const write = internalMutation({
       autoApprove: false,
       paused: false,
       timezone: TIMEZONE,
-      publishHour: 16,
       createdAt: now - 40 * 86_400_000,
     })
     const maxId = await ctx.db.insert('personas', {
@@ -77,7 +96,7 @@ export const write = internalMutation({
       bible:
         'Max narrates while the agent runs. Every episode ends with what he would do differently. He never promises an agent "just works". He says "the agent" not "the AI".',
       pillars: ['Claude Code recipes', 'MCP servers', 'Agents in production'],
-      platforms: ['youtube', 'tiktok'],
+      formats: MAX_FORMATS,
       voiceId: 'mock-max',
       sponsorDial: 0.3,
       sponsorRampEpisodes: 10,
@@ -85,7 +104,6 @@ export const write = internalMutation({
       autoApprove: true,
       paused: false,
       timezone: TIMEZONE,
-      publishHour: 17,
       createdAt: now - 10 * 86_400_000,
     })
 
@@ -241,10 +259,17 @@ export const write = internalMutation({
     }
     await ctx.db.patch(adaCodeId, { redemptions: redeemed.length })
 
-    // History: Ada's last four weeks, published and measured, so the report has a funnel.
+    // History: Ada's last four weeks, published and measured, so the report has a funnel. Every episode
+    // went to all of Ada's platforms, each at its own hour, in the format her platforms resolve to.
     const ada = await ctx.db.get(adaId)
     const workspace = await ctx.db.get(workspaceId)
     if (!ada || !workspace) throw new Error('seed rows vanished')
+    const adaPlatforms = platformsOf(ada)
+    const adaFormats = formatsFor(ada, adaPlatforms)
+    const adaFormat = resolveEpisodeFormat(adaFormats)
+    const adaAspects = formatAspects(adaFormat)
+    const platformInstant = (day: string, format: PlatformFormat) => instantAt(day, format.publishHour, TIMEZONE)
+    const adaRenders = (durationSec: number) => adaAspects.map((aspect) => ({ aspect, storageId: args.storageId, durationSec, mock: true }))
     const today = dayKey(now, TIMEZONE)
     const historyConcepts = [
       ['Retry a failed n8n webhook without losing the payload', 'n8n tutorials', 'none', 'howto'],
@@ -259,9 +284,19 @@ export const write = internalMutation({
     const history: { episodeId: Id<'episodes'>; variantKey: string; scheduledAt: number; clicks: number }[] = []
     for (const [index, [concept, pillar, sponsorSegment, variantKey]] of historyConcepts.entries()) {
       const plannedFor = addDays(today, -(26 - index * 3))
-      const scheduledAt = instantAt(plannedFor, ada.publishHour, TIMEZONE)
+      const scheduledAt = earliestPublishAt(ada, adaPlatforms, plannedFor)
+      // Live once the last platform went out.
+      const publishedAt = Math.max(...adaFormats.map((format) => platformInstant(plannedFor, format)))
       const hook =
         variantKey === 'wrong' ? `I was wrong about ${concept.toLowerCase()}.` : `How to ${concept.toLowerCase()} in under a minute.`
+      const body = `Here is the setup. ${concept}. Step one, open n8n and find the node that fails. Step two, add an error workflow and a retry.`
+      const draft: Pick<ScriptDraft, 'hook' | 'shotPlan'> = {
+        hook,
+        shotPlan: [
+          { title: 'The hook', voiceover: hook, tool: PRESENTER_TOOL, url: '' },
+          { title: 'The fix', voiceover: body, tool: 'n8n', url: 'http://localhost:5678' },
+        ],
+      }
       const episodeId = await ctx.db.insert('episodes', {
         personaId: adaId,
         slug: `${concept
@@ -275,27 +310,16 @@ export const write = internalMutation({
         hook,
         script: {
           hook,
-          body: `Here is the setup. ${concept}. Step one, open n8n and find the node that fails. Step two, add an error workflow and a retry.`,
+          body,
           sponsor: sponsorSegment === 'none' ? '' : 'And when the workflow needs something from a customer, I use Formstep.',
           cta: 'Follow Ada for the next one.',
         },
         sponsorSegment,
-        shots: [
-          {
-            kind: 'screen',
-            id: 'shot-1',
-            title: 'The fix',
-            voiceover: hook,
-            recipe: [
-              { step: 'goto', url: 'http://localhost:5678' },
-              { step: 'wait', ms: 2000 },
-            ],
-          },
-        ],
-        renders: [
-          { aspect: '16:9', storageId: args.storageId, durationSec: 58, mock: true },
-          { aspect: '9:16', storageId: args.storageId, durationSec: 58, mock: true },
-        ],
+        platforms: adaPlatforms,
+        format: adaFormat,
+        shotPlan: draft.shotPlan,
+        shots: shotsFromDraft(draft, workspace.sponsorName, adaFormat.delivery),
+        renders: adaRenders(58),
         plannedFor,
         scheduledAt,
         experimentId,
@@ -303,14 +327,16 @@ export const write = internalMutation({
         signalIds: [],
         pillar,
         approvedAt: scheduledAt - 86_400_000,
-        publishedAt: scheduledAt,
-        measuredAt: index === historyConcepts.length - 1 ? undefined : scheduledAt + 72 * 3_600_000,
+        publishedAt,
+        measuredAt: index === historyConcepts.length - 1 ? undefined : publishedAt + 72 * 3_600_000,
         createdAt: scheduledAt - 2 * 86_400_000,
-        updatedAt: scheduledAt,
+        updatedAt: publishedAt,
       })
       const episode = await ctx.db.get(episodeId)
       if (!episode) throw new Error('episode vanished')
-      for (const platform of ada.platforms) {
+      for (const format of adaFormats) {
+        const { platform } = format
+        const liveAt = platformInstant(plannedFor, format)
         const linkId = await createTrackedLink(ctx, { persona: ada, episode, platform, target: workspace.sponsorUrl })
         const link = await ctx.db.get(linkId)
         if (!link) throw new Error('link vanished')
@@ -319,17 +345,18 @@ export const write = internalMutation({
           episodeId,
           personaId: adaId,
           platform,
+          aspect: format.aspect,
           status: 'live',
           title: concept,
           ...describePublication({ workspace, episode, platform, linkSlug: link.slug, discountCode: adaCode }),
           linkId,
-          scheduledAt,
+          scheduledAt: liveAt,
           externalId,
           url:
             platform === 'youtube'
               ? `https://youtube.com/watch?v=${externalId}`
               : `https://${platform}.com/@ada.automates/video/${externalId}`,
-          publishedAt: scheduledAt,
+          publishedAt: liveAt,
           mock: true,
         })
         // Clicks and three snapshots per publication: the day after, three days after, and now.
@@ -342,18 +369,18 @@ export const write = internalMutation({
             linkId,
             personaId: adaId,
             episodeId,
-            at: scheduledAt + ((c + 1) * 60 * 3_600_000) / (clicks + 1),
+            at: liveAt + ((c + 1) * 60 * 3_600_000) / (clicks + 1),
           })
         }
         await ctx.db.patch(linkId, { clicks })
-        for (const [snapshotIndex, hours] of [24, 72, Math.max(96, (now - scheduledAt) / 3_600_000)].entries()) {
+        for (const [snapshotIndex, hours] of [24, 72, Math.max(96, (now - liveAt) / 3_600_000)].entries()) {
           const views = Math.round(baseViews * Math.log2(2 + hours) * 0.4)
           await ctx.db.insert('metricSnapshots', {
             personaId: adaId,
             episodeId,
             publicationId,
             platform,
-            takenAt: Math.min(now, scheduledAt + hours * 3_600_000) - snapshotIndex,
+            takenAt: Math.min(now, liveAt + hours * 3_600_000) - snapshotIndex,
             counts: {
               views,
               watchRate: 0.42,
@@ -420,6 +447,7 @@ export const write = internalMutation({
     }
 
     // This week: one episode at each of the remaining statuses, so the calendar shows the whole pipeline.
+    // Every one is scripted or later, so it carries Ada's resolved format and the beats its shots came from.
     const monday = weekStart(today)
     const mkScript = (concept: string) => ({
       hook: `How to ${concept.toLowerCase()} in under a minute.`,
@@ -440,7 +468,15 @@ export const write = internalMutation({
       { day: addDays(monday, 4), status: 'scheduled', concept: 'Pause a workflow until the customer signs off' },
     ] as const
     for (const [index, item] of thisWeek.entries()) {
-      const scheduledAt = instantAt(item.day, ada.publishHour, TIMEZONE)
+      const script = mkScript(item.concept)
+      const scheduledAt = earliestPublishAt(ada, adaPlatforms, item.day)
+      const draft: Pick<ScriptDraft, 'hook' | 'shotPlan'> = {
+        hook: script.hook,
+        shotPlan: [
+          { title: 'The problem', voiceover: script.hook, tool: 'browser', url: 'https://news.ycombinator.com' },
+          { title: 'The fix', voiceover: script.body, tool: 'n8n', url: 'http://localhost:5678' },
+        ],
+      }
       const episodeId = await ctx.db.insert('episodes', {
         personaId: adaId,
         slug: `${item.concept
@@ -450,38 +486,14 @@ export const write = internalMutation({
         status: item.status,
         concept: item.concept,
         title: item.concept,
-        hook: mkScript(item.concept).hook,
-        script: mkScript(item.concept),
+        hook: script.hook,
+        script,
         sponsorSegment: index === 4 ? 'mention' : 'none',
-        shots: [
-          {
-            kind: 'screen',
-            id: 'shot-1',
-            title: 'The problem',
-            voiceover: mkScript(item.concept).hook,
-            recipe: [
-              { step: 'goto', url: 'https://news.ycombinator.com' },
-              { step: 'wait', ms: 2000 },
-            ],
-          },
-          {
-            kind: 'screen',
-            id: 'shot-2',
-            title: 'The fix',
-            voiceover: mkScript(item.concept).body,
-            recipe: [
-              { step: 'goto', url: 'http://localhost:5678' },
-              { step: 'wait', ms: 2000 },
-            ],
-          },
-        ],
-        renders:
-          item.status === 'scheduled'
-            ? [
-                { aspect: '16:9', storageId: args.storageId, durationSec: 55, mock: true },
-                { aspect: '9:16', storageId: args.storageId, durationSec: 55, mock: true },
-              ]
-            : [],
+        platforms: adaPlatforms,
+        format: adaFormat,
+        shotPlan: draft.shotPlan,
+        shots: shotsFromDraft(draft, workspace.sponsorName, adaFormat.delivery),
+        renders: item.status === 'scheduled' ? adaRenders(55) : [],
         plannedFor: item.day,
         scheduledAt,
         experimentId,
@@ -507,7 +519,8 @@ export const write = internalMutation({
       if (item.status === 'scheduled') {
         const episode = await ctx.db.get(episodeId)
         if (!episode) throw new Error('episode vanished')
-        for (const platform of ada.platforms) {
+        for (const format of adaFormats) {
+          const { platform } = format
           const linkId = await createTrackedLink(ctx, { persona: ada, episode, platform, target: workspace.sponsorUrl })
           const link = await ctx.db.get(linkId)
           if (!link) throw new Error('link vanished')
@@ -515,11 +528,12 @@ export const write = internalMutation({
             episodeId,
             personaId: adaId,
             platform,
+            aspect: format.aspect,
             status: 'queued',
             title: item.concept,
             ...describePublication({ workspace, episode, platform, linkSlug: link.slug, discountCode: adaCode }),
             linkId,
-            scheduledAt,
+            scheduledAt: platformInstant(item.day, format),
             mock: true,
           })
         }
@@ -531,7 +545,7 @@ export const write = internalMutation({
           kind: 'produce',
           personaId: adaId,
           episodeId,
-          payload: { episodeId, personaHandle: ada.handle, voiceId: ada.voiceId, shots: episode.shots, aspects: ['16:9', '9:16'] },
+          payload: { episodeId, personaHandle: ada.handle, voiceId: ada.voiceId, shots: episode.shots, aspects: adaAspects },
         })
       }
     }
@@ -556,10 +570,10 @@ export const write = internalMutation({
     }
     await ctx.db.insert('checklistItems', {
       personaId: maxId,
-      title: 'Connect a YouTube channel for Max',
-      why: 'Publishing to YouTube needs an OAuth app and a channel. Until then the publisher runs in mock mode and says so on every publication.',
+      title: 'Connect a TikTok account for Max',
+      why: "Publishing to TikTok needs an approved Content Posting app and Max's account. Until then the publisher runs in mock mode and says so on every publication.",
       status: 'open',
-      action: { kind: 'set_provider_key', key: 'YOUTUBE_OAUTH' },
+      action: { kind: 'set_provider_key', key: 'TIKTOK_OAUTH' },
       createdAt: now - 86_400_000,
     })
     return { workspaceId }

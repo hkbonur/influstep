@@ -13,6 +13,7 @@ import { useMutation, useQuery } from 'convex/react'
 import React from 'react'
 import { Button, Empty, ErrorLine, Field, Input, Mono, PageHeader, Pill, Skeleton, Textarea } from '@/components/ui'
 import { cn } from '@/lib/cn'
+import { errorMessage } from '@/lib/errors'
 import { formatCount, formatDateTime, formatPercent } from '@/lib/format'
 
 /** A variant is judged by the visitors its own link brought; a discount code names no variant, so redemptions stay out. */
@@ -74,7 +75,7 @@ function ExperimentCard(props: { experiment: ExperimentRow }) {
       await override({ experimentId: experiment._id, winnerKey: String(form.get('winnerKey')), note: String(form.get('note') ?? '') })
       setOverriding(false)
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      setError(errorMessage(caught))
     }
   }
   return (
@@ -224,7 +225,7 @@ function NewExperimentForm(props: { personas: { _id: Id<'personas'>; name: strin
       })
       props.onDone()
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      setError(errorMessage(caught))
     } finally {
       setBusy(false)
     }

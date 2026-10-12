@@ -119,8 +119,8 @@ function CalendarPage() {
             </Button>
           }
         >
-          Nothing is planned for this week. The writer plans five slots per persona from this week's signals and the persona's pillars; you
-          approve each script.
+          Nothing is planned for this week. The writer plans as many slots as each persona publishes a week, from this week's signals and
+          the persona's pillars; you approve each script.
         </Empty>
       )}
       {data && total > 0 && (

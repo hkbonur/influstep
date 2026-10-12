@@ -9,10 +9,12 @@ import {
   giveDiscountCode as giveDiscountCodeRule,
   retireDiscountCode as retireDiscountCodeRule,
 } from '../core/discounts'
-import { createTrackedLink } from '../core/episodes'
+import { createTrackedLink, reconcilePlatformDrop } from '../core/episodes'
+import { assertFormats, platformsOf } from '../core/formats'
 import { requireWorkspace, workspaceOf } from '../core/workspace'
 import { enqueueJob } from '../jobs/queue'
-import { platformValidator } from '../lib/validators'
+import { platformFormatValidator } from '../lib/validators'
+import { refusal } from '../lib/errors'
 
 const personaFields = {
   name: v.string(),
@@ -22,14 +24,14 @@ const personaFields = {
   bio: v.string(),
   bible: v.string(),
   pillars: v.array(v.string()),
-  platforms: v.array(platformValidator),
+  // One format per platform the persona publishes on (core/formats.ts checks the list).
+  formats: v.array(platformFormatValidator),
   voiceId: v.string(),
   sponsorDial: v.number(),
   sponsorRampEpisodes: v.number(),
   episodesPerWeek: v.number(),
   autoApprove: v.boolean(),
   timezone: v.string(),
-  publishHour: v.number(),
 }
 
 export const list = query({
@@ -131,12 +133,13 @@ export const get = query({
 export const create = mutation({
   args: personaFields,
   handler: async (ctx, args) => {
+    assertFormats(args.formats)
     const workspace = await requireWorkspace(ctx)
     const taken = await ctx.db
       .query('personas')
       .withIndex('by_handle', (q) => q.eq('handle', args.handle))
       .first()
-    if (taken) throw new Error(`handle ${args.handle} is taken`)
+    if (taken) throw refusal(`The handle ${args.handle} is taken.`)
     const personaId = await ctx.db.insert('personas', { ...args, workspaceId: workspace._id, paused: false, createdAt: Date.now() })
     const persona = await ctx.db.get(personaId)
     if (!persona) throw new Error('persona vanished')
@@ -146,11 +149,18 @@ export const create = mutation({
   },
 })
 
+/** Save the settings. A platform that leaves the list takes its episodes with it (core/episodes.ts, reconcilePlatformDrop). */
 export const update = mutation({
   args: { personaId: v.id('personas'), ...personaFields },
   handler: async (ctx, args) => {
     const { personaId, ...fields } = args
+    assertFormats(fields.formats)
+    const persona = await ctx.db.get(personaId)
+    if (!persona) throw new Error('persona not found')
+    const next = new Set(fields.formats.map((format) => format.platform))
+    const dropped = platformsOf(persona).filter((platform) => !next.has(platform))
     await ctx.db.patch(personaId, fields)
+    await reconcilePlatformDrop(ctx, personaId, dropped)
   },
 })
 
@@ -189,7 +199,7 @@ export const sendMessage = mutation({
   args: { personaId: v.id('personas'), text: v.string() },
   handler: async (ctx, args): Promise<{ directiveId?: Doc<'directives'>['_id'] }> => {
     const text = args.text.trim()
-    if (!text) throw new Error('message is empty')
+    if (!text) throw refusal('The message is empty.')
     const now = Date.now()
     let directiveId: Doc<'directives'>['_id'] | undefined
     if (readsAsDirective(text))

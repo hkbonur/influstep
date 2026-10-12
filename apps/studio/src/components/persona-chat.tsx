@@ -4,6 +4,7 @@ import { readsAsDirective } from '@influstep/shared'
 import { useMutation } from 'convex/react'
 import React from 'react'
 import { cn } from '@/lib/cn'
+import { errorMessage } from '@/lib/errors'
 import { formatDateTime } from '@/lib/format'
 import { Button, ErrorLine, Eyebrow } from './ui'
 
@@ -32,7 +33,7 @@ export function PersonaChat(props: { persona: Doc<'personas'>; messages: Doc<'me
       await send({ personaId: props.persona._id, text: value })
       setText('')
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      setError(errorMessage(caught))
     } finally {
       setBusy(false)
     }

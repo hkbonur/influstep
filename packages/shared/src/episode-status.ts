@@ -35,6 +35,11 @@ export function canTransition(from: EpisodeStatus, to: EpisodeStatus): boolean {
   return EPISODE_TRANSITIONS[from].includes(to)
 }
 
+/** Where an episode goes can change until it is approved: nothing is recorded yet for an idea or a scripted episode. */
+export function platformsOpen(status: EpisodeStatus): boolean {
+  return status === 'idea' || status === 'scripted'
+}
+
 export const EPISODE_STATUS_LABELS: Record<EpisodeStatus, string> = {
   idea: 'Idea',
   scripted: 'Needs approval',

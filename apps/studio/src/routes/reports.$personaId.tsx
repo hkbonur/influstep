@@ -1,6 +1,6 @@
 import { api } from '@influstep/convex/_generated/api'
 import type { Id } from '@influstep/convex/_generated/dataModel'
-import { CONVERSION_KIND_LABELS, EXPERIMENT_KIND_LABELS, METRIC_LABELS, VALUE_LABEL } from '@influstep/shared'
+import { CONVERSION_KIND_LABELS, EXPERIMENT_KIND_LABELS, METRIC_LABELS, PLATFORM_LABELS, VALUE_LABEL } from '@influstep/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useQuery } from 'convex/react'
 import { Funnel, MetricStrip, Trend } from '@/components/charts'
@@ -77,6 +77,39 @@ function ReportPage() {
               <Trend points={trend} />
             </section>
           </div>
+
+          <section>
+            <Eyebrow className="mb-3">By platform</Eyebrow>
+            {/* One row per platform the persona has, counting live publications only; zeros until one is live there, never empty. */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-xs text-ash">
+                  <tr className="text-left">
+                    <th className="py-1 font-medium">Platform</th>
+                    <th className="py-1 pl-3 text-right font-medium">Live</th>
+                    <th className="py-1 pl-3 text-right font-medium">{METRIC_LABELS.views}</th>
+                    <th className="py-1 pl-3 text-right font-medium">{METRIC_LABELS.follows}</th>
+                    <th className="hidden py-1 pl-3 text-right font-medium lg:table-cell">Likes</th>
+                    <th className="hidden py-1 pl-3 text-right font-medium lg:table-cell">Comments</th>
+                    <th className="py-1 pl-3 text-right font-medium">{METRIC_LABELS.clicks}</th>
+                  </tr>
+                </thead>
+                <tbody className="tabular">
+                  {report.platforms.map((row) => (
+                    <tr key={row.platform} className="border-t border-mist">
+                      <td className="py-1.5">{PLATFORM_LABELS[row.platform]}</td>
+                      <td className="py-1.5 pl-3 text-right">{row.publications}</td>
+                      <td className="py-1.5 pl-3 text-right">{formatCount(row.views)}</td>
+                      <td className="py-1.5 pl-3 text-right">{formatCount(row.follows)}</td>
+                      <td className="hidden py-1.5 pl-3 text-right lg:table-cell">{formatCount(row.likes)}</td>
+                      <td className="hidden py-1.5 pl-3 text-right lg:table-cell">{formatCount(row.comments)}</td>
+                      <td className="py-1.5 pl-3 text-right">{formatCount(row.clicks)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
 
           <section>
             <Eyebrow className="mb-3">Top episodes</Eyebrow>

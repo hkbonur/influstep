@@ -1,7 +1,8 @@
 import { v } from 'convex/values'
-import { variantRate } from '@influstep/shared'
+import { PLATFORMS, variantRate } from '@influstep/shared'
 import { query } from '../_generated/server'
 import { addDays, dayKey } from '../core/dates'
+import { platformsOf } from '../core/formats'
 import { buildFunnel, buildTrend, countConversions, latestPerPublication } from '../core/report'
 import { workspaceOf } from '../core/workspace'
 import { variantStatsFor } from '../internal/agents'
@@ -85,6 +86,35 @@ export const forPersona = query({
       .sort((a, b) => b.value - a.value || b.clicks - a.clicks)
       .slice(0, TOP_BY_VALUE)
 
+    // The persona against its own platforms, in PLATFORMS order: its live publications there, their
+    // latest snapshot taken in the window, and the clicks on their tracked links. A platform the
+    // persona has but has not published on yet is a row of zeros.
+    const publications = await ctx.db
+      .query('publications')
+      .withIndex('by_persona', (q) => q.eq('personaId', persona._id))
+      .collect()
+    const inWindow = latestPerPublication(snapshots.filter((snapshot) => snapshot.takenAt >= since))
+    const platforms = []
+    for (const platform of PLATFORMS.filter((candidate) => platformsOf(persona).includes(candidate))) {
+      const own = publications.filter((publication) => publication.platform === platform && publication.status === 'live')
+      const ownSnapshots = inWindow.filter((snapshot) => own.some((publication) => publication._id === snapshot.publicationId))
+      let clicks = 0
+      for (const publication of own) {
+        const link = await ctx.db.get(publication.linkId)
+        if (!link) throw new Error(`link ${publication.linkId} of publication ${publication._id} not found`)
+        clicks += link.clicks
+      }
+      platforms.push({
+        platform,
+        views: ownSnapshots.reduce((sum, snapshot) => sum + snapshot.counts.views, 0),
+        follows: ownSnapshots.reduce((sum, snapshot) => sum + snapshot.counts.follows, 0),
+        likes: ownSnapshots.reduce((sum, snapshot) => sum + snapshot.counts.likes, 0),
+        comments: ownSnapshots.reduce((sum, snapshot) => sum + snapshot.counts.comments, 0),
+        clicks,
+        publications: own.length,
+      })
+    }
+
     // Every code the persona was given, active ones first, newest first within each group.
     const codes = (
       await ctx.db
@@ -113,6 +143,7 @@ export const forPersona = query({
       experiments,
       episodes,
       topByValue,
+      platforms,
       discountCodes,
       windowDays: TREND_DAYS,
     }

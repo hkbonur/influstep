@@ -7,6 +7,7 @@ import React from 'react'
 import { z } from 'zod'
 import { Button, Empty, ErrorLine, Input, MockNote, Mono, PageHeader, Pill, Skeleton } from '@/components/ui'
 import { cn } from '@/lib/cn'
+import { errorMessage } from '@/lib/errors'
 import { addDays, relativeTime, todayKey } from '@/lib/format'
 
 const searchSchema = z.object({ persona: z.string().optional(), source: z.enum(SIGNAL_SOURCES).optional() })
@@ -115,7 +116,7 @@ function SignalRow(props: { signal: SignalRowData }) {
       await makeEpisode({ signalId: signal._id, plannedFor: day })
       setPicking(false)
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      setError(errorMessage(caught))
     } finally {
       setBusy(false)
     }
