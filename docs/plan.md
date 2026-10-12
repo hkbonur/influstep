@@ -6,13 +6,13 @@ Written 2026-10-09. The goal: Formstep gets attention and users through AI perso
 
 A persona is a profile (name, handle, voice, niche, tone, platforms, content pillars, sponsor dial). Five agent roles do its work, each as jobs the operator can see:
 
-| Role       | Runs on          | What it does                                                                                                 |
-| ---------- | ---------------- | ------------------------------------------------------------------------------------------------------------ |
-| researcher | backend (hourly) | Polls Hacker News, Reddit, Google Trends, YouTube search, and the persona's own comments. Stores signals with topics and a score. |
+| Role       | Runs on          | What it does                                                                                                                                                  |
+| ---------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| researcher | backend (hourly) | Polls Hacker News, Reddit, Google Trends, YouTube search, and the persona's own comments. Stores signals with topics and a score.                             |
 | writer     | backend          | Plans the week (which concept on which day, which experiment variant, sponsored or not), writes the script from a signal or a pillar and the open directives. |
-| producer   | runner           | Records screen shots with Playwright recipes in the operator's signed-in browser, generates the voice, renders 16:9 and 9:16 with captions. |
-| publisher  | runner + backend | Uploads at the scheduled time with the tracked link and the AI-disclosure label, then reads comments back as signals. |
-| analyst    | backend (daily)  | Snapshots platform metrics, clicks, and PostHog conversions; decides experiments; writes the report.           |
+| producer   | runner           | Records screen shots with Playwright recipes in the operator's signed-in browser, generates the voice, renders 16:9 and 9:16 with captions.                   |
+| publisher  | runner + backend | Uploads at the scheduled time with the tracked link and the AI-disclosure label, then reads comments back as signals.                                         |
+| analyst    | backend (daily)  | Snapshots platform metrics, clicks, and PostHog conversions; decides experiments; writes the report.                                                          |
 
 An episode moves through: idea → scripted → (waiting on you) → recording → rendered → scheduled → published → measured, or failed / killed. Scripts wait for the operator's approval unless the persona auto-approves.
 
@@ -28,16 +28,16 @@ When an agent cannot continue (n8n not signed in, YouTube permission missing), i
 
 ## What is mocked and how to make it real
 
-| Provider        | Mock                                          | Real adapter                                                       | Needs                                                |
-| --------------- | --------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------- |
-| llm             | template writer seeded by ids                 | Anthropic Messages API (`claude-opus-5-5`)                        | `ANTHROPIC_API_KEY`                                   |
-| voice           | silent track with the script length           | ElevenLabs text-to-speech, persona voice id                        | `ELEVENLABS_API_KEY`; commercial use needs a paid plan |
-| avatar          | title card with the persona's name            | HeyGen or Higgsfield talking-head take                             | key; pick one once the look is chosen                |
-| screen          | ffmpeg placeholder video                      | Playwright `recordVideo` against the runner's browser profile      | the tool signed in (checklist item)                  |
-| publisher       | fake external id and URL                      | YouTube Data API (resumable upload), TikTok Content Posting, Instagram Graph (Reels) | OAuth apps; TikTok and Instagram need app review |
-| signals         | fixed set of plausible stories                | Hacker News Algolia (no key), Reddit public JSON (no key), Google Trends (unofficial), YouTube search | none for HN and Reddit |
-| comments        | generated comments                            | YouTube commentThreads, TikTok comment list, Instagram comments    | same OAuth apps                                      |
-| analytics       | seeded conversions proportional to clicks     | PostHog query API (HogQL on `$initial_utm_*`)                      | `POSTHOG_API_KEY`, `POSTHOG_PROJECT_ID`, `POSTHOG_HOST` |
+| Provider  | Mock                                      | Real adapter                                                                                          | Needs                                                   |
+| --------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| llm       | template writer seeded by ids             | Anthropic Messages API (`claude-opus-5-5`)                                                            | `ANTHROPIC_API_KEY`                                     |
+| voice     | silent track with the script length       | ElevenLabs text-to-speech, persona voice id                                                           | `ELEVENLABS_API_KEY`; commercial use needs a paid plan  |
+| avatar    | title card with the persona's name        | HeyGen or Higgsfield talking-head take                                                                | key; pick one once the look is chosen                   |
+| screen    | ffmpeg placeholder video                  | Playwright `recordVideo` against the runner's browser profile                                         | the tool signed in (checklist item)                     |
+| publisher | fake external id and URL                  | YouTube Data API (resumable upload), TikTok Content Posting, Instagram Graph (Reels)                  | OAuth apps; TikTok and Instagram need app review        |
+| signals   | fixed set of plausible stories            | Hacker News Algolia (no key), Reddit public JSON (no key), Google Trends (unofficial), YouTube search | none for HN and Reddit                                  |
+| comments  | generated comments                        | YouTube commentThreads, TikTok comment list, Instagram comments                                       | same OAuth apps                                         |
+| analytics | seeded conversions proportional to clicks | PostHog query API (HogQL on `$initial_utm_*`)                                                         | `POSTHOG_API_KEY`, `POSTHOG_PROJECT_ID`, `POSTHOG_HOST` |
 
 Set `PROVIDERS_MODE=real` on the backend and the runner to switch; each adapter throws naming its missing key.
 
@@ -64,15 +64,15 @@ Written 2026-10-10 after the operator's second brief. The product in one sentenc
 
 What runs on its own, per unpaused persona:
 
-| When                 | Job                   | Role       | Writes                                      |
-| -------------------- | --------------------- | ---------- | ------------------------------------------- |
-| hourly               | poll_signals          | researcher | signals                                     |
-| daily 05:00 UTC      | pull_metrics          | analyst    | snapshots, conversions, redemptions         |
-| daily 05:00 UTC      | evaluate_experiments  | analyst    | decisions, journal                          |
-| daily 06:00 UTC      | poll_comments         | publisher  | comment signals                             |
-| Monday 07:00 UTC     | plan_week             | writer     | next week's ideas, then scripts             |
-| Monday 07:30 UTC     | review_strategy       | analyst    | strategy changes, memory, journal, experiments |
-| every 5 minutes      | dispatch publications | publisher  | runner jobs for due publications            |
+| When             | Job                   | Role       | Writes                                         |
+| ---------------- | --------------------- | ---------- | ---------------------------------------------- |
+| hourly           | poll_signals          | researcher | signals                                        |
+| daily 05:00 UTC  | pull_metrics          | analyst    | snapshots, conversions, redemptions            |
+| daily 05:00 UTC  | evaluate_experiments  | analyst    | decisions, journal                             |
+| daily 06:00 UTC  | poll_comments         | publisher  | comment signals                                |
+| Monday 07:00 UTC | plan_week             | writer     | next week's ideas, then scripts                |
+| Monday 07:30 UTC | review_strategy       | analyst    | strategy changes, memory, journal, experiments |
+| every 5 minutes  | dispatch publications | publisher  | runner jobs for due publications               |
 
 The operator only ever: approves scripts (unless the persona auto-approves), approves publish packages (unless the persona publishes on its own), signs in to tools, sets provider keys, hands over discount codes, and talks to the persona.
 
@@ -80,12 +80,12 @@ The operator only ever: approves scripts (unless the persona auto-approves), app
 
 Influstep reads Formstep's PostHog project. Today Formstep sends only `signed_up` from the server (with `$identify` to the landing visitor). For the full funnel Formstep must send these events with the person's `$initial_utm_*` properties intact:
 
-| Event                  | When                                         | Properties                                      |
-| ---------------------- | -------------------------------------------- | ----------------------------------------------- |
-| `demo_started`         | the visitor opens /try and sends a request   | `demo`                                          |
-| `signed_up`            | account created (exists)                     | `provider`, `app`                               |
-| `trial_started`        | Pro trial begins                             | `plan`                                          |
-| `subscription_started` | first successful payment                     | `plan`, `interval`, `discount_code`, `order_id` |
+| Event                  | When                                       | Properties                                      |
+| ---------------------- | ------------------------------------------ | ----------------------------------------------- |
+| `demo_started`         | the visitor opens /try and sends a request | `demo`                                          |
+| `signed_up`            | account created (exists)                   | `provider`, `app`                               |
+| `trial_started`        | Pro trial begins                           | `plan`                                          |
+| `subscription_started` | first successful payment                   | `plan`, `interval`, `discount_code`, `order_id` |
 
 A purchase made with a persona's code reaches Influstep twice, from PostHog and from Polar. Polar is the exact source for those, so the analyst drops the PostHog copy when `discount_code` names a code Influstep handed out; `order_id` (the Polar order) lets it match the two rows outright once Formstep sends it.
 
