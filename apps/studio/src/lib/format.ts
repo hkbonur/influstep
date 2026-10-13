@@ -16,6 +16,14 @@ export function plural(count: number, one: string, other: string): string {
   return count === 1 ? one : other
 }
 
+/**
+ * A number the backend wrote as evidence (a journal entry's numbers), as the
+ * operator reads it: grouped, at most three decimals. Its label says the unit.
+ */
+export function formatNumber(value: number): string {
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 }).format(value)
+}
+
 export function formatPercent(rate: number, digits = 1): string {
   return `${(rate * 100).toFixed(digits)}%`
 }

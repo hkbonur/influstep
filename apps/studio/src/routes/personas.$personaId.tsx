@@ -35,7 +35,7 @@ import {
 } from '@/components/ui'
 import { cn } from '@/lib/cn'
 import { errorMessage } from '@/lib/errors'
-import { formatDateTime, formatDay, formatHour, languageName, relativeTime } from '@/lib/format'
+import { formatDate, formatDateTime, formatDay, formatHour, languageName, relativeTime } from '@/lib/format'
 
 export const Route = createFileRoute('/personas/$personaId')({ component: PersonaPage })
 
@@ -256,6 +256,8 @@ function PersonaPage() {
             </dl>
           </section>
 
+          <StrategySummary persona={persona} />
+
           <section>
             <Eyebrow className="mb-3">Recent jobs</Eyebrow>
             <ul className="space-y-1 font-mono text-[11px]">
@@ -272,6 +274,30 @@ function PersonaPage() {
         </div>
       </div>
     </>
+  )
+}
+
+/**
+ * Two lines under the profile: what the persona is testing now and when its
+ * strategy was last reviewed, linking the strategy page, where the defaults,
+ * pillar weights and journal live (DESIGN.md, Persona page).
+ */
+function StrategySummary(props: { persona: Doc<'personas'> }) {
+  const experiments = useQuery(api.private.experiments.list, { personaId: props.persona._id })
+  // The strategy review keeps one experiment running per persona, so the first running one is the one.
+  const running = experiments?.find((experiment) => experiment.status === 'running')
+  const reviewedAt = props.persona.strategy?.reviewedAt
+  return (
+    <section>
+      <Eyebrow className="mb-3">Strategy</Eyebrow>
+      <Link to="/personas/$personaId/strategy" params={{ personaId: props.persona._id }} className="group block space-y-0.5 text-xs">
+        {experiments === undefined && <Skeleton className="h-4 w-40" />}
+        {experiments !== undefined && (
+          <span className="block group-hover:underline">{running ? `Testing ${running.name}` : 'Nothing being tested'}</span>
+        )}
+        <span className="block text-ash">{reviewedAt === undefined ? 'Not reviewed yet' : `Reviewed ${formatDate(reviewedAt)}`}</span>
+      </Link>
+    </section>
   )
 }
 

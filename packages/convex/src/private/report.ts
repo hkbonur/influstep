@@ -4,7 +4,7 @@ import { query } from '../_generated/server'
 import { platformsOf } from '../core/formats'
 import { buildFunnel, countConversions, latestPerPublication, reportWindow } from '../core/report'
 import { workspaceOf } from '../core/workspace'
-import { variantStatsFor } from '../internal/agents'
+import { variantStatsFor } from '../core/experiments'
 
 const TREND_DAYS = 28
 const TOP_BY_VALUE = 5

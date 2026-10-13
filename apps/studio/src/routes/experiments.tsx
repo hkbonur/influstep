@@ -5,15 +5,18 @@ import {
   EXPERIMENT_KIND_LABELS,
   METRIC_KEYS,
   METRIC_LABELS,
+  confidencePercent,
   type ExperimentKind,
   type MetricKey,
+  type StrategyDefault,
 } from '@influstep/shared'
 import { createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
 import React from 'react'
-import { Button, Empty, ErrorLine, Field, Input, Mono, PageHeader, Pill, Skeleton, Textarea } from '@/components/ui'
+import { Button, Empty, ErrorLine, Field, type FormState, Input, Mono, PageHeader, Pill, Skeleton, Textarea } from '@/components/ui'
 import { cn } from '@/lib/cn'
 import { errorMessage } from '@/lib/errors'
+import { knownVariants, parseVariants, variantsText } from '@/lib/experiment-variants'
 import { formatCount, formatDateTime, formatPercent } from '@/lib/format'
 
 /** A variant is judged by the visitors its own link brought; a discount code names no variant, so redemptions stay out. */
@@ -23,31 +26,41 @@ export const Route = createFileRoute('/experiments')({ component: ExperimentsPag
 
 type ExperimentRow = NonNullable<ReturnType<typeof useQuery<typeof api.private.experiments.list>>>[number]
 
+/** What the new experiment form needs of a persona: who it is, and its defaults, which fill in the control. */
+type PersonaOption = { _id: Id<'personas'>; name: string; defaults: StrategyDefault[] | undefined }
+
 function ExperimentsPage() {
   const experiments = useQuery(api.private.experiments.list, {})
   const personas = useQuery(api.private.personas.list, {})
   const [creating, setCreating] = React.useState(false)
+  const firstPersona = personas?.[0]
   return (
     <>
       <PageHeader
         title="Experiments"
-        lead="One running experiment per persona. Every planned episode carries a variant; the analyst decides after each measurement window."
+        lead="One running experiment per persona, picked by its weekly strategy review or set up by you. Every planned episode carries a variant; the analyst decides after each measurement window."
         actions={
           <Button variant="primary" onClick={() => setCreating((value) => !value)}>
             {creating ? 'Close' : 'New experiment'}
           </Button>
         }
       />
-      {creating && personas && (
+      {creating && personas && personas.length === 0 && (
+        <div className="mb-6">
+          <Empty>An experiment runs on a persona's episodes. Set up a persona first.</Empty>
+        </div>
+      )}
+      {creating && personas && firstPersona && (
         <NewExperimentForm
-          personas={personas.map((persona) => ({ _id: persona._id, name: persona.name }))}
+          personas={personas.map((persona) => ({ _id: persona._id, name: persona.name, defaults: persona.strategy?.defaults }))}
+          firstPersonaId={firstPersona._id}
           onDone={() => setCreating(false)}
         />
       )}
       {!experiments && <Skeleton className="h-40" />}
       {experiments && experiments.length === 0 && (
         <Empty action={<Button onClick={() => setCreating(true)}>New experiment</Button>}>
-          No experiments yet. Start with a hook experiment: most of the lift on short video is the first two seconds.
+          No experiments yet. Each persona's weekly strategy review picks one from the catalog, or you can set one up now.
         </Empty>
       )}
       <div className="space-y-6">
@@ -63,17 +76,32 @@ function ExperimentCard(props: { experiment: ExperimentRow }) {
   const stop = useMutation(api.private.experiments.stop)
   const override = useMutation(api.private.experiments.override)
   const [overriding, setOverriding] = React.useState(false)
+  const [recording, setRecording] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
-  const { experiment } = props
+  const experiment = props.experiment
   const leader = [...experiment.stats].sort((a, b) => b.rate - a.rate)[0]
   const tint = experiment.status === 'running' ? 'field-green' : experiment.status === 'decided' ? 'ink' : 'fog'
+  // A decision lands once: a second submit while the first is out is ignored, and the backend refuses one on an experiment
+  // that is no longer running.
   const submitOverride = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (recording) return
     const form = new FormData(event.currentTarget)
     setError(null)
+    setRecording(true)
     try {
       await override({ experimentId: experiment._id, winnerKey: String(form.get('winnerKey')), note: String(form.get('note') ?? '') })
       setOverriding(false)
+    } catch (caught) {
+      setError(errorMessage(caught))
+    }
+    setRecording(false)
+  }
+  // Stopping is refused once the experiment is no longer running (decided by the analyst a moment ago, say), and the card says so.
+  const stopExperiment = async () => {
+    setError(null)
+    try {
+      await stop({ experimentId: experiment._id })
     } catch (caught) {
       setError(errorMessage(caught))
     }
@@ -90,7 +118,11 @@ function ExperimentCard(props: { experiment: ExperimentRow }) {
           </h2>
           <p className="mt-0.5 text-ash">{experiment.hypothesis}</p>
           <p className="mt-1 text-xs text-ash">
-            {experiment.personaName} <Mono>@{experiment.personaHandle}</Mono> · {EXPERIMENT_KIND_LABELS[experiment.kind]} on{' '}
+            {/* Who chose to run it: the persona's own strategy review, or the operator on this page. */}
+            {experiment.createdBy === 'analyst'
+              ? `Picked by ${experiment.personaName}`
+              : `Set up by you for ${experiment.personaName}`}{' '}
+            <Mono>@{experiment.personaHandle}</Mono> · {EXPERIMENT_KIND_LABELS[experiment.kind]} on{' '}
             {METRIC_LABELS[experiment.metric].toLowerCase()}
             {LINK_ATTRIBUTED_METRICS.has(experiment.metric) && ' (link-attributed only; code redemptions do not count)'} · decides at{' '}
             {experiment.minExposures} exposures per variant, {formatPercent(experiment.minConfidence, 0)} confidence
@@ -102,7 +134,7 @@ function ExperimentCard(props: { experiment: ExperimentRow }) {
               <Button size="sm" onClick={() => setOverriding((value) => !value)}>
                 Decide myself
               </Button>
-              <Button size="sm" variant="destructive" onClick={() => stop({ experimentId: experiment._id })}>
+              <Button size="sm" variant="destructive" onClick={() => void stopExperiment()}>
                 Stop
               </Button>
             </>
@@ -156,13 +188,14 @@ function ExperimentCard(props: { experiment: ExperimentRow }) {
           {!experiment.decision.byOperator && (
             <span className="tabular text-ash">
               {' '}
-              (lift {formatPercent(experiment.decision.lift, 0)}, confidence {formatPercent(experiment.decision.confidence, 0)})
+              (lift {formatPercent(experiment.decision.lift, 0)}, confidence {confidencePercent(experiment.decision.confidence)}%)
             </span>
           )}
         </p>
       )}
 
-      {overriding && (
+      {/* Gone once the experiment is decided or stopped, by the daily evaluation say, while the form was open. */}
+      {overriding && experiment.status === 'running' && (
         <form onSubmit={submitOverride} className="mt-3 flex flex-wrap items-end gap-3">
           <Field label="Winner">
             <select name="winnerKey" className="field w-auto pr-8">
@@ -176,7 +209,7 @@ function ExperimentCard(props: { experiment: ExperimentRow }) {
           <Field label="Why" className="min-w-64 flex-1">
             <Input name="note" placeholder="What you saw that the numbers do not show" required />
           </Field>
-          <Button type="submit" variant="primary">
+          <Button type="submit" variant="primary" busy={recording}>
             Record decision
           </Button>
         </form>
@@ -190,50 +223,61 @@ function ExperimentCard(props: { experiment: ExperimentRow }) {
   )
 }
 
-function NewExperimentForm(props: { personas: { _id: Id<'personas'>; name: string }[]; onDone: () => void }) {
+/**
+ * The operator's own experiment. Picking a persona and a dimension fills the
+ * variants from the catalog, what the persona does now first as the control
+ * (shared EXPERIMENT_CATALOG and effectiveVariant). The lines stay editable; a
+ * new pick refills them only while they are empty or still the fill, so an
+ * edit is never thrown away.
+ */
+function NewExperimentForm(props: { personas: PersonaOption[]; firstPersonaId: Id<'personas'>; onDone: () => void }) {
   const create = useMutation(api.private.experiments.create)
-  const [error, setError] = React.useState<string | null>(null)
-  const [busy, setBusy] = React.useState(false)
+  const [state, setState] = React.useState<FormState>({ status: 'idle' })
+  const [personaId, setPersonaId] = React.useState(props.firstPersonaId)
+  const [kind, setKind] = React.useState<ExperimentKind>('hook')
+  const defaultsOf = (id: Id<'personas'>) => props.personas.find((persona) => persona._id === id)?.defaults
+  const [variants, setVariants] = React.useState(() => variantsText(knownVariants('hook', defaultsOf(props.firstPersonaId))))
+  const pick = (next: { personaId: Id<'personas'>; kind: ExperimentKind }) => {
+    const filled = variantsText(knownVariants(kind, defaultsOf(personaId)))
+    if (variants.trim() === '' || variants === filled) setVariants(variantsText(knownVariants(next.kind, defaultsOf(next.personaId))))
+    setPersonaId(next.personaId)
+    setKind(next.kind)
+  }
+  const pickPersona = (value: string) => {
+    const persona = props.personas.find((candidate) => candidate._id === value)
+    if (persona === undefined) return
+    pick({ personaId: persona._id, kind })
+  }
+  const pickKind = (value: string) => {
+    const next = EXPERIMENT_KINDS.find((candidate) => candidate === value)
+    if (next === undefined) return
+    pick({ personaId, kind: next })
+  }
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
     const text = (name: string) => String(form.get(name) ?? '').trim()
-    const variants = text('variants')
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line, index) => {
-        const [head = '', ...rest] = line.split(':')
-        const key = head
-          .trim()
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, '-')
-        return { key, label: head.trim(), description: rest.join(':').trim(), isControl: index === 0 }
-      })
-    setBusy(true)
-    setError(null)
+    setState({ status: 'saving' })
     try {
       await create({
-        personaId: text('personaId') as Id<'personas'>,
+        personaId,
         name: text('name'),
         hypothesis: text('hypothesis'),
-        kind: text('kind') as ExperimentKind,
+        kind,
         metric: text('metric') as MetricKey,
-        variants,
+        variants: parseVariants(variants, knownVariants(kind, defaultsOf(personaId))),
         minExposures: Number(form.get('minExposures') ?? 500),
         minConfidence: Number(form.get('minConfidence') ?? 0.9),
       })
       props.onDone()
     } catch (caught) {
-      setError(errorMessage(caught))
-    } finally {
-      setBusy(false)
+      setState({ status: 'error', message: errorMessage(caught) })
     }
   }
   return (
     <form onSubmit={submit} className="card mb-6 grid gap-4 sm:grid-cols-2">
       <Field label="Persona">
-        <select name="personaId" className="field" required>
+        <select name="personaId" className="field" value={personaId} onChange={(event) => pickPersona(event.target.value)} required>
           {props.personas.map((persona) => (
             <option key={persona._id} value={persona._id}>
               {persona.name}
@@ -247,11 +291,11 @@ function NewExperimentForm(props: { personas: { _id: Id<'personas'>; name: strin
       <Field label="Hypothesis" className="sm:col-span-2">
         <Input name="hypothesis" required placeholder="“I was wrong about…” hooks beat “How to…” hooks on click rate" />
       </Field>
-      <Field label="Kind">
-        <select name="kind" className="field" defaultValue="hook">
-          {EXPERIMENT_KINDS.map((kind) => (
-            <option key={kind} value={kind}>
-              {EXPERIMENT_KIND_LABELS[kind]}
+      <Field label="Dimension">
+        <select name="kind" className="field" value={kind} onChange={(event) => pickKind(event.target.value)}>
+          {EXPERIMENT_KINDS.map((option) => (
+            <option key={option} value={option}>
+              {EXPERIMENT_KIND_LABELS[option]}
             </option>
           ))}
         </select>
@@ -265,12 +309,12 @@ function NewExperimentForm(props: { personas: { _id: Id<'personas'>; name: strin
           ))}
         </select>
       </Field>
-      <Field label="Variants" hint="One per line, “Label: what the writer does”. The first line is the control." className="sm:col-span-2">
-        <Textarea
-          name="variants"
-          required
-          placeholder={'How to: open with the outcome the viewer gets\nConfession: open with a mistake the persona made'}
-        />
+      <Field
+        label="Variants"
+        hint="One per line, “Label: what the writer does”. The first line is the control, filled in with what the persona does now. Keep two or three: each variant needs its own exposures."
+        className="sm:col-span-2"
+      >
+        <Textarea name="variants" required value={variants} onChange={(event) => setVariants(event.target.value)} className="min-h-32" />
       </Field>
       <Field label="Exposures per variant before deciding">
         <Input name="minExposures" type="number" min={10} defaultValue={500} />
@@ -278,13 +322,13 @@ function NewExperimentForm(props: { personas: { _id: Id<'personas'>; name: strin
       <Field label="Confidence" hint="0 to 1">
         <Input name="minConfidence" type="number" min={0.5} max={0.99} step={0.01} defaultValue={0.9} />
       </Field>
-      {error && (
+      {state.status === 'error' && (
         <div className="sm:col-span-2">
-          <ErrorLine>{error}</ErrorLine>
+          <ErrorLine>{state.message}</ErrorLine>
         </div>
       )}
       <div className="flex gap-2 sm:col-span-2">
-        <Button type="submit" variant="primary" busy={busy}>
+        <Button type="submit" variant="primary" busy={state.status === 'saving'}>
           Start experiment
         </Button>
         <Button variant="ghost" onClick={props.onDone}>

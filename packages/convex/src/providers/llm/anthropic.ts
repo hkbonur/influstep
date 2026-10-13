@@ -5,6 +5,7 @@ import {
   CARD_TITLE_MAX,
   DELIVERY_LABELS,
   EPISODE_KIND_LABELS,
+  EXPERIMENT_KIND_LABELS,
   POST_INTENT_BRIEFS,
   POST_INTENT_LABELS,
   PUBLICATION_TITLE_MAX,
@@ -90,7 +91,9 @@ export const anthropicLlm: LlmProvider = {
             deliveryInstruction(brief),
             `Concept: ${brief.concept}`,
             `Pillar: ${brief.pillar}`,
-            brief.variant ? `This episode is the "${brief.variant.key}" variant of an experiment: ${brief.variant.description}` : '',
+            learningsInstruction(brief),
+            defaultsInstruction(brief),
+            variantInstruction(brief),
             sponsorInstruction(brief),
             brief.directives.length > 0 ? `Standing directives from the operator:\n- ${brief.directives.join('\n- ')}` : '',
             brief.signals.length > 0
@@ -340,6 +343,32 @@ function deliveryInstruction(brief: ScriptBrief): string {
   if (brief.format.delivery === 'screen_only')
     return `Delivery is screen only: two to four beats, each showing a screen, and every beat names the tool on screen and the URL to open.`
   return `Delivery is screen with avatar: the first beat is the presenter speaking to camera (tool "${PRESENTER_TOOL}", empty url) and it opens with the hook; the beats after it are the screens to record, each naming the tool on screen and the URL to open.`
+}
+
+/** What the persona's own experiments showed, newest first; nothing until one decides. */
+function learningsInstruction(brief: ScriptBrief): string {
+  if (brief.learnings.length === 0) return ''
+  return `What you have learned from your own experiments, newest first:\n- ${brief.learnings.join('\n- ')}`
+}
+
+/** The dimensions where the persona no longer does what it did at the start (shared `styleLines`); nothing while every one is the control. */
+function defaultsInstruction(brief: ScriptBrief): string {
+  if (brief.styleLines.length === 0) return ''
+  return `Your defaults, which this script follows:\n- ${brief.styleLines.join('\n- ')}`
+}
+
+/**
+ * The experiment variant the episode carries. It comes after the learnings
+ * and the defaults and wins over them for its dimension, so the experiment
+ * measures what it set out to measure.
+ */
+function variantInstruction(brief: ScriptBrief): string {
+  if (!brief.variant) return ''
+  const dimension = EXPERIMENT_KIND_LABELS[brief.variant.kind].toLowerCase()
+  return [
+    `This episode is the "${brief.variant.key}" variant of an experiment on ${dimension}: ${brief.variant.description}`,
+    `Follow it for ${dimension}, even where a default or a learning above says otherwise.`,
+  ].join('\n')
 }
 
 function sponsorInstruction(brief: ScriptBrief): string {

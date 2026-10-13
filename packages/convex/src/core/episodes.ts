@@ -9,7 +9,9 @@ import {
   platformsOpen,
   resolveEpisodeFormat,
   slugify,
+  variantLength,
   type Delivery,
+  type EffectiveVariant,
   type EpisodeFormat,
   type Platform,
   type PostIntent,
@@ -29,6 +31,7 @@ import { providersMode } from '../lib/env'
 import { PRESENTER_TOOL } from '../providers/llm'
 import { assertXTitleFits } from './attribution'
 import { hourAt, instantAt } from './dates'
+import { episodeEffectiveVariant } from './experiments'
 import { earliestPublishAt, formatFor, formatsFor, platformsOf } from './formats'
 import { assertLengthFitsKind, assertPostFits, findXPublication } from './posts'
 import { workspaceOf } from './workspace'
@@ -162,14 +165,19 @@ export function shotsFromDraft(draft: BeatsDraft, sponsorName: string, delivery:
  * The format an episode is written to for the platforms it goes to, and the
  * shots that format's delivery records. Scripting stores both; changing the
  * platforms of a scripted episode derives them again from the stored beats.
+ * The length is the formats' scaled by the episode's effective length variant
+ * (shared `effectiveVariant`), the same the writer's brief asks for.
  */
 export function formatAndShots(args: {
   persona: Pick<Doc<'personas'>, 'formats'>
   platforms: Platform[]
   draft: BeatsDraft
   sponsorName: string
+  length: EffectiveVariant
 }): { format: EpisodeFormat; shots: Shot[] } {
-  const format = resolveEpisodeFormat(formatsFor(args.persona, args.platforms))
+  if (args.length.kind !== 'length') throw new Error(`formatAndShots takes the length variant, not a ${args.length.kind} variant`)
+  const resolved = resolveEpisodeFormat(formatsFor(args.persona, args.platforms))
+  const format = { ...resolved, lengthSec: variantLength(resolved.lengthSec, args.length) }
   return { format, shots: shotsFromDraft(args.draft, args.sponsorName, format.delivery) }
 }
 
@@ -200,6 +208,7 @@ export async function setEpisodePlatforms(ctx: MutationCtx, episodeId: Id<'episo
     platforms: chosen,
     draft: { shotPlan: episode.shotPlan },
     sponsorName: workspace.sponsorName,
+    length: await episodeEffectiveVariant(ctx, 'length', episode, persona),
   })
   await ctx.db.patch(episodeId, { ...base, ...derived })
 }

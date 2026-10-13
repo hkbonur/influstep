@@ -25,7 +25,7 @@ One AI influencer profile: a name, a handle, a spoken voice (and on X a writing 
 _Avoid_: influencer (fine in conversation; in code and copy a persona is the profile, the agents do the work), bot, avatar (that is only the rendered face), character, creator.
 
 **Agent**:
-A worker of the workspace with one role, serving every persona. Five agents: the **researcher** polls sources for signals, the **writer** turns a concept into a script, the **producer** records the screen, voices the script, and renders the video, the **publisher** uploads on schedule and reads comments, and the **analyst** pulls metrics and decides experiments. Each takes jobs from its own queue, whichever persona they are for, and the Agents page shows what each is doing now, what waits in its queue, and what it did last. A persona hands an agent a task the way a creator briefs an assistant. An agent run is one job carried out by one role.
+A worker of the workspace with one role, serving every persona. Five agents: the **researcher** polls sources for signals, the **writer** turns a concept into a script, the **producer** records the screen, voices the script, and renders the video, the **publisher** uploads on schedule and reads comments, and the **analyst** pulls metrics, decides experiments, and reviews each persona's strategy every week. Each takes jobs from its own queue, whichever persona they are for, and the Agents page shows what each is doing now, what waits in its queue, and what it did last. A persona hands an agent a task the way a creator briefs an assistant. An agent run is one job carried out by one role.
 _Avoid_: bot, assistant, sub-agent, worker (fine in copy, "five workers serve every persona"; never as the term, since the runner and the Cloudflare Worker are the processes).
 
 **Directive**:
@@ -117,17 +117,17 @@ Where signals come from: `hackernews`, `reddit`, `google_trends`, `comments`, `y
 _Avoid_: feed, channel (that is a platform account), integration.
 
 **Content pillar**:
-One of three to five recurring subjects a persona always returns to ("n8n tutorials", "AI agent workflows", "automation fails"). Pillars keep a persona consistent; signals decide which pillar an episode draws from this week.
+One of three to five recurring subjects a persona always returns to ("n8n tutorials", "AI agent workflows", "automation fails"). Pillars keep a persona consistent. A reactive episode draws from the pillar its signal fits; the rest of the week is shared out by the pillar weights in the persona's strategy.
 _Avoid_: category, theme, niche (that is the whole persona's field), series.
 
 ## Experiments
 
 **Experiment**:
-A question a persona tests across its episodes ("Do 'I was wrong about…' hooks beat 'How to…' hooks on click rate?"): a hypothesis, a metric, two or more variants, and a decision rule. Episodes are assigned a variant at planning time; the analyst compares variants after each measurement window.
+A question a persona tests across its episodes ("Do 'I was wrong about…' hooks beat 'How to…' hooks on click rate?"): a hypothesis, a metric, two or more variants on one dimension, and a decision rule. A persona runs one at a time, picked by its strategy review from the experiment catalog or set up by the operator. Episodes are assigned a variant at planning time; the analyst compares variants after each measurement window.
 _Avoid_: A/B test (fine in conversation), split test, campaign, trial.
 
 **Variant**:
-One arm of an experiment, with a key and a description the writer follows. The **control** is the variant the persona used before.
+One arm of an experiment, with a key and a description the writer follows. The **control** is what the persona did before on that dimension: its default.
 _Avoid_: option, arm (fine in statistics), treatment, version.
 
 **Metric**:
@@ -135,8 +135,46 @@ What an experiment or report measures: `views`, `watch_rate`, `follows`, `clicks
 _Avoid_: KPI, goal, stat.
 
 **Decision**:
-The analyst's verdict on an experiment once a variant leads with enough confidence: which variant won, by how much, and what the persona does next. The operator can override it.
+The analyst's verdict on an experiment once a variant leads with enough confidence: which variant won and by how much. What the persona does next follows from it: the winner becomes the persona's default on the experiment's dimension, and the decision leaves a learning. The operator can decide a running experiment themselves instead; their verdict sets the default and leaves a learning the same way, with their reason. An experiment is decided once: a decided one is not decided again, so a default changes only through a new experiment.
 _Avoid_: result, winner (fine in copy), outcome.
+
+## Strategy
+
+**Strategy**:
+What a persona does by default and what it tests next: a default per dimension, the weight each content pillar gets in the plan, a publish hour per platform, and the one experiment it runs. The analyst changes it in the strategy review, the planner and the writer follow it, and every change is written to the journal with its reason.
+_Avoid_: plan (that is the week's calendar), playbook, settings (those are the operator's), config.
+
+**Strategy review**:
+The analyst's weekly look at one persona (Monday morning, before the week is planned, or when the operator asks): it shifts pillar weight toward the pillar that earns most, moves a publish hour that another hour clearly beats, re-tests a default that later data contradicts, and starts the next experiment when none runs. Every rule is fixed and needs no model; a review that finds nothing to change changes nothing and says nothing.
+_Avoid_: audit, retro, optimization, analysis (fine casually).
+
+**Dimension**:
+One thing about an episode that an experiment varies: hook style, concept angle, sponsor placement, episode length, or call to action. Each has its variants in the experiment catalog and one default per persona. Sponsor placement applies only to sponsored episodes.
+_Avoid_: axis, factor, lever, kind (its name in code only, `experiment.kind`).
+
+**Experiment catalog**:
+The variants a persona can test on each dimension, each with the instruction the writer follows ("Open with the question the viewer has"). The first variant of each dimension is its control, what personas did before. The strategy review picks experiments from it, the dimension the persona knows least about first; the operator's new experiment form fills in from it.
+_Avoid_: library, menu, templates, playbook.
+
+**Default**:
+What a persona does on one dimension when no experiment varies it: the winning variant of the last experiment decided on that dimension, from the day it was decided, or the catalog's control until one is. An episode that carries a variant follows it on its experiment's dimension and the defaults on every other. A default that later data contradicts (its rate since the decision falls to the runner-up's rate at the decision) is tested again, not trusted forever.
+_Avoid_: preference, setting, baseline (that is the control), winner (fine in copy; it is the decision's word).
+
+**Goal metric**:
+The metric the strategy review gives a new experiment: the one closest to paying Formstep customers that has enough data, down the ladder paid, signups, clicks, follows. Follows stand in for views at the bottom because a decision compares two rates: views per episode is not a rate, follows per view is.
+_Avoid_: KPI, north star, objective, target.
+
+**Journal**:
+A persona's dated record of every change to its strategy: what changed in one sentence, the reason with its numbers, the evidence it rests on (an experiment, episodes), and who made it, the analyst or the operator. Never edited; the strategy page shows it newest first.
+_Avoid_: log (that is the jobs), history (that is the X account's imported posts), changelog, audit trail.
+
+**Memory**:
+What a persona keeps knowing from one episode to the next: short entries, each with a kind, the evidence it rests on, a confidence, and a status (active or superseded). An entry that later data contradicts is superseded, never deleted, so the persona can show why it changed its mind. Learnings are its first kind; facts, rules and goal notes follow (docs/plan.md, v0.2 item 10).
+_Avoid_: notes, knowledge base, context (that is what one agent run reads).
+
+**Learning**:
+The memory entry a decision leaves: on which dimension which variant beat which, on which metric, by how much and how surely, or the operator's reason when they decided. The writer reads the persona's active learnings before every script. A newer learning on the same dimension supersedes the older one.
+_Avoid_: insight, lesson, finding, takeaway.
 
 ## Attribution
 

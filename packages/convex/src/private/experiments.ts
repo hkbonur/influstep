@@ -1,9 +1,8 @@
 import { v } from 'convex/values'
 import { variantRate } from '@influstep/shared'
 import { mutation, query } from '../_generated/server'
-import { variantStatsFor } from '../internal/agents'
+import { applyExperimentDecision, startExperiment, stopExperiment, variantStatsFor } from '../core/experiments'
 import { experimentKindValidator, metricKeyValidator, variantValidator } from '../lib/validators'
-import { refusal } from '../lib/errors'
 
 export const list = query({
   args: { personaId: v.optional(v.id('personas')) },
@@ -16,6 +15,8 @@ export const list = query({
       const stats = await variantStatsFor(ctx, experiment)
       out.push({
         ...experiment,
+        // Rows from before the strategy review were all set up by the operator, so an absent value means the operator.
+        createdBy: experiment.createdBy ?? ('operator' as const),
         personaName: persona?.name ?? '',
         personaHandle: persona?.handle ?? '',
         stats: stats.map((stat) => ({ ...stat, rate: variantRate(stat) })),
@@ -37,35 +38,36 @@ export const create = mutation({
     minConfidence: v.number(),
   },
   handler: async (ctx, args) => {
-    if (args.variants.length < 2) throw refusal('An experiment needs at least two variants.')
-    const keys = new Set(args.variants.map((variant) => variant.key))
-    if (keys.size !== args.variants.length) throw refusal('Variant keys must be unique.')
-    const running = await ctx.db
-      .query('experiments')
-      .withIndex('by_persona_status', (q) => q.eq('personaId', args.personaId).eq('status', 'running'))
-      .first()
-    if (running) throw refusal(`"${running.name}" is still running; stop it first so episodes carry one variant.`)
-    return ctx.db.insert('experiments', { ...args, status: 'running', createdAt: Date.now() })
+    const persona = await ctx.db.get(args.personaId)
+    if (!persona) throw new Error(`persona ${args.personaId} not found`)
+    return startExperiment(ctx, persona, {
+      name: args.name,
+      hypothesis: args.hypothesis,
+      kind: args.kind,
+      metric: args.metric,
+      variants: args.variants,
+      minExposures: args.minExposures,
+      minConfidence: args.minConfidence,
+      createdBy: 'operator',
+      // The operator's reason for an experiment is the hypothesis they wrote.
+      reason: args.hypothesis,
+    })
   },
 })
 
 export const stop = mutation({
   args: { experimentId: v.id('experiments') },
   handler: async (ctx, args) => {
-    await ctx.db.patch(args.experimentId, { status: 'stopped' })
+    await stopExperiment(ctx, args.experimentId, 'operator')
   },
 })
 
-/** The operator's own verdict, recorded as such. */
+/** The operator's own verdict, recorded as such: it lands like the analyst's, with no lift and no confidence of its own. */
 export const override = mutation({
   args: { experimentId: v.id('experiments'), winnerKey: v.string(), note: v.string() },
   handler: async (ctx, args) => {
     const experiment = await ctx.db.get(args.experimentId)
     if (!experiment) throw new Error('experiment not found')
-    if (!experiment.variants.some((variant) => variant.key === args.winnerKey)) throw refusal(`There is no variant "${args.winnerKey}".`)
-    await ctx.db.patch(experiment._id, {
-      status: 'decided',
-      decision: { winnerKey: args.winnerKey, lift: 0, confidence: 0, note: args.note, decidedAt: Date.now(), byOperator: true },
-    })
+    await applyExperimentDecision(ctx, experiment, { winnerKey: args.winnerKey, lift: 0, confidence: 0 }, 'operator', args.note)
   },
 })

@@ -20,9 +20,9 @@ import { Skeleton } from '@/components/ui'
 import { cn } from '@/lib/cn'
 import { useRunnerOnline } from '@/lib/use-runner-online'
 
-// `exact`: a persona's own page, its voice and its report light up the persona's row instead, so the section stays dark there
-// and the sidebar never shows two selections at once. Search params never count, so the open new persona form on
-// /personas?new=true still lights Personas.
+// `exact`: a persona's own page, its voice, its strategy and its report light up the persona's row instead, so the section
+// stays dark there and the sidebar never shows two selections at once. Search params never count, so the open new persona
+// form on /personas?new=true still lights Personas.
 const NAV = [
   { to: '/', label: 'Calendar', icon: CalendarBlankIcon, exact: true },
   { to: '/personas', label: 'Personas', icon: UsersThreeIcon, exact: true },
@@ -197,7 +197,7 @@ function PersonaLink(props: { persona: PersonaRow; selected: boolean; collapsed:
       params={{ personaId: props.persona._id }}
       title={summary}
       aria-label={summary}
-      // Its voice, its report and its episodes select the row too; the router marks the persona page itself as "page".
+      // Its voice, its strategy, its report and its episodes select the row too; the router marks the persona page itself as "page".
       aria-current={props.selected ? 'true' : undefined}
       className={cn('flex items-center rounded-lg hover:bg-paper-warm', {
         'h-9 gap-2.5 pr-2 pl-1': !props.collapsed,
@@ -303,19 +303,21 @@ function personaSummary(persona: PersonaRow, mark: PersonaMark): string {
 
 /**
  * The persona the current page belongs to: its own page, its voice, its
- * report, or one of its episodes. An episode route names only the episode, so
+ * strategy, its report, or one of its episodes. An episode route names only the episode, so
  * its persona comes from the episode itself.
  */
 function useSelectedPersonaId(): string | null {
   const matchRoute = useMatchRoute()
   const personaPage = matchRoute({ to: '/personas/$personaId' })
-  // Its own match: route matching is exact by default, so the persona page's match never covers /voice.
+  // Their own matches: route matching is exact by default, so the persona page's match never covers /voice or /strategy.
   const voicePage = matchRoute({ to: '/personas/$personaId/voice' })
+  const strategyPage = matchRoute({ to: '/personas/$personaId/strategy' })
   const reportPage = matchRoute({ to: '/reports/$personaId' })
   const episodePage = matchRoute({ to: '/episodes/$episodeId' })
   const episode = useQuery(api.private.episodes.get, episodePage ? { episodeId: episodePage.episodeId as Id<'episodes'> } : 'skip')
   if (personaPage) return personaPage.personaId
   if (voicePage) return voicePage.personaId
+  if (strategyPage) return strategyPage.personaId
   if (reportPage) return reportPage.personaId
   // Undefined while the episode loads, null when it does not exist: no row is selected in either case.
   if (episode) return episode.episode.personaId

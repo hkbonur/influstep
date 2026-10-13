@@ -39,7 +39,12 @@ export interface EpisodeContext {
   experiment: Doc<'experiments'> | null
   /** The account posts the operator or the analyst marked as examples of the voice, most engaging first; only read for a post. */
   examples: Doc<'accountPosts'>[]
+  /** The persona's active learnings, newest first, at most WRITER_LEARNINGS_MAX, for the writer's prompt. */
+  learnings: string[]
 }
+
+/** How many learnings the writer reads, so its prompt stays short; one active learning per dimension keeps it well under. */
+const WRITER_LEARNINGS_MAX = 10
 
 export const getEpisodeContext = internalQuery({
   args: { episodeId: v.id('episodes') },
@@ -59,7 +64,17 @@ export const getEpisodeContext = internalQuery({
     const experiment = episode.experimentId ? await ctx.db.get(episode.experimentId) : null
     // setExample caps the marks at VOICE_EXAMPLES_MAX; the cap holds here too, so the writer's prompt stays short.
     const examples = isPost(episode.kind) ? (await examplePostsOf(ctx, persona._id)).slice(0, VOICE_EXAMPLES_MAX) : []
-    return { episode, persona, workspace, directives, signals, experiment, examples }
+    const learnings = (
+      await ctx.db
+        .query('memories')
+        .withIndex('by_persona_status', (q) => q.eq('personaId', persona._id).eq('status', 'active'))
+        .collect()
+    )
+      .filter((memory) => memory.kind === 'learning')
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, WRITER_LEARNINGS_MAX)
+      .map((memory) => memory.text)
+    return { episode, persona, workspace, directives, signals, experiment, examples, learnings }
   },
 })
 

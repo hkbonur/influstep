@@ -7,8 +7,10 @@ import {
   type ChatIntent,
   type ChatTask,
   type Delivery,
+  type EffectiveVariant,
   type EpisodeKind,
   type EpisodePost,
+  type ExperimentKind,
   type PostIntent,
   type PostKind,
   type PostLength,
@@ -32,10 +34,26 @@ export interface ScriptBrief {
   sponsorName: string
   /** Where a demo beat opens the sponsor on screen. */
   sponsorUrl: string
-  variant?: { key: string; description: string }
+  /** The experiment variant this episode carries, with the dimension its experiment varies. */
+  variant?: { kind: ExperimentKind; key: string; description: string }
+  /** The persona's active learnings, newest first: what its own experiments showed. */
+  learnings: string[]
+  /**
+   * What the episode does on every dimension (shared `effectiveStyle`): its
+   * own variant where its experiment varies the dimension, else the persona's
+   * default, else the catalog control. The mock writer's hook and closing
+   * line read it.
+   */
+  style: Record<ExperimentKind, EffectiveVariant>
+  /** The dimensions that differ from the control, one line each, without the variant's own dimension (shared `styleLines`). */
+  styleLines: string[]
   directives: string[]
   signals: { title: string; summary: string; url: string }[]
-  /** The episode's format: how long, who is on camera, and the hook convention of every platform it goes to. */
+  /**
+   * The episode's format: how long, who is on camera, and the hook convention
+   * of every platform it goes to. The length is the format's, scaled by the
+   * episode-length variant in force (shared `variantLength`).
+   */
   format: { lengthSec: number; delivery: Delivery; hookNotes: string[] }
   /** What was wrong with the previous draft, on the one retry; empty on the first try. */
   problems: string[]

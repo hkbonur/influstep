@@ -1,0 +1,28 @@
+import { STRATEGY_REVIEW_SLOT, WEEKDAYS } from '@influstep/shared'
+
+/**
+ * The review's day as Date#getUTCDay counts it, Sunday first. WEEKDAYS starts
+ * on Monday, so its index moves one day on.
+ */
+const REVIEW_UTC_DAY = (WEEKDAYS.indexOf(STRATEGY_REVIEW_SLOT.dayOfWeek) + 1) % 7
+
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000
+
+/**
+ * The next weekly strategy review after `now`, as an instant, from the slot
+ * the cron schedules it at (shared STRATEGY_REVIEW_SLOT). A review due at this
+ * very moment counts as gone, so the line never promises one that already
+ * started.
+ */
+export function nextReviewAt(now: number): number {
+  const today = new Date(now)
+  const daysAhead = (REVIEW_UTC_DAY - today.getUTCDay() + 7) % 7
+  const slot = Date.UTC(
+    today.getUTCFullYear(),
+    today.getUTCMonth(),
+    today.getUTCDate() + daysAhead,
+    STRATEGY_REVIEW_SLOT.hourUTC,
+    STRATEGY_REVIEW_SLOT.minuteUTC
+  )
+  return slot > now ? slot : slot + WEEK_MS
+}

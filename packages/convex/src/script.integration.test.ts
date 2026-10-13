@@ -5,6 +5,7 @@ import {
   LENGTH_SEC_MIN,
   PUBLICATION_BODY_MAX,
   SPONSOR_SEGMENTS,
+  effectiveStyle,
   hookOf,
   lengthProblem,
   scriptProblems,
@@ -46,6 +47,10 @@ function scriptBrief(args: { delivery: Delivery; sponsorSegment: SponsorSegment;
     sponsorSegment: args.sponsorSegment,
     sponsorName: SPONSOR,
     sponsorUrl: 'https://formstep.io',
+    // No learnings and the catalog control on every dimension: the brief of a persona that has tested nothing yet.
+    learnings: [],
+    style: effectiveStyle({ sponsorSegment: args.sponsorSegment }, undefined),
+    styleLines: [],
     directives: ['focus on n8n error handling for two weeks'],
     signals: [{ title: 'n8n webhooks that retry', summary: 'People ask how.', url: 'https://news.ycombinator.com/item?id=1' }],
     format: { lengthSec: args.lengthSec, delivery: args.delivery, hookNotes: ['Hook in the first two seconds.'] },

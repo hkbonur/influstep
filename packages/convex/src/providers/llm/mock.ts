@@ -30,7 +30,9 @@ import {
 /**
  * A template writer. Deterministic from the brief, so a seeded demo and a
  * test read the same script twice. It is honest about being a mock: every
- * script opens with the concept and names the variant it follows.
+ * script is about the concept, and its hook and closing line follow the
+ * style in force (`brief.style`), so an experiment or a new default visibly
+ * changes the script.
  *
  * The beats are the script, written to the rules the real writer is held
  * to: the hook alone on the first beat, a fix that grows with the format's
@@ -264,11 +266,56 @@ function majorityLanguage(posts: AccountPostSample[]): string {
   return best?.lang ?? 'en'
 }
 
+function howToHook(subject: string): string {
+  return `How to ${subject} in under a minute.`
+}
+
+/** A hook per catalog hook style, each one sentence, so it is the first beat's whole voiceover. */
+const HOOKS: Partial<Record<string, (subject: string) => string>> = {
+  howto: howToHook,
+  question: (subject) => `Why does ${subject} break for everyone?`,
+  wrong: (subject) => `I was wrong about ${subject}.`,
+  number: (subject) => `3 things about ${subject}.`,
+  result: (subject) => `This is what ${subject} looks like when it works.`,
+}
+
+/**
+ * The hook of the hook style in force. It reads the style, never the bare
+ * variant key: a call to action keyed `comment` says nothing about the hook.
+ */
 function hookFor(brief: ScriptBrief, topic: string): string {
-  const key = brief.variant?.key ?? 'control'
-  if (key.includes('wrong')) return `I was wrong about ${topic.toLowerCase()}.`
-  if (key.includes('question')) return `Why does ${topic.toLowerCase()} break for everyone?`
-  return `How to ${topic.toLowerCase()} in under a minute.`
+  const subject = topic.toLowerCase()
+  const hook = HOOKS[brief.style.hook.key]
+  // An operator's own hook variant has no template here: the mock opens with the control's how-to,
+  // and the real writer follows the variant's description.
+  if (hook === undefined) return howToHook(subject)
+  return hook(subject)
+}
+
+/**
+ * The closing line of the call to action in force, full or compact. A
+ * sponsored slot asks the viewer to try the sponsor first; a slot without one
+ * never names it. The compact lines stay at two or three words, so the
+ * longest hook with the compact sponsor demo still fits the shortest format.
+ */
+function ctaFor(brief: ScriptBrief, args: { compact: boolean }): string {
+  const sponsor = brief.sponsorSegment === 'none' ? null : brief.sponsorName
+  const key = brief.style.cta.key
+  if (key === 'comment') {
+    if (args.compact) return 'Your take?'
+    if (sponsor) return `Try ${sponsor}. What would your flow ask a customer for? Tell me in the comments.`
+    return 'Which part of this trips you up? Tell me in the comments.'
+  }
+  if (key === 'link') {
+    if (args.compact) return 'Link below.'
+    if (sponsor) return `Try ${sponsor}. The link is in the description.`
+    return 'The link is in the description.'
+  }
+  // `follow` is the control. An operator's own call to action has no template here either: the mock closes
+  // the way it always has, and the real writer follows the variant's description.
+  if (args.compact) return 'Follow for more.'
+  if (sponsor) return `Try ${sponsor}, and follow for the next one.`
+  return `Follow ${brief.persona.name} for more ${brief.pillar.toLowerCase()}.`
 }
 
 function titleFor(pillar: string, topic: string): string {
@@ -296,16 +343,9 @@ interface ScriptLines {
 /** The full lines, or the compact ones for a format too short to hold them. */
 function linesFor(brief: ScriptBrief, topic: string, args: { compact: boolean }): ScriptLines {
   const hook = hookFor(brief, topic)
+  const cta = ctaFor(brief, args)
   const sponsor = brief.sponsorName
-  if (brief.sponsorSegment === 'none') {
-    return {
-      hook,
-      mention: null,
-      demo: null,
-      cta: args.compact ? 'Follow for more.' : `Follow ${brief.persona.name} for more ${brief.pillar.toLowerCase()}.`,
-    }
-  }
-  const cta = args.compact ? 'Follow for more.' : `Try ${sponsor}, and follow for the next one.`
+  if (brief.sponsorSegment === 'none') return { hook, mention: null, demo: null, cta }
   if (brief.sponsorSegment === 'mention') {
     const mention = args.compact
       ? `Sponsored by ${sponsor}.`

@@ -1,11 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { RUNNER_STALE_MS } from '@influstep/shared'
+import { DEFAULT_FORMATS, EXPERIMENT_CATALOG, RUNNER_STALE_MS, effectiveVariant } from '@influstep/shared'
 import { api, internal } from '../_generated/api'
 import { PRESENTER_TOOL } from '../providers/llm'
 import { insertEpisode, insertJob, insertPersona, insertPublication, TIMEZONE, VIDEO_HOUR } from '../../test/fixtures'
 import { setup } from '../../test/setup'
 import { addDays, dayKey, instantAt } from './dates'
-import { KILLED_BEFORE_RUN, completeProduction, completePublication, killEpisode, rescheduleEpisode, shotsFromDraft } from './episodes'
+import {
+  KILLED_BEFORE_RUN,
+  completeProduction,
+  completePublication,
+  formatAndShots,
+  killEpisode,
+  rescheduleEpisode,
+  shotsFromDraft,
+} from './episodes'
 
 const SPONSOR = 'Formstep'
 
@@ -51,6 +59,42 @@ describe('shotsFromDraft', () => {
       expect(shots.map((shot) => shot.kind)).toEqual(['avatar', 'avatar'])
       expect(shots.map((shot) => shot.voiceover)).toEqual(presenterBeats.shotPlan.map((beat) => beat.voiceover))
     }
+  })
+})
+
+describe('formatAndShots', () => {
+  const persona = { formats: [{ platform: 'youtube' as const, ...DEFAULT_FORMATS.youtube }] }
+  const lengthOf = (key: string) =>
+    formatAndShots({
+      persona,
+      platforms: ['youtube'],
+      draft: presenterBeats,
+      sponsorName: SPONSOR,
+      length: effectiveVariant('length', { variant: lengthVariant(key) }, undefined),
+    }).format.lengthSec
+
+  function lengthVariant(key: string) {
+    const variant = EXPERIMENT_CATALOG.length.find((candidate) => candidate.key === key)
+    if (!variant) throw new Error(`the length catalog has no "${key}"`)
+    return { kind: 'length' as const, ...variant }
+  }
+
+  it("scales the format's length by the length variant", () => {
+    expect(lengthOf('standard')).toBe(DEFAULT_FORMATS.youtube.lengthSec)
+    expect(lengthOf('shorter')).toBe(Math.round(DEFAULT_FORMATS.youtube.lengthSec * 0.7))
+    expect(lengthOf('longer')).toBe(Math.round(DEFAULT_FORMATS.youtube.lengthSec * 1.3))
+  })
+
+  it('refuses a variant of another dimension in place of the length', () => {
+    expect(() =>
+      formatAndShots({
+        persona,
+        platforms: ['youtube'],
+        draft: presenterBeats,
+        sponsorName: SPONSOR,
+        length: effectiveVariant('cta', {}, undefined),
+      })
+    ).toThrow('formatAndShots takes the length variant, not a cta variant')
   })
 })
 

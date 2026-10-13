@@ -42,6 +42,16 @@ export const planNextWeek = internalMutation({
   },
 })
 
+/** The weekly strategy review, queued before the week is planned so the plan follows the fresh strategy. */
+export const reviewStrategies = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    for (const persona of await activePersonas(ctx)) {
+      await enqueueJob(ctx, { kind: 'review_strategy', payload: { personaId: persona._id }, personaId: persona._id })
+    }
+  },
+})
+
 export const ageOutSignals = internalMutation({
   args: {},
   handler: async (ctx) => {

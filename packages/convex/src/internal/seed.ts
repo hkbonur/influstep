@@ -1,6 +1,9 @@
 import { v } from 'convex/values'
 import {
+  AUTO_MIN_CONFIDENCE,
   DEFAULT_FORMATS,
+  EXPERIMENT_CATALOG,
+  METRIC_MIN_EXPOSURES,
   WEEKDAY_LABELS,
   X_IMAGE_ASPECT,
   formatAspects,
@@ -8,11 +11,15 @@ import {
   postHook,
   postLengthOf,
   postSlotHours,
+  decideExperiment,
   resolveEpisodeFormat,
+  variantRate,
   voiceStats,
   weekdayOf,
   type Beat,
+  type CatalogVariant,
   type EpisodePost,
+  type ExperimentKind,
   type ImportedPost,
   type Platform,
   type PlatformFormat,
@@ -28,7 +35,9 @@ import { insertAccountPosts, topOriginalsOf } from '../core/account'
 import { openXChecklist } from '../core/checklist'
 import { addDays, dayKey, instantAt, weekStart } from '../core/dates'
 import { createIdea, createPostPublication, createTrackedLink, shotsFromDraft } from '../core/episodes'
+import { analystDecisionNote, applyExperimentDecision, startExperiment, variantStatsFor } from '../core/experiments'
 import { earliestPublishAt, formatFor, formatsFor, platformsOf } from '../core/formats'
+import { reviewStrategy } from '../core/strategy'
 import { enqueueJob } from '../jobs/queue'
 import type { FoundConversion } from '../providers/analytics'
 import { mockAnalytics } from '../providers/analytics/mock'
@@ -39,11 +48,28 @@ import { PRESENTER_TOOL } from '../providers/llm'
  * The demo workspace: two personas, a planned week, a running experiment,
  * signals, one episode at every status, a post of every kind on X, the X
  * account Ada took over with its history and learned voice, and a month of
- * history so the report shows a funnel on first open. `pnpm seed` runs this;
- * it is idempotent by workspace name.
+ * history so the report shows a funnel on first open. Ada also has a
+ * strategy: a call to action her analyst tested and decided in September, the
+ * learning and default it left, and a review a week ago. Max has none, so his
+ * first review starts an experiment. `pnpm seed` runs this; it is idempotent
+ * by workspace name.
  */
 
 const TIMEZONE = 'Europe/Oslo'
+const DAY_MS = 86_400_000
+
+/** A variant of the experiment catalog by key, so the seeded experiments use the catalog's own words. */
+function catalogVariant(kind: ExperimentKind, key: string): CatalogVariant {
+  const variant = EXPERIMENT_CATALOG[kind].find((candidate) => candidate.key === key)
+  if (!variant) throw new Error(`the ${kind} catalog has no variant "${key}"`)
+  return variant
+}
+
+/** The closing line of a seeded video by its call to action, worded like the mock writer's. */
+const SEEDED_CLOSINGS = {
+  follow: 'Follow Ada for the next one.',
+  comment: 'Which part of this trips you up? Tell me in the comments.',
+} as const
 
 /** Ada posts everywhere, on the defaults, with a shorter YouTube tutorial and a slightly longer TikTok. On X she also writes posts. */
 const ADA_FORMATS: PlatformFormat[] = [
@@ -79,6 +105,8 @@ function seededBeats(args: {
   sponsorSegment: SponsorSegment
   sponsorName: string
   sponsorUrl: string
+  /** The call to action that closes the last beat. */
+  closing: string
 }): Beat[] {
   const mention = `This one is sponsored by ${args.sponsorName}: when the workflow needs something from a customer, ${args.sponsorName} collects it.`
   const beats: Beat[] = [
@@ -93,9 +121,7 @@ function seededBeats(args: {
       url: args.sponsorUrl,
     })
   }
-  return beats.map((beat, index) =>
-    index === beats.length - 1 ? { ...beat, voiceover: `${beat.voiceover} Follow Ada for the next one.` } : beat
-  )
+  return beats.map((beat, index) => (index === beats.length - 1 ? { ...beat, voiceover: `${beat.voiceover} ${args.closing}` } : beat))
 }
 
 /** The writer's description of a seeded video: what it shows, in Ada's voice, with no link, code or disclosure. */
@@ -526,27 +552,6 @@ export const write = internalMutation({
       createdAt: now - 3 * 86_400_000 + 5_000,
     })
 
-    const experimentId = await ctx.db.insert('experiments', {
-      personaId: adaId,
-      name: 'Confession hooks',
-      hypothesis: '"I was wrong about…" hooks beat "How to…" hooks on click rate.',
-      kind: 'hook',
-      metric: 'clicks',
-      variants: [
-        { key: 'howto', label: 'How to…', description: 'Open with "How to <do the thing> in under a minute."', isControl: true },
-        {
-          key: 'wrong',
-          label: 'I was wrong about…',
-          description: 'Open with a confession: "I was wrong about <the thing>."',
-          isControl: false,
-        },
-      ],
-      status: 'running',
-      minExposures: 2000,
-      minConfidence: 0.9,
-      createdAt: now - 20 * 86_400_000,
-    })
-
     // Signals the researcher would have found.
     const seedSignals: {
       personaId: Id<'personas'>
@@ -664,71 +669,83 @@ export const write = internalMutation({
     const platformInstant = (day: string, format: PlatformFormat) => instantAt(day, format.publishHour, TIMEZONE)
     const adaRenders = (durationSec: number) => adaAspects.map((aspect) => ({ aspect, storageId: args.storageId, durationSec, mock: true }))
     const today = dayKey(now, TIMEZONE)
-    const historyConcepts = [
-      ['Retry a failed n8n webhook without losing the payload', 'n8n tutorials', 'none', 'howto'],
-      ['Three n8n error workflows every team needs', 'n8n tutorials', 'none', 'wrong'],
-      ['An AI agent that triages support email in n8n', 'AI agent workflows', 'none', 'howto'],
-      ['The automation that emailed 400 customers twice', 'Automation fails', 'none', 'wrong'],
-      ['Pause a workflow until the customer signs off', 'AI agent workflows', 'mention', 'howto'],
-      ['Collect documents from clients without chasing emails', 'n8n tutorials', 'demo', 'wrong'],
-      ['n8n vs Make for a five-person team', 'n8n tutorials', 'none', 'howto'],
-      ['Agent that fills in a quote and waits for approval', 'AI agent workflows', 'demo', 'wrong'],
-    ] as const
-    const history: { episodeId: Id<'episodes'>; variantKey: string; scheduledAt: number; clicks: number }[] = []
-    for (const [index, [concept, pillar, sponsorSegment, variantKey]] of historyConcepts.entries()) {
-      const plannedFor = addDays(today, -(26 - index * 3))
-      const scheduledAt = earliestPublishAt(ada, adaPlatforms, plannedFor)
+    /**
+     * One of Ada's past videos, live on every platform at its own hour: a tracked link per platform with its
+     * clicks (none on X, where nothing is appended), and three snapshots per publication.
+     */
+    const seedPastVideo = async (video: {
+      concept: string
+      pillar: string
+      sponsorSegment: SponsorSegment
+      plannedFor: string
+      experimentId: Id<'experiments'>
+      variantKey: string
+      hook: string
+      closing: string
+      /** Measured, or still only published (the newest). */
+      measured: boolean
+      /** Tells the seeded videos' slugs, external ids and view counts apart. */
+      tag: string
+      viewSeed: number
+      /** Clicks per base view on every platform but X. */
+      clickRate: number
+      /** The clicks come over this many hours after a publication goes live. */
+      clickHours: number
+      /** Hours after a publication went live of its snapshots; the seed never writes one after now. */
+      snapshotHours: (liveAt: number) => number[]
+    }): Promise<{ episodeId: Id<'episodes'>; scheduledAt: number; clicks: number }> => {
+      const scheduledAt = earliestPublishAt(ada, adaPlatforms, video.plannedFor)
       // Live once the last platform went out.
-      const publishedAt = Math.max(...adaFormats.map((format) => platformInstant(plannedFor, format)))
+      const publishedAt = Math.max(...adaFormats.map((format) => platformInstant(video.plannedFor, format)))
       const shotPlan = seededBeats({
-        hook: variantKey === 'wrong' ? `I was wrong about ${concept.toLowerCase()}.` : `How to ${concept.toLowerCase()} in under a minute.`,
+        hook: video.hook,
         opener: { title: 'The hook', tool: PRESENTER_TOOL, url: '' },
         fix: 'Step one, open n8n and find the node that fails. Step two, add an error workflow and a retry.',
-        sponsorSegment,
+        sponsorSegment: video.sponsorSegment,
         sponsorName: workspace.sponsorName,
         sponsorUrl: workspace.sponsorUrl,
+        closing: video.closing,
       })
-      const description = seededDescription(concept)
+      const description = seededDescription(video.concept)
       const episodeId = await ctx.db.insert('episodes', {
         personaId: adaId,
-        slug: `${concept
+        slug: `${video.concept
           .toLowerCase()
           .replace(/[^a-z0-9]+/g, '-')
           .replace(/^-+|-+$/g, '')
-          .slice(0, 60)}-s${index}`,
+          .slice(0, 60)}-${video.tag}`,
         kind: 'video',
-        status: index === historyConcepts.length - 1 ? 'published' : 'measured',
-        concept,
-        title: concept,
+        status: video.measured ? 'measured' : 'published',
+        concept: video.concept,
+        title: video.concept,
         hook: hookOf(shotPlan),
         description,
-        sponsorSegment,
+        sponsorSegment: video.sponsorSegment,
         platforms: adaPlatforms,
         format: adaFormat,
         shotPlan,
         shots: shotsFromDraft({ shotPlan }, workspace.sponsorName, adaFormat.delivery),
         renders: adaRenders(58),
-        plannedFor,
+        plannedFor: video.plannedFor,
         scheduledAt,
-        experimentId,
-        variantKey,
+        experimentId: video.experimentId,
+        variantKey: video.variantKey,
         signalIds: [],
-        pillar,
-        approvedAt: scheduledAt - 86_400_000,
+        pillar: video.pillar,
+        approvedAt: scheduledAt - DAY_MS,
         publishedAt,
-        measuredAt: index === historyConcepts.length - 1 ? undefined : publishedAt + 72 * 3_600_000,
-        createdAt: scheduledAt - 2 * 86_400_000,
+        measuredAt: video.measured ? publishedAt + 72 * 3_600_000 : undefined,
+        createdAt: scheduledAt - 2 * DAY_MS,
         updatedAt: publishedAt,
       })
       const episode = await ctx.db.get(episodeId)
       if (!episode) throw new Error('episode vanished')
+      let clicksTotal = 0
       for (const format of adaFormats) {
         const { platform } = format
-        const liveAt = platformInstant(plannedFor, format)
+        const liveAt = platformInstant(video.plannedFor, format)
         const linkId = await createTrackedLink(ctx, { persona: ada, episode, platform, target: workspace.sponsorUrl })
-        const link = await ctx.db.get(linkId)
-        if (!link) throw new Error('link vanished')
-        const externalId = `mock-${platform}-${index}`
+        const externalId = `mock-${platform}-${video.tag}`
         // Off X each went out with Ada's description and her code, stamped at dispatch; X took the title alone.
         const publicationId = await ctx.db.insert('publications', {
           episodeId,
@@ -736,7 +753,7 @@ export const write = internalMutation({
           platform,
           aspect: format.aspect,
           status: 'live',
-          title: concept,
+          title: video.concept,
           body: platform === 'x' ? undefined : description,
           discountCodeId: platform === 'x' ? undefined : adaCode._id,
           linkId,
@@ -746,22 +763,21 @@ export const write = internalMutation({
           publishedAt: liveAt,
           mock: true,
         })
-        // Clicks and three snapshots per publication: the day after, three days after, and now.
         const platformFactor = platform === 'tiktok' ? 2.4 : platform === 'instagram' ? 1.3 : 1
-        const baseViews = Math.round((900 + ((index * 131) % 700)) * platformFactor)
-        const clickRate = variantKey === 'wrong' ? 0.021 : 0.014
+        const baseViews = Math.round((900 + ((video.viewSeed * 131) % 700)) * platformFactor)
         // Nothing is appended on X, so its tracked link is never printed and never clicked.
-        const clicks = platform === 'x' ? 0 : Math.round(baseViews * clickRate)
+        const clicks = platform === 'x' ? 0 : Math.round(baseViews * video.clickRate)
         for (let c = 0; c < clicks; c += 1) {
           await ctx.db.insert('linkClicks', {
             linkId,
             personaId: adaId,
             episodeId,
-            at: liveAt + ((c + 1) * 60 * 3_600_000) / (clicks + 1),
+            at: liveAt + ((c + 1) * video.clickHours * 3_600_000) / (clicks + 1),
           })
         }
         await ctx.db.patch(linkId, { clicks })
-        for (const [snapshotIndex, hours] of [24, 72, Math.max(96, (now - liveAt) / 3_600_000)].entries()) {
+        clicksTotal += clicks
+        for (const [snapshotIndex, hours] of video.snapshotHours(liveAt).entries()) {
           const views = Math.round(baseViews * Math.log2(2 + hours) * 0.4)
           await ctx.db.insert('metricSnapshots', {
             personaId: adaId,
@@ -783,11 +799,136 @@ export const write = internalMutation({
           })
         }
       }
-      const links = await ctx.db
-        .query('links')
-        .withIndex('by_episode', (q) => q.eq('episodeId', episodeId))
-        .collect()
-      history.push({ episodeId, variantKey, scheduledAt, clicks: links.reduce((sum, link) => sum + link.clicks, 0) })
+      return { episodeId, scheduledAt, clicks: clicksTotal }
+    }
+
+    // September, before the Confession hooks: the experiment Ada's analyst picked that made "Comment" her
+    // call to action. Four videos ran it on every platform; its decision comes from their numbers through
+    // the daily evaluation's own rules (core variantStatsFor, shared decideExperiment) and lands through core
+    // applyExperimentDecision, so its card, the learning, the journal entry and the default agree. The clicks
+    // came within a day and the last snapshot four days after each video went live, so none of it falls in
+    // the report's 28-day trend or the mock analytics' 30-day window.
+    const follow = catalogVariant('cta', 'follow')
+    const comment = catalogVariant('cta', 'comment')
+    const ctaExperimentId = await startExperiment(
+      ctx,
+      ada,
+      {
+        name: `Call to action: ${comment.label} vs ${follow.label}`,
+        hypothesis: `"${comment.label}" (end with a question for the comments) gets more clicks per view than "${follow.label}" (end by asking the viewer to follow for the next one).`,
+        kind: 'cta',
+        metric: 'clicks',
+        variants: [
+          { ...follow, isControl: true },
+          { ...comment, isControl: false },
+        ],
+        minExposures: METRIC_MIN_EXPOSURES.views,
+        minConfidence: AUTO_MIN_CONFIDENCE,
+        createdBy: 'analyst',
+        reason:
+          'Call to action was never tested. It aims at clicks per view, the step closest to paying customers with enough clicks to measure.',
+      },
+      now - 41 * DAY_MS
+    )
+    const ctaConcepts = [
+      ['Name every n8n node before the workflow grows', 'n8n tutorials', 'follow'],
+      ['An agent that files invoices into the right folder', 'AI agent workflows', 'comment'],
+      ['The cron job that ran in the wrong timezone', 'Automation fails', 'follow'],
+      ['Split a long n8n workflow into sub-workflows', 'n8n tutorials', 'comment'],
+    ] as const
+    for (const [index, [concept, pillar, variantKey]] of ctaConcepts.entries()) {
+      await seedPastVideo({
+        concept,
+        pillar,
+        sponsorSegment: 'none',
+        plannedFor: addDays(today, -(38 - index * 2)),
+        experimentId: ctaExperimentId,
+        variantKey,
+        hook: `How to ${concept.toLowerCase()} in under a minute.`,
+        closing: SEEDED_CLOSINGS[variantKey],
+        measured: true,
+        tag: `c${index}`,
+        viewSeed: index + 11,
+        clickRate: variantKey === 'comment' ? 0.016 : 0.011,
+        clickHours: 20,
+        snapshotHours: () => [24, 72, 96],
+      })
+    }
+    const ctaExperiment = await ctx.db.get(ctaExperimentId)
+    if (!ctaExperiment) throw new Error('experiment vanished')
+    const ctaStats = await variantStatsFor(ctx, ctaExperiment)
+    const ctaDecision = decideExperiment(ctaStats, { minExposures: ctaExperiment.minExposures, minConfidence: ctaExperiment.minConfidence })
+    if (ctaDecision?.winnerKey !== comment.key) throw new Error('the seeded call to action experiment must decide for "Comment"')
+    // The same order decideExperiment ranks by, so the runner-up is the variant the winner was tested against.
+    const [ctaWinner, ctaRunnerUp] = [...ctaStats].sort((a, b) => variantRate(b) - variantRate(a))
+    if (!ctaWinner || !ctaRunnerUp) throw new Error('the seeded call to action experiment has no runner-up')
+    await applyExperimentDecision(
+      ctx,
+      ctaExperiment,
+      { ...ctaDecision, winnerRate: variantRate(ctaWinner), runnerUpRate: variantRate(ctaRunnerUp), runnerUpKey: ctaRunnerUp.key },
+      'analyst',
+      analystDecisionNote(ctaExperiment, ctaDecision),
+      now - 28 * DAY_MS
+    )
+
+    // The operator's own experiment, running since: confession hooks against Ada's how-to hooks.
+    const experimentId = await startExperiment(
+      ctx,
+      ada,
+      {
+        name: 'Confession hooks',
+        hypothesis: '"I was wrong about…" hooks beat "How to…" hooks on click rate.',
+        kind: 'hook',
+        metric: 'clicks',
+        variants: [
+          { key: 'howto', label: 'How to…', description: 'Open with "How to <do the thing> in under a minute."', isControl: true },
+          {
+            key: 'wrong',
+            label: 'I was wrong about…',
+            description: 'Open with a confession: "I was wrong about <the thing>."',
+            isControl: false,
+          },
+        ],
+        minExposures: 2000,
+        minConfidence: 0.9,
+        createdBy: 'operator',
+        reason: '"I was wrong about…" hooks beat "How to…" hooks on click rate.',
+      },
+      now - 27 * DAY_MS
+    )
+
+    // Since September every video closes on a question for the comments, Ada's call to action now.
+    const historyConcepts = [
+      ['Retry a failed n8n webhook without losing the payload', 'n8n tutorials', 'none', 'howto'],
+      ['Three n8n error workflows every team needs', 'n8n tutorials', 'none', 'wrong'],
+      ['An AI agent that triages support email in n8n', 'AI agent workflows', 'none', 'howto'],
+      ['The automation that emailed 400 customers twice', 'Automation fails', 'none', 'wrong'],
+      ['Pause a workflow until the customer signs off', 'AI agent workflows', 'mention', 'howto'],
+      ['Collect documents from clients without chasing emails', 'n8n tutorials', 'demo', 'wrong'],
+      ['n8n vs Make for a five-person team', 'n8n tutorials', 'none', 'howto'],
+      ['Agent that fills in a quote and waits for approval', 'AI agent workflows', 'demo', 'wrong'],
+    ] as const
+    const history: { episodeId: Id<'episodes'>; variantKey: string; scheduledAt: number; clicks: number }[] = []
+    for (const [index, [concept, pillar, sponsorSegment, variantKey]] of historyConcepts.entries()) {
+      const plannedFor = addDays(today, -(26 - index * 3))
+      const seeded = await seedPastVideo({
+        concept,
+        pillar,
+        sponsorSegment,
+        plannedFor,
+        experimentId,
+        variantKey,
+        hook: variantKey === 'wrong' ? `I was wrong about ${concept.toLowerCase()}.` : `How to ${concept.toLowerCase()} in under a minute.`,
+        closing: SEEDED_CLOSINGS.comment,
+        measured: index !== historyConcepts.length - 1,
+        tag: `s${index}`,
+        viewSeed: index,
+        clickRate: variantKey === 'wrong' ? 0.021 : 0.014,
+        clickHours: 60,
+        // The day after, three days after, and now.
+        snapshotHours: (liveAt) => [24, 72, Math.max(96, (now - liveAt) / 3_600_000)],
+      })
+      history.push({ ...seeded, variantKey })
     }
 
     // Conversions exactly as the mock analytics will report them on the first pull, same distinct ids,
@@ -834,6 +975,12 @@ export const write = internalMutation({
       }
     }
 
+    // Ada's weekly review a week ago, through the review's own rules: with the confession hooks running it
+    // starts nothing, and it moves pillar weight toward what her measured videos earned.
+    const reviewed = await ctx.db.get(adaId)
+    if (!reviewed) throw new Error('persona vanished')
+    await reviewStrategy(ctx, reviewed, now - 6 * DAY_MS)
+
     // This week: one episode at each of the remaining statuses, so the calendar shows the whole pipeline.
     // Every one is scripted or later, so it carries Ada's resolved format, her description and the beats
     // its shots came from. The rendered one waits two days out as a publish package, its drafts unsent.
@@ -857,13 +1004,19 @@ export const write = internalMutation({
       const scheduledAt = earliestPublishAt(ada, adaPlatforms, item.day)
       const sponsorSegment = index === 4 ? 'mention' : 'none'
       // Two beats, the problem in a browser and the fix in n8n, so the shots are Ada and then her screen.
+      const variantKey = index % 2 === 0 ? 'howto' : 'wrong'
+      // Each hook follows the episode's Confession hooks variant, and every closing Ada's call to action.
       const shotPlan = seededBeats({
-        hook: `How to ${item.concept.toLowerCase()} in under a minute.`,
+        hook:
+          variantKey === 'wrong'
+            ? `I was wrong about ${item.concept.toLowerCase()}.`
+            : `How to ${item.concept.toLowerCase()} in under a minute.`,
         opener: { title: 'The problem', tool: 'browser', url: 'https://news.ycombinator.com' },
         fix: 'Step one, open the tool. Step two, fix it the plain way.',
         sponsorSegment,
         sponsorName: workspace.sponsorName,
         sponsorUrl: workspace.sponsorUrl,
+        closing: SEEDED_CLOSINGS.comment,
       })
       const description = seededDescription(item.concept)
       const episodeId = await ctx.db.insert('episodes', {
@@ -887,7 +1040,7 @@ export const write = internalMutation({
         plannedFor: item.day,
         scheduledAt,
         experimentId,
-        variantKey: index % 2 === 0 ? 'howto' : 'wrong',
+        variantKey,
         signalIds: index === 1 ? [signalIds[0] as Id<'signals'>] : [],
         pillar: 'n8n tutorials',
         error: 'error' in item ? item.error : undefined,
@@ -1191,6 +1344,8 @@ const TABLES = {
   discountCodes: true,
   signals: true,
   experiments: true,
+  journal: true,
+  memories: true,
   directives: true,
   messages: true,
   checklistItems: true,

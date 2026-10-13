@@ -404,17 +404,22 @@ describe('episode pipeline', () => {
     const report = await t.query(api.private.report.forPersona, { personaId: ada._id })
     expect(report?.funnel.views).toBeGreaterThan(1000)
     expect(report?.funnel.signups).toBeGreaterThan(0)
-    // Eight videos went everywhere; the thread went live on X two days ago and counts like an episode.
-    expect(report?.episodes.length).toBe(9)
+    // Twelve videos went everywhere (four in September's call to action experiment, eight since); the thread
+    // went live on X two days ago and counts like an episode.
+    expect(report?.episodes.length).toBe(13)
     expect(report?.trend.length).toBe(28)
     expect(report?.platforms.map((row) => [row.platform, row.publications])).toEqual([
-      ['youtube', 8],
-      ['tiktok', 8],
-      ['instagram', 8],
-      ['x', 9],
+      ['youtube', 12],
+      ['tiktok', 12],
+      ['instagram', 12],
+      ['x', 13],
     ])
     const experiments = await t.query(api.private.experiments.list, { personaId: ada._id })
     expect(experiments[0]?.stats.map((stat) => stat.key).sort()).toEqual(['howto', 'wrong'])
+    // September's experiment shows the stats it was decided on.
+    const september = experiments.find((experiment) => experiment.kind === 'cta')
+    expect(september?.status).toBe('decided')
+    expect(september?.stats.map((stat) => stat.episodes)).toEqual([2, 2])
     await t.mutation(internal.internal.agents.evaluateExperimentsMutation, { personaId: ada._id })
     const after = await t.query(api.private.experiments.list, { personaId: ada._id })
     expect(['running', 'decided']).toContain(after[0]?.status)

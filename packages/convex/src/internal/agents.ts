@@ -9,16 +9,20 @@ import {
   X_POST_LIMIT,
   chatIntentSchema,
   decideExperiment,
+  effectiveStyle,
   hookOf,
   isChatTask,
   isPost,
   lengthProblem,
-  METRIC_DENOMINATOR,
   normalizeDiscountCode,
+  pillarWeights,
   postLengthOf,
   postProblems,
   resolveEpisodeFormat,
   scriptProblems,
+  styleLines,
+  variantLength,
+  variantRate,
   voiceStatsOf,
   weekdayOf,
   type ChatIntent,
@@ -27,7 +31,6 @@ import {
   type PostKind,
   type PostLength,
   type SignalSource,
-  type VariantStats,
 } from '@influstep/shared'
 import { internal } from '../_generated/api'
 import type { Doc, Id } from '../_generated/dataModel'
@@ -45,10 +48,12 @@ import { applyChatIntent, changeablePlan } from '../core/chat'
 import { addDays, dayKey } from '../core/dates'
 import { discountCodesFor as discountCodesRule, redemptionOwner } from '../core/discounts'
 import { approveEpisode, createIdea, formatAndShots } from '../core/episodes'
+import { analystDecisionNote, applyExperimentDecision, episodeEffectiveVariant, episodeVariant, variantStatsFor } from '../core/experiments'
 import { formatFor, formatsFor } from '../core/formats'
-import { planPostSlots, planWeek as planWeekRule } from '../core/planner'
+import { PILLAR_HISTORY_DAYS, planPostSlots, planWeek as planWeekRule } from '../core/planner'
 import { savePost } from '../core/posts'
-import { latestPerPublication, reportWindow } from '../core/report'
+import { reportWindow } from '../core/report'
+import { reviewStrategy as reviewStrategyRule, type ReviewOutcome } from '../core/strategy'
 import { workspaceOf } from '../core/workspace'
 import { providersMode } from '../lib/env'
 import { analyticsProvider } from '../providers/analytics'
@@ -237,6 +242,15 @@ export const planWeekMutation = internalMutation({
         if (episode.experimentId === experiment._id && episode.variantKey)
           assigned[episode.variantKey] = (assigned[episode.variantKey] ?? 0) + 1
     }
+    // "Planned in the last PILLAR_HISTORY_DAYS days" is read by the day an episode is planned for, from that
+    // many days before today on, as the post slots read it (core planPostSlots), so the videos already planned
+    // for this week and the next count too: the allocation then tops up the pillars the recent weeks gave less
+    // than their weight. A pillar the persona no longer has carries no weight and is left out.
+    const since = addDays(today, -PILLAR_HISTORY_DAYS)
+    const recentVideos = live.filter((episode) => !isPost(episode.kind) && episode.plannedFor >= since)
+    const priorCounts = Object.fromEntries(
+      persona.pillars.map((pillar) => [pillar, recentVideos.filter((episode) => episode.pillar === pillar).length])
+    )
     const plan = planWeekRule({
       weekStart: args.weekStart,
       persona: {
@@ -246,8 +260,12 @@ export const planWeekMutation = internalMutation({
         episodesPerWeek: persona.episodesPerWeek,
         episodeCount: live.length,
       },
+      pillarWeights: pillarWeights(persona.pillars, persona.strategy?.pillarWeights),
+      priorCounts,
       signals: signals.map((signal) => ({ id: signal._id, title: signal.title, score: signal.score, topics: signal.topics })),
-      experiment: experiment ? { id: experiment._id, variantKeys: experiment.variants.map((variant) => variant.key), assigned } : undefined,
+      experiment: experiment
+        ? { id: experiment._id, kind: experiment.kind, variantKeys: experiment.variants.map((variant) => variant.key), assigned }
+        : undefined,
       takenDays,
     })
     for (const planned of plan) {
@@ -298,12 +316,14 @@ export const planWeekMutation = internalMutation({
 
 /**
  * The writer's video path. One script for every platform the episode goes
- * to: the writer gets the resolved length and delivery, and the hook
- * convention of each platform, in PLATFORMS order. The beats are the script,
- * held to the shared rules (`scriptProblems`, `lengthProblem`) and the
- * description to what a publication can carry; a draft that misses goes back
- * to the model once with the problems named, and a second miss fails the
- * episode with them.
+ * to: the writer gets the resolved delivery, the length scaled by the
+ * episode-length variant in force, and the hook convention of each platform,
+ * in PLATFORMS order. It also gets the persona's learnings and the style in
+ * force on every dimension (shared `effectiveStyle`), so a decided experiment
+ * changes the next script. The beats are the script, held to the shared rules
+ * (`scriptProblems`, `lengthProblem`) and the description to what a
+ * publication can carry; a draft that misses goes back to the model once with
+ * the problems named, and a second miss fails the episode with them.
  */
 export const writeScript = internalAction({
   args: { episodeId: v.string() },
@@ -312,8 +332,9 @@ export const writeScript = internalAction({
     const context: EpisodeContext = await ctx.runQuery(internal.internal.data.getEpisodeContext, { episodeId })
     const kind = context.episode.kind
     if (isPost(kind)) return writePost(ctx, context, kind)
-    const { episode, persona, workspace, directives, signals, experiment } = context
-    const variant = experiment?.variants.find((candidate) => candidate.key === episode.variantKey)
+    const { episode, persona, workspace, directives, signals, experiment, learnings } = context
+    const variant = episodeVariant(episode, experiment)
+    const style = effectiveStyle({ variant, sponsorSegment: episode.sponsorSegment }, persona.strategy?.defaults)
     const formats = formatsFor(persona, episode.platforms)
     const format = resolveEpisodeFormat(formats)
     const brief: ScriptBrief = {
@@ -330,10 +351,17 @@ export const writeScript = internalAction({
       sponsorSegment: episode.sponsorSegment,
       sponsorName: workspace.sponsorName,
       sponsorUrl: workspace.sponsorUrl,
-      variant: variant ? { key: variant.key, description: variant.description } : undefined,
+      variant: variant ? { kind: variant.kind, key: variant.key, description: variant.description } : undefined,
+      learnings,
+      style,
+      styleLines: styleLines(style, variant?.kind),
       directives: directives.map((directive) => directive.text),
       signals: signals.map((signal) => ({ title: signal.title, summary: signal.summary, url: signal.url })),
-      format: { lengthSec: format.lengthSec, delivery: format.delivery, hookNotes: formats.map((candidate) => candidate.hookNote) },
+      format: {
+        lengthSec: variantLength(format.lengthSec, style.length),
+        delivery: format.delivery,
+        hookNotes: formats.map((candidate) => candidate.hookNote),
+      },
       problems: [],
     }
     const llm = llmProvider()
@@ -395,8 +423,10 @@ function descriptionProblems(description: string): string[] {
  * The draft becomes the episode's title, description, beats, format and
  * shots, and its hook is the first sentence of the first beat (shared
  * `hookOf`), the line the recording opens with. The format is fixed here,
- * from the persona's formats at this moment, so a later settings change does
- * not alter a written script.
+ * from the persona's formats and the episode-length variant in force at this
+ * moment, so a later settings change does not alter a written script. The
+ * length variant is resolved again by the rule the writer's brief used
+ * (shared `effectiveVariant`), so the stored length and the brief's agree.
  */
 export const storeScript = internalMutation({
   args: {
@@ -418,6 +448,7 @@ export const storeScript = internalMutation({
       platforms: episode.platforms,
       draft: { shotPlan: args.shotPlan },
       sponsorName: workspace.sponsorName,
+      length: await episodeEffectiveVariant(ctx, 'length', episode, persona),
     })
     await ctx.db.patch(args.episodeId, {
       title: args.title,
@@ -804,6 +835,16 @@ export const evaluateExperiments = internalAction({
   },
 })
 
+/**
+ * The verdict on the persona's running experiments, after every metrics pull.
+ * A decision lands through core `applyExperimentDecision`, the one place a
+ * decision lands for the analyst and the operator alike: the winner becomes
+ * the persona's default for the dimension, a learning, a journal entry and
+ * one chat message. The winner's rate and the runner-up's, at the moment of
+ * the decision, go with it, so the strategy review can tell when later data
+ * contradicts the winner, and the runner-up's key, which a re-test runs
+ * against.
+ */
 export const evaluateExperimentsMutation = internalMutation({
   args: { personaId: v.id('personas') },
   handler: async (ctx, args): Promise<{ decided: number }> => {
@@ -816,15 +857,21 @@ export const evaluateExperimentsMutation = internalMutation({
       const stats = await variantStatsFor(ctx, experiment)
       const decision = decideExperiment(stats, { minExposures: experiment.minExposures, minConfidence: experiment.minConfidence })
       if (!decision) continue
-      const winner = experiment.variants.find((variant) => variant.key === decision.winnerKey)
-      const note = `"${winner?.label ?? decision.winnerKey}" leads on ${experiment.metric} by ${Math.round(decision.lift * 100)}% at ${Math.round(decision.confidence * 100)}% confidence.`
-      await ctx.db.patch(experiment._id, { status: 'decided', decision: { ...decision, note, decidedAt: Date.now(), byOperator: false } })
-      await ctx.db.insert('messages', {
-        personaId: args.personaId,
-        author: 'persona',
-        text: `Experiment "${experiment.name}" is decided: ${note} The next scripts follow the winner.`,
-        createdAt: Date.now(),
-      })
+      if (!experiment.variants.some((variant) => variant.key === decision.winnerKey))
+        throw new Error(`experiment ${experiment._id} was decided for "${decision.winnerKey}", which is not one of its variants`)
+      // The same order decideExperiment ranks by, so the runner-up is the variant the winner was tested against.
+      const ranked = [...stats].sort((a, b) => variantRate(b) - variantRate(a))
+      const winnerStats = ranked.find((stat) => stat.key === decision.winnerKey)
+      const runnerUp = ranked.find((stat) => stat.key !== decision.winnerKey)
+      if (!winnerStats || !runnerUp)
+        throw new Error(`experiment ${experiment._id} was decided without a winner and a runner-up in its stats`)
+      await applyExperimentDecision(
+        ctx,
+        experiment,
+        { ...decision, winnerRate: variantRate(winnerStats), runnerUpRate: variantRate(runnerUp), runnerUpKey: runnerUp.key },
+        'analyst',
+        analystDecisionNote(experiment, decision)
+      )
       decided += 1
     }
     return { decided }
@@ -832,54 +879,29 @@ export const evaluateExperimentsMutation = internalMutation({
 })
 
 /**
- * Exposures and successes per variant, from measured episodes, by the
- * experiment's metric. Signups and paid are rates over clicks, so only
- * link-attributed conversions count: a code redemption has no click behind
- * it and would hand the variant successes without exposures.
+ * The weekly strategy review (docs/plan.md, v0.2 item 8). Every rule it
+ * applies is deterministic code in core `reviewStrategy` (pillar weights,
+ * publish hours, contradicted defaults, the next experiment), so the review
+ * calls no model and runs in one mutation: its changes, journal entries and
+ * chat message land together or not at all. The outcome is the job's result.
  */
-export async function variantStatsFor(ctx: { db: QueryCtx['db'] }, experiment: Doc<'experiments'>): Promise<VariantStats[]> {
-  const episodes = await ctx.db
-    .query('episodes')
-    .withIndex('by_persona', (q) => q.eq('personaId', experiment.personaId))
-    .collect()
-  const stats = new Map<string, VariantStats>(
-    experiment.variants.map((variant) => [variant.key, { key: variant.key, episodes: 0, exposures: 0, successes: 0 }])
-  )
-  const denominator = METRIC_DENOMINATOR[experiment.metric]
-  for (const episode of episodes) {
-    if (episode.experimentId !== experiment._id || !episode.variantKey) continue
-    if (episode.status !== 'measured' && episode.status !== 'published') continue
-    const entry = stats.get(episode.variantKey)
-    if (!entry) continue
-    const snapshots = latestPerPublication(
-      await ctx.db
-        .query('metricSnapshots')
-        .withIndex('by_episode', (q) => q.eq('episodeId', episode._id))
-        .collect()
-    )
-    const views = snapshots.reduce((sum, snapshot) => sum + snapshot.counts.views, 0)
-    const follows = snapshots.reduce((sum, snapshot) => sum + snapshot.counts.follows, 0)
-    const watched = snapshots.reduce((sum, snapshot) => sum + snapshot.counts.views * snapshot.counts.watchRate, 0)
-    const links = await ctx.db
-      .query('links')
-      .withIndex('by_episode', (q) => q.eq('episodeId', episode._id))
-      .collect()
-    const clicks = links.reduce((sum, link) => sum + link.clicks, 0)
-    const conversions = (
-      await ctx.db
-        .query('conversions')
-        .withIndex('by_persona_time', (q) => q.eq('personaId', experiment.personaId))
-        .collect()
-    ).filter((conversion) => conversion.episodeId === episode._id && conversion.via === 'utm')
-    const signups = conversions.filter((conversion) => conversion.kind === 'signup').length
-    const paid = conversions.filter((conversion) => conversion.kind === 'paid').length
-    const successes = { views, watch_rate: Math.round(watched), follows, clicks, signups, paid }[experiment.metric]
-    entry.episodes += 1
-    entry.exposures += denominator === 'views' ? views : denominator === 'clicks' ? clicks : 1
-    entry.successes += successes
-  }
-  return [...stats.values()]
-}
+export const reviewStrategy = internalAction({
+  args: { jobId: v.id('jobs') },
+  handler: async (ctx, args): Promise<ReviewOutcome> => ctx.runMutation(internal.internal.agents.reviewStrategyMutation, args),
+})
+
+export const reviewStrategyMutation = internalMutation({
+  args: { jobId: v.id('jobs') },
+  handler: async (ctx, args): Promise<ReviewOutcome> => {
+    const job = await ctx.db.get(args.jobId)
+    if (!job) throw new Error(`job ${args.jobId} not found`)
+    if (job.kind !== 'review_strategy') throw new Error(`job ${job._id} is a ${job.kind} job, not a review_strategy job`)
+    if (!job.personaId) throw new Error(`review_strategy job ${job._id} has no persona`)
+    const persona = await ctx.db.get(job.personaId)
+    if (!persona) throw new Error(`persona ${job.personaId} not found`)
+    return reviewStrategyRule(ctx, persona, Date.now())
+  },
+})
 
 /** How many of the account's most engaging originals the analyst marks as examples when it learns the voice. */
 const LEARNED_EXAMPLES = 5

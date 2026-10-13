@@ -23,6 +23,8 @@ const BACKEND_RUNNERS: Partial<Record<JobKind, (ctx: ActionCtx, job: Doc<'jobs'>
   evaluate_experiments: (ctx, job) => ctx.runAction(internal.internal.agents.evaluateExperiments, payloadWith(job.payload, 'personaId')),
   import_x_history: (ctx, job) => ctx.runAction(internal.internal.agents.importXHistory, payloadWith(job.payload, 'personaId')),
   learn_voice: (ctx, job) => ctx.runAction(internal.internal.agents.learnVoice, payloadWith(job.payload, 'personaId')),
+  // The review reads its persona from its own row.
+  review_strategy: (ctx, job) => ctx.runAction(internal.internal.agents.reviewStrategy, { jobId: job._id }),
   // A chat task reads its persona, its topic and the message it answers from its own row.
   research_brief: (ctx, job) => ctx.runAction(internal.internal.agents.researchBrief, { jobId: job._id }),
   comment_digest: (ctx, job) => ctx.runAction(internal.internal.agents.commentDigest, { jobId: job._id }),

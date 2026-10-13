@@ -1,8 +1,12 @@
 import {
   DEFAULT_LENGTH_MIX,
+  allocatePillars,
   pickLengths,
+  pillarWeights,
   postSlotHours,
+  type ExperimentKind,
   type LengthMix,
+  type PillarWeight,
   type PlatformFormat,
   type PostIntent,
   type PostKind,
@@ -11,7 +15,7 @@ import {
   type XCadence,
 } from '@influstep/shared'
 import type { Doc } from '../_generated/dataModel'
-import { addDays, instantAt } from './dates'
+import { addDays, dayKey, instantAt } from './dates'
 
 /**
  * The weekly plan (CONTEXT.md, "Plan"): which days get an episode, which of
@@ -20,12 +24,15 @@ import { addDays, instantAt } from './dates'
  * a database; the writer's plan_week job feeds it rows and stores the output.
  */
 
+/** How far back the episodes a pillar already had count toward its share (shared `allocatePillars`). */
+export const PILLAR_HISTORY_DAYS = 28
+
 export interface PlannerPersona {
   pillars: string[]
   sponsorDial: number
   sponsorRampEpisodes: number
   episodesPerWeek: number
-  /** Episodes this persona has planned so far, for the ramp and pillar rotation. */
+  /** Episodes this persona has planned so far, for the sponsor ramp. */
   episodeCount: number
 }
 
@@ -38,6 +45,8 @@ export interface PlannerSignal {
 
 export interface PlannerExperiment {
   id: string
+  /** The dimension it varies: a sponsor experiment's variants go only to sponsored slots. */
+  kind: ExperimentKind
   variantKeys: string[]
   /** Episodes already assigned per variant, so assignment stays balanced. */
   assigned: Record<string, number>
@@ -59,6 +68,10 @@ const SLOT_ORDER = [1, 3, 5, 2, 4, 0, 6] // Tue, Thu, Sat, Wed, Fri, Mon, Sun of
 export function planWeek(args: {
   weekStart: string
   persona: PlannerPersona
+  /** The persona's effective pillar weights (shared `pillarWeights`). */
+  pillarWeights: PillarWeight[]
+  /** The persona's episodes per pillar of the last PILLAR_HISTORY_DAYS days, so the weights hold across weeks. */
+  priorCounts: Record<string, number>
   signals: PlannerSignal[]
   experiment?: PlannerExperiment
   /** Days that already hold an episode for this persona. */
@@ -80,14 +93,26 @@ export function planWeek(args: {
   const sponsoredSlots = sponsoredSlotIndexes(days.length, persona)
   const assigned = { ...args.experiment?.assigned }
 
+  // Reactive slots take the pillar their signal is about; the evergreen slots share the rest out by weight,
+  // counting this week's reactive slots with the episodes the pillars already had.
+  const reactivePillars = days.flatMap((_, index) => {
+    const signal = index < reactiveCount ? rankedSignals[index] : undefined
+    return signal ? [pillarFor(signal, persona.pillars)] : []
+  })
+  const counts = { ...args.priorCounts }
+  for (const pillar of reactivePillars) counts[pillar] = (counts[pillar] ?? 0) + 1
+  const evergreen = allocatePillars(args.pillarWeights, counts, days.length - reactivePillars.length)
+
   return days.map((day, index) => {
     const signal = index < reactiveCount ? rankedSignals[index] : undefined
-    const pillarIndex = (persona.episodeCount + index) % persona.pillars.length
-    const pillar = signal ? pillarFor(signal, persona.pillars) : (persona.pillars[pillarIndex] ?? persona.pillars[0] ?? '')
+    const pillar = signal ? pillarFor(signal, persona.pillars) : evergreen[index - reactivePillars.length]
+    if (pillar === undefined) throw new Error(`slot ${index} of the week has no pillar`)
     const concept = signal ? `React to: ${signal.title}` : `${pillar}: an evergreen how-to`
     const sponsorSegment: SponsorSegment = sponsoredSlots.has(index) ? (index % 2 === 0 ? 'demo' : 'mention') : 'none'
 
-    const variantKey = args.experiment ? pickVariant(args.experiment.variantKeys, assigned) : undefined
+    // Only a sponsored episode places a sponsor, so a sponsor experiment tests only those.
+    const takesVariant = args.experiment !== undefined && (args.experiment.kind !== 'sponsor' || sponsorSegment !== 'none')
+    const variantKey = args.experiment && takesVariant ? pickVariant(args.experiment.variantKeys, assigned) : undefined
     if (variantKey) assigned[variantKey] = (assigned[variantKey] ?? 0) + 1
 
     return {
@@ -96,7 +121,7 @@ export function planWeek(args: {
       signalId: signal?.id,
       concept,
       sponsorSegment,
-      experimentId: args.experiment?.id,
+      experimentId: variantKey === undefined ? undefined : args.experiment?.id,
       variantKey,
     }
   })
@@ -123,16 +148,18 @@ export interface PlannedPost extends Omit<PlannedEpisode, 'experimentId' | 'vari
  *
  * Concepts, pillars and the sponsor follow the same rule as the video slots:
  * planWeek plans one slot per day, so it runs once per slot hour with every
- * open day free. A post shows no screen, so a sponsored post mentions the
- * sponsor where a video would demo it.
+ * open day free. The pillar weights are the persona's, and the posts each
+ * pillar had in the last PILLAR_HISTORY_DAYS days, plus the slots of the
+ * hours already planned, count toward its share. A post shows no screen, so a
+ * sponsored post mentions the sponsor where a video would demo it.
  */
 export function planPostSlots(args: {
   weekStart: string
-  persona: Pick<Doc<'personas'>, 'pillars' | 'sponsorDial' | 'sponsorRampEpisodes' | 'timezone' | 'voice'>
+  persona: Pick<Doc<'personas'>, 'pillars' | 'sponsorDial' | 'sponsorRampEpisodes' | 'timezone' | 'voice' | 'strategy'>
   format: PlatformFormat
   /** The persona's live posts. */
-  posts: Pick<Doc<'episodes'>, 'plannedFor' | 'kind'>[]
-  /** Every live episode of the persona plus the videos planned this run, for the sponsor ramp and the pillar rotation. */
+  posts: Pick<Doc<'episodes'>, 'plannedFor' | 'kind' | 'pillar'>[]
+  /** Every live episode of the persona plus the videos planned this run, for the sponsor ramp. */
   episodeCount: number
   /** Signals no video took. */
   signals: PlannerSignal[]
@@ -146,6 +173,13 @@ export function planPostSlots(args: {
     !args.posts.some((post) => post.plannedFor === day) && instantAt(day, hour, args.persona.timezone) > args.now
   const slots: Omit<PlannedPost, keyof PostShape>[] = []
   let signals = args.signals
+  const weights = pillarWeights(args.persona.pillars, args.persona.strategy?.pillarWeights)
+  const since = addDays(dayKey(args.now, args.persona.timezone), -PILLAR_HISTORY_DAYS)
+  const counts: Record<string, number> = {}
+  for (const post of args.posts) {
+    if (post.pillar === undefined || post.plannedFor < since) continue
+    counts[post.pillar] = (counts[post.pillar] ?? 0) + 1
+  }
   for (const hour of postSlotHours(args.format)) {
     const row = planWeek({
       weekStart: args.weekStart,
@@ -156,10 +190,13 @@ export function planPostSlots(args: {
         episodesPerWeek: week.length,
         episodeCount: args.episodeCount + slots.length,
       },
+      pillarWeights: weights,
+      priorCounts: { ...counts },
       signals,
       takenDays: week.filter((day) => !open(day, hour)),
     })
     for (const planned of row) {
+      counts[planned.pillar] = (counts[planned.pillar] ?? 0) + 1
       slots.push({
         plannedFor: planned.plannedFor,
         hour,

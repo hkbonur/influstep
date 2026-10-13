@@ -3,6 +3,7 @@ import { v } from 'convex/values'
 import {
   accountPostSourceValidator,
   accountSourceCountsValidator,
+  actorValidator,
   agentRoleValidator,
   aspectRatioValidator,
   checklistActionValidator,
@@ -19,6 +20,10 @@ import {
   jobKindValidator,
   jobRuntimeValidator,
   jobStatusValidator,
+  journalKindValidator,
+  journalNumberValidator,
+  memoryKindValidator,
+  memoryStatusValidator,
   metricCountsValidator,
   metricKeyValidator,
   personaColorValidator,
@@ -33,6 +38,7 @@ import {
   signalSourceValidator,
   signalStatusValidator,
   sponsorSegmentValidator,
+  strategyValidator,
   variantValidator,
   voiceCountsValidator,
   voiceValidator,
@@ -84,6 +90,9 @@ export default defineSchema({
     // How the X account this persona took over writes, learned from its imported posts (accountPosts) and
     // edited by the operator. Absent until the analyst learns it, and again once the history is cleared.
     voice: v.optional(voiceValidator),
+    // Pillar weights and the default per experiment dimension (docs/plan.md, v0.2 item 8). Absent until the
+    // first decision or review; absent reads as equal pillar shares and every dimension's catalog control.
+    strategy: v.optional(strategyValidator),
     createdAt: v.number(),
   })
     .index('by_workspace', ['workspaceId'])
@@ -313,6 +322,47 @@ export default defineSchema({
     minExposures: v.number(),
     minConfidence: v.number(),
     decision: v.optional(decisionValidator),
+    // Who set it up: the analyst's strategy review or the operator. Absent on rows from before the review
+    // existed, which the operator made.
+    createdBy: v.optional(actorValidator),
+    // A re-test of a default that stopped beating what it beat: the experiment that made it the default.
+    retestOf: v.optional(v.id('experiments')),
+    createdAt: v.number(),
+  }).index('by_persona_status', ['personaId', 'status']),
+
+  // Every change to a persona's strategy, by the review or the operator, with why and the numbers behind it
+  // (core/strategy.ts, core/experiments.ts). Never edited; the strategy page reads it newest first.
+  journal: defineTable({
+    personaId: v.id('personas'),
+    kind: journalKindValidator,
+    actor: actorValidator,
+    // What changed, one sentence.
+    text: v.string(),
+    // Why, with the numbers.
+    reason: v.string(),
+    evidence: v.object({
+      experimentId: v.optional(v.id('experiments')),
+      episodeIds: v.array(v.id('episodes')),
+      numbers: v.array(journalNumberValidator),
+    }),
+    createdAt: v.number(),
+  }).index('by_persona_time', ['personaId', 'createdAt']),
+
+  // What a persona has learned. Today only learnings from decided experiments, which the writer reads; a newer
+  // learning on the same dimension supersedes the older one, which stays so the page can show what changed.
+  memories: defineTable({
+    personaId: v.id('personas'),
+    kind: memoryKindValidator,
+    text: v.string(),
+    dimension: v.optional(experimentKindValidator),
+    evidence: v.object({
+      experimentId: v.optional(v.id('experiments')),
+      episodeIds: v.array(v.id('episodes')),
+    }),
+    // 0..1: the decision's confidence, or 1 for the operator's own verdict.
+    confidence: v.number(),
+    status: memoryStatusValidator,
+    supersededBy: v.optional(v.id('memories')),
     createdAt: v.number(),
   }).index('by_persona_status', ['personaId', 'status']),
 
@@ -373,6 +423,8 @@ export default defineSchema({
     // Each agent's queue on the Agents page: one role's jobs in one status, oldest first.
     .index('by_role_status', ['role', 'status'])
     .index('by_persona', ['personaId'])
+    // The persona's newest job of one kind, such as its last strategy review, however many other jobs came since.
+    .index('by_persona_kind', ['personaId', 'kind'])
     .index('by_episode', ['episodeId']),
 
   runners: defineTable({

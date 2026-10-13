@@ -5,6 +5,7 @@ import { mutation, query, type QueryCtx } from '../_generated/server'
 import { assertXTitleFits, publicationFooter, type DescriptionFooter } from '../core/attribution'
 import { activeDiscountCodeFor } from '../core/discounts'
 import { approveEpisode, formatAndShots, killEpisode, rescheduleEpisode, setEpisodePlatforms, startProduction } from '../core/episodes'
+import { episodeEffectiveVariant } from '../core/experiments'
 import { platformsOf } from '../core/formats'
 import { savePost } from '../core/posts'
 import { countConversions } from '../core/report'
@@ -179,6 +180,7 @@ export const updateBeats = mutation({
       platforms: episode.platforms,
       draft: { shotPlan },
       sponsorName: workspace.sponsorName,
+      length: await episodeEffectiveVariant(ctx, 'length', episode, persona),
     })
     await ctx.db.patch(args.episodeId, {
       title: args.title,

@@ -15,6 +15,10 @@ import {
   JOB_KIND_LIST,
   JOB_RUNTIMES,
   JOB_STATUSES,
+  JOURNAL_ACTORS,
+  JOURNAL_KINDS,
+  MEMORY_KINDS,
+  MEMORY_STATUSES,
   METRIC_KEYS,
   PERSONA_COLORS,
   PLATFORMS,
@@ -61,6 +65,10 @@ export const postLengthValidator = literals(POST_LENGTHS)
 export const habitValidator = literals(HABITS)
 export const accountPostSourceValidator = literals(ACCOUNT_POST_SOURCES)
 export const publicationStatusValidator = literals(PUBLICATION_STATUSES)
+export const journalKindValidator = literals(JOURNAL_KINDS)
+export const actorValidator = literals(JOURNAL_ACTORS)
+export const memoryKindValidator = literals(MEMORY_KINDS)
+export const memoryStatusValidator = literals(MEMORY_STATUSES)
 
 /** X's post cadence (shared `XCadence`). Ranges, and each kind and intent once, are checked by core/formats.ts. */
 export const xCadenceValidator = v.object({
@@ -168,13 +176,22 @@ export const renderValidator = v.object({
   mock: v.boolean(),
 })
 
+/** One arm of an experiment; a length variant carries the factor its episodes' length is scaled by (shared `variantLength`). */
 export const variantValidator = v.object({
   key: v.string(),
   label: v.string(),
   description: v.string(),
   isControl: v.boolean(),
+  lengthFactor: v.optional(v.number()),
 })
 
+/**
+ * How an experiment was decided. The winner's and the runner-up's rates at the
+ * decision let the strategy review notice when the default stops beating what
+ * it beat (shared `contradicts`), and the runner-up's key is what a re-test
+ * runs against; an operator's override has none of them. Decisions from before
+ * the key was stored have the rates without it.
+ */
 export const decisionValidator = v.object({
   winnerKey: v.string(),
   lift: v.number(),
@@ -182,7 +199,38 @@ export const decisionValidator = v.object({
   note: v.string(),
   decidedAt: v.number(),
   byOperator: v.boolean(),
+  winnerRate: v.optional(v.number()),
+  runnerUpRate: v.optional(v.number()),
+  runnerUpKey: v.optional(v.string()),
 })
+
+/** What a persona does on one dimension since an experiment decided it (shared `StrategyDefault`). */
+export const strategyDefaultValidator = v.object({
+  kind: experimentKindValidator,
+  key: v.string(),
+  label: v.string(),
+  description: v.string(),
+  lengthFactor: v.optional(v.number()),
+  experimentId: v.optional(v.id('experiments')),
+  since: v.number(),
+})
+
+/** A stored pillar weight. Read only through shared `pillarWeights`, which drops removed pillars and normalizes. */
+export const pillarWeightValidator = v.object({ pillar: v.string(), weight: v.number() })
+
+/**
+ * A persona's strategy, kept by the weekly review (core/strategy.ts) and by
+ * decided experiments (core/experiments.ts). Publish hours are not here: the
+ * review patches `formats[].publishHour`, their one home.
+ */
+export const strategyValidator = v.object({
+  pillarWeights: v.array(pillarWeightValidator),
+  defaults: v.array(strategyDefaultValidator),
+  reviewedAt: v.optional(v.number()),
+})
+
+/** One number behind a journal entry; the unit is in the label, so the value is always a plain number. */
+export const journalNumberValidator = v.object({ label: v.string(), value: v.number() })
 
 /**
  * What a checklist item's button does: open the runner's browser for a

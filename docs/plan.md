@@ -68,12 +68,13 @@ What runs on its own, per unpaused persona:
 | When             | Job                   | Role       | Writes                                         |
 | ---------------- | --------------------- | ---------- | ---------------------------------------------- |
 | hourly           | poll_signals          | researcher | signals                                        |
-| daily 05:00 UTC  | pull_metrics          | analyst    | snapshots, conversions, redemptions            |
-| daily 05:00 UTC  | evaluate_experiments  | analyst    | decisions, journal                             |
+| daily 05:00 UTC  | pull_metrics          | analyst    | snapshots, conversions, redemptions, decisions |
 | daily 06:00 UTC  | poll_comments         | publisher  | comment signals                                |
+| Monday 06:30 UTC | review_strategy       | analyst    | strategy changes, memory, journal, experiments |
 | Monday 07:00 UTC | plan_week             | writer     | next week's ideas, then scripts                |
-| Monday 07:30 UTC | review_strategy       | analyst    | strategy changes, memory, journal, experiments |
 | every 5 minutes  | dispatch publications | publisher  | runner jobs for due publications               |
+
+pull_metrics ends by evaluating the persona's running experiments, so there is no separate evaluate_experiments run: a decision lands with its default, learning, journal entry and chat message right after the numbers it rests on. review_strategy runs half an hour before plan_week, so next week's plan follows the pillar weights and defaults it just set.
 
 The operator only ever: approves scripts (unless the persona auto-approves), approves publish packages (unless the persona publishes on its own), signs in to tools, sets provider keys, hands over discount codes, and talks to the persona.
 

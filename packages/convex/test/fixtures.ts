@@ -6,8 +6,9 @@ import {
   type JobKind,
   type JobStatus,
   type Platform,
+  type SponsorSegment,
 } from '@influstep/shared'
-import type { Doc } from '../src/_generated/dataModel'
+import type { Doc, Id } from '../src/_generated/dataModel'
 import type { MutationCtx } from '../src/_generated/server'
 import { instantAt } from '../src/core/dates'
 
@@ -152,4 +153,94 @@ export async function insertJob(
   const job = await ctx.db.get(jobId)
   if (!job) throw new Error('job vanished')
   return job
+}
+
+/**
+ * A video that went out and was measured on one platform: a live
+ * publication, its tracked link with `clicks`, and one snapshot with `views`
+ * and `follows` three days after it went live.
+ */
+export async function insertMeasuredVideo(
+  ctx: MutationCtx,
+  persona: Doc<'personas'>,
+  fields: {
+    publishedAt: number
+    views: number
+    clicks: number
+    follows?: number
+    pillar?: string
+    platform?: Platform
+    experimentId?: Id<'experiments'>
+    variantKey?: string
+    sponsorSegment?: SponsorSegment
+    status?: 'measured' | 'published'
+  }
+): Promise<Doc<'episodes'>> {
+  const platform = fields.platform ?? 'youtube'
+  const plannedFor = new Date(fields.publishedAt).toISOString().slice(0, 10)
+  const episodeId = await ctx.db.insert('episodes', {
+    personaId: persona._id,
+    slug: `${plannedFor}-${Math.random().toString(36).slice(2, 8)}`,
+    kind: 'video',
+    status: fields.status ?? 'measured',
+    concept: `Video of ${plannedFor}`,
+    title: `Video of ${plannedFor}`,
+    hook: '',
+    sponsorSegment: fields.sponsorSegment ?? 'none',
+    platforms: [platform],
+    shots: [],
+    renders: [],
+    plannedFor,
+    scheduledAt: fields.publishedAt,
+    experimentId: fields.experimentId,
+    variantKey: fields.variantKey,
+    signalIds: [],
+    pillar: fields.pillar,
+    publishedAt: fields.publishedAt,
+    measuredAt: fields.publishedAt + 72 * 3_600_000,
+    createdAt: fields.publishedAt,
+    updatedAt: fields.publishedAt,
+  })
+  const linkId = await ctx.db.insert('links', {
+    slug: Math.random().toString(36).slice(2, 9),
+    personaId: persona._id,
+    episodeId,
+    platform,
+    target: 'https://formstep.io',
+    clicks: fields.clicks,
+    createdAt: fields.publishedAt,
+  })
+  const publicationId = await ctx.db.insert('publications', {
+    episodeId,
+    personaId: persona._id,
+    platform,
+    aspect: '16:9',
+    status: 'live',
+    title: `Video of ${plannedFor}`,
+    linkId,
+    scheduledAt: fields.publishedAt,
+    publishedAt: fields.publishedAt,
+    mock: true,
+  })
+  await ctx.db.insert('metricSnapshots', {
+    personaId: persona._id,
+    episodeId,
+    publicationId,
+    platform,
+    takenAt: fields.publishedAt + 72 * 3_600_000,
+    counts: {
+      views: fields.views,
+      watchRate: 0.4,
+      follows: fields.follows ?? 0,
+      likes: 0,
+      comments: 0,
+      clicks: fields.clicks,
+      signups: 0,
+      paid: 0,
+    },
+    mock: true,
+  })
+  const episode = await ctx.db.get(episodeId)
+  if (!episode) throw new Error('episode vanished')
+  return episode
 }

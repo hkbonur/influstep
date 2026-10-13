@@ -6,6 +6,7 @@ import {
   formatElapsed,
   formatHour,
   formatMoney,
+  formatNumber,
   languageName,
   plural,
   urlHost,
@@ -23,6 +24,10 @@ describe('format', () => {
     expect(plural(1, 'post', 'posts')).toBe('post')
     expect(plural(0, 'post', 'posts')).toBe('posts')
     expect(plural(2, 'reply', 'replies')).toBe('replies')
+  })
+  it('shows evidence numbers with at most three decimals', () => {
+    expect(formatNumber(0.02134).replace(/\D/g, '')).toBe('0021')
+    expect(formatNumber(4200).replace(/\D/g, '')).toBe('4200')
   })
   it('rounds money to whole units in the given currency', () => {
     const usd = formatMoney(1234.6, 'USD')

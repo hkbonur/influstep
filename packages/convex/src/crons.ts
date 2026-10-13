@@ -1,3 +1,4 @@
+import { STRATEGY_REVIEW_SLOT } from '@influstep/shared'
 import { cronJobs } from 'convex/server'
 import { internal } from './_generated/api'
 
@@ -11,6 +12,8 @@ crons.interval('poll signals for every persona', { hours: 1 }, internal.internal
 crons.interval('dispatch publications whose time has come', { minutes: 5 }, internal.internal.runner.dispatchDuePublications, {})
 crons.daily('pull metrics and decide experiments', { hourUTC: 5, minuteUTC: 0 }, internal.internal.schedule.pullMetrics, {})
 crons.daily('read comments back as signals', { hourUTC: 6, minuteUTC: 0 }, internal.internal.schedule.pollComments, {})
+// The review runs half an hour before planning, so next week's plan follows its pillar weights and defaults.
+crons.weekly('review every strategy', STRATEGY_REVIEW_SLOT, internal.internal.schedule.reviewStrategies, {})
 crons.weekly('plan next week', { dayOfWeek: 'monday', hourUTC: 7, minuteUTC: 0 }, internal.internal.schedule.planNextWeek, {})
 crons.daily('age out unused signals', { hourUTC: 3, minuteUTC: 0 }, internal.internal.schedule.ageOutSignals, {})
 
