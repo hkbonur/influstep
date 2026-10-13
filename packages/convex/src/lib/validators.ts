@@ -6,6 +6,7 @@ import {
   CONVERSION_KINDS,
   CONVERSION_VIAS,
   DELIVERIES,
+  EPISODE_KINDS,
   EPISODE_STATUSES,
   EXPERIMENT_KINDS,
   EXPERIMENT_STATUSES,
@@ -15,6 +16,7 @@ import {
   METRIC_KEYS,
   PERSONA_COLORS,
   PLATFORMS,
+  POST_KINDS,
   SIGNAL_SOURCES,
   SIGNAL_STATUSES,
   SPONSOR_SEGMENTS,
@@ -46,8 +48,16 @@ export const conversionKindValidator = literals(CONVERSION_KINDS)
 export const conversionViaValidator = literals(CONVERSION_VIAS)
 export const deliveryValidator = literals(DELIVERIES)
 export const personaColorValidator = literals(PERSONA_COLORS)
+export const episodeKindValidator = literals(EPISODE_KINDS)
+export const postKindValidator = literals(POST_KINDS)
 
-/** A persona's format for one platform (shared `PlatformFormat`). Ranges are checked by core/formats.ts. */
+/** X's post cadence (shared `XCadence`). Ranges are checked by core/formats.ts. */
+export const xCadenceValidator = v.object({
+  postsPerDay: v.number(),
+  kinds: v.array(postKindValidator),
+})
+
+/** A persona's format for one platform (shared `PlatformFormat`). Ranges, and cadence only on X, are checked by core/formats.ts. */
 export const platformFormatValidator = v.object({
   platform: platformValidator,
   lengthSec: v.number(),
@@ -55,6 +65,13 @@ export const platformFormatValidator = v.object({
   delivery: deliveryValidator,
   hookNote: v.string(),
   publishHour: v.number(),
+  cadence: v.optional(xCadenceValidator),
+})
+
+/** A post as written, exactly what X receives (shared `EpisodePost`); shared `postProblems` says whether X takes it. */
+export const episodePostValidator = v.object({
+  parts: v.array(v.string()),
+  cardTitle: v.optional(v.string()),
 })
 
 /** The format an episode was scripted to (shared `EpisodeFormat`): its length, delivery, and one frozen cut per platform. */
@@ -111,9 +128,16 @@ export const decisionValidator = v.object({
   byOperator: v.boolean(),
 })
 
+/**
+ * What a checklist item's button does: open the runner's browser for a
+ * sign-in, send the operator to the Providers page for a key, or link a page
+ * the operator reads and acts on by hand (the studio opens it in a new tab;
+ * the runner never does).
+ */
 export const checklistActionValidator = v.union(
   v.object({ kind: v.literal('open_browser'), url: v.string() }),
-  v.object({ kind: v.literal('set_provider_key'), key: v.string() })
+  v.object({ kind: v.literal('set_provider_key'), key: v.string() }),
+  v.object({ kind: v.literal('visit'), url: v.string() })
 )
 
 export const metricCountsValidator = v.object({

@@ -1,5 +1,5 @@
 import type { Infer } from 'convex/values'
-import type { Delivery, SponsorSegment } from '@influstep/shared'
+import type { Delivery, EpisodePost, PostKind, SponsorSegment } from '@influstep/shared'
 import type { shotPlanValidator } from '../../lib/validators'
 
 /**
@@ -35,6 +35,34 @@ export interface ScriptDraft {
   topics: string[]
 }
 
+/**
+ * What the writer asks of a language model for a post on X. The limit is X's,
+ * weighed the way X weighs it (xLength), and holds for every part: X gets the
+ * parts exactly as written, with nothing appended.
+ */
+export interface PostBrief {
+  persona: ScriptBrief['persona']
+  kind: PostKind
+  concept: string
+  pillar: string
+  sponsorSegment: SponsorSegment
+  sponsorName: string
+  directives: string[]
+  signals: ScriptBrief['signals']
+  /** The hook convention of the persona's X format; the first line of the first part follows it. */
+  hookNote: string
+  partLimit: number
+  /** What was wrong with the previous draft, on the one retry; empty on the first try. */
+  problems: string[]
+}
+
+export interface PostDraft {
+  /** A short name for the calendar and the publication; X shows no title. */
+  title: string
+  /** The parts as X receives them, and the card title for an image post. */
+  post: EpisodePost
+}
+
 export interface ChatTurn {
   author: 'operator' | 'persona'
   text: string
@@ -43,6 +71,7 @@ export interface ChatTurn {
 export interface LlmProvider {
   readonly name: string
   writeScript(brief: ScriptBrief): Promise<ScriptDraft>
+  writePost(brief: PostBrief): Promise<PostDraft>
   /** The persona's reply in its own chat; `directive` is set when the message was stored as one. */
   reply(args: { persona: ScriptBrief['persona']; history: ChatTurn[]; directive?: string }): Promise<string>
 }

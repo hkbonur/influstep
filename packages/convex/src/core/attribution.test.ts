@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildDescription } from './attribution'
+import { assertXTitleFits, buildDescription } from './attribution'
 
 const base = { concept: 'Retry a failed webhook', sponsorName: 'Formstep', trackedUrl: 'http://localhost:3300/go/abc' } as const
 
@@ -27,5 +27,12 @@ describe('buildDescription', () => {
     expect(text).toContain('Link in bio.')
     expect(text).not.toContain(base.trackedUrl)
     expect(text.indexOf('Code ADA20')).toBeLessThan(text.indexOf('Link in bio.'))
+  })
+})
+
+describe('assertXTitleFits', () => {
+  it('takes a title X takes and refuses a longer one', () => {
+    expect(() => assertXTitleFits('a'.repeat(280))).not.toThrow()
+    expect(() => assertXTitleFits('a'.repeat(281))).toThrow('The title is 281 characters; X allows 280.')
   })
 })

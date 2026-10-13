@@ -4,6 +4,9 @@ import type { QueryCtx } from '../_generated/server'
 
 type Reader = { db: QueryCtx['db'] }
 
+/** A runner silent this long is not alive (the Providers page says so), and a running job nobody reported for this long is orphaned. */
+export const RUNNER_STALE_MS = 2 * 60_000
+
 /** A job in one of these statuses means one of the persona's agents is at work. */
 const ACTIVE_JOB_STATUSES = ['queued', 'running'] as const satisfies readonly JobStatus[]
 

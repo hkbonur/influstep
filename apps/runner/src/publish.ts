@@ -1,15 +1,20 @@
+import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import type { PublishPayload, PublishResult } from '@influstep/shared'
+import type { Platform, PublishPayload, PublishResult } from '@influstep/shared'
 import { artifactsDir, providersMode, requireEnv } from './config'
+
+type VideoPayload = Extract<PublishPayload, { kind: 'video' }>
 
 /**
  * The publisher's upload. Mock: a fake id and URL, marked as such. Real:
  * YouTube Data API multipart upload with an access token; TikTok and
- * Instagram need their app review first and say so.
+ * Instagram need their app review first and say so. X, posts and videos
+ * alike, has no adapter yet and says which key it waits for.
  */
 export async function publish(job: { id: string; payload: PublishPayload }): Promise<PublishResult> {
   const { payload } = job
+  if (payload.platform === 'x') return publishToX(payload.publicationId)
   if (providersMode() === 'mock') {
     const externalId = `mock-${payload.platform}-${payload.publicationId.slice(-6)}`
     return { externalId, url: mockUrl(payload.platform, externalId), publishedAt: Date.now(), mock: true }
@@ -19,13 +24,24 @@ export async function publish(job: { id: string; payload: PublishPayload }): Pro
   return uploadToYouTube(payload)
 }
 
-function mockUrl(platform: PublishPayload['platform'], externalId: string): string {
+/**
+ * Mock: an id derived from the publication, so a retried job reports the same
+ * post. The payload names no handle, so the URL takes the form X itself
+ * resolves without one.
+ */
+function publishToX(publicationId: string): PublishResult {
+  if (providersMode() === 'real') throw new Error('X publishing needs X_OAUTH; the X adapter is not built yet.')
+  const externalId = `x-mock-${createHash('sha256').update(publicationId).digest('hex').slice(0, 8)}`
+  return { externalId, url: `https://x.com/i/status/${externalId}`, publishedAt: Date.now(), mock: true }
+}
+
+function mockUrl(platform: Exclude<Platform, 'x'>, externalId: string): string {
   if (platform === 'youtube') return `https://www.youtube.com/watch?v=${externalId}`
   if (platform === 'tiktok') return `https://www.tiktok.com/@persona/video/${externalId}`
   return `https://www.instagram.com/reel/${externalId}/`
 }
 
-async function uploadToYouTube(payload: PublishPayload): Promise<PublishResult> {
+async function uploadToYouTube(payload: VideoPayload): Promise<PublishResult> {
   const token = requireEnv('YOUTUBE_ACCESS_TOKEN')
   const file = path.join(artifactsDir, 'uploads', `${payload.publicationId}.mp4`)
   await fs.mkdir(path.dirname(file), { recursive: true })

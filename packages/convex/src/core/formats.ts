@@ -1,4 +1,16 @@
-import { LENGTH_SEC_MAX, LENGTH_SEC_MIN, PLATFORM_LABELS, PLATFORMS, type Platform, type PlatformFormat } from '@influstep/shared'
+import {
+  CADENCE_POSTS_MAX,
+  CADENCE_POSTS_MIN,
+  EPISODE_KIND_LABELS,
+  LENGTH_SEC_MAX,
+  LENGTH_SEC_MIN,
+  PLATFORM_LABELS,
+  PLATFORMS,
+  type Platform,
+  type PlatformFormat,
+  type PostKind,
+  type XCadence,
+} from '@influstep/shared'
 import type { Doc } from '../_generated/dataModel'
 import { instantAt } from './dates'
 import { refusal } from '../lib/errors'
@@ -34,19 +46,42 @@ export function earliestPublishAt(persona: FormatOwner & Pick<Doc<'personas'>, '
   return Math.min(...instants)
 }
 
-/** What personas.create and update accept: at least one platform, each once, every value in range. */
+/**
+ * What personas.create and update accept: at least one platform, each once,
+ * every value in range, and a post cadence on X and nowhere else.
+ */
 export function assertFormats(formats: PlatformFormat[]): void {
   if (formats.length === 0) throw refusal('A persona needs at least one platform.')
   const seen = new Set<Platform>()
   for (const format of formats) {
-    if (seen.has(format.platform)) throw refusal(`${PLATFORM_LABELS[format.platform]} has two formats.`)
+    const label = PLATFORM_LABELS[format.platform]
+    if (seen.has(format.platform)) throw refusal(`${label} has two formats.`)
     seen.add(format.platform)
     if (!Number.isInteger(format.lengthSec) || format.lengthSec < LENGTH_SEC_MIN || format.lengthSec > LENGTH_SEC_MAX) {
-      throw refusal(`${PLATFORM_LABELS[format.platform]}: the length is ${LENGTH_SEC_MIN} to ${LENGTH_SEC_MAX} seconds.`)
+      throw refusal(`${label}: the length is ${LENGTH_SEC_MIN} to ${LENGTH_SEC_MAX} seconds.`)
     }
     if (!Number.isInteger(format.publishHour) || format.publishHour < 0 || format.publishHour > 23) {
-      throw refusal(`${PLATFORM_LABELS[format.platform]}: the publish hour is 0 to 23.`)
+      throw refusal(`${label}: the publish hour is 0 to 23.`)
     }
-    if (format.hookNote.trim().length === 0) throw refusal(`${PLATFORM_LABELS[format.platform]}: the hook note is empty.`)
+    if (format.hookNote.trim().length === 0) throw refusal(`${label}: the hook note is empty.`)
+    if (format.platform !== 'x') {
+      if (format.cadence) throw refusal(`${label} has no post cadence; only X does.`)
+      continue
+    }
+    if (!format.cadence) throw refusal('X needs a post cadence.')
+    assertCadence(format.cadence)
+  }
+}
+
+function assertCadence(cadence: XCadence): void {
+  const { postsPerDay, kinds } = cadence
+  if (!Number.isInteger(postsPerDay) || postsPerDay < CADENCE_POSTS_MIN || postsPerDay > CADENCE_POSTS_MAX) {
+    throw refusal(`X: posts per day is ${CADENCE_POSTS_MIN} to ${CADENCE_POSTS_MAX}.`)
+  }
+  if (kinds.length === 0) throw refusal('X: pick at least one post kind.')
+  const picked = new Set<PostKind>()
+  for (const kind of kinds) {
+    if (picked.has(kind)) throw refusal(`X: ${EPISODE_KIND_LABELS[kind]} is picked twice.`)
+    picked.add(kind)
   }
 }

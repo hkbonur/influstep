@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addDays, dayKey, instantAt, weekStart } from './dates'
+import { addDays, dayKey, hourAt, instantAt, weekStart } from './dates'
 
 describe('dates', () => {
   it('finds the Monday of a week', () => {
@@ -14,5 +14,10 @@ describe('dates', () => {
     const at = instantAt('2026-10-09', 9, 'Europe/Oslo')
     expect(new Date(at).toISOString()).toBe('2026-10-09T07:00:00.000Z')
     expect(dayKey(at, 'Europe/Oslo')).toBe('2026-10-09')
+  })
+  it('reads the local hour back from an instant, on either side of a DST change', () => {
+    expect(hourAt(instantAt('2026-10-09', 18, 'Europe/Oslo'), 'Europe/Oslo')).toBe(18)
+    expect(hourAt(instantAt('2026-11-02', 0, 'Europe/Oslo'), 'Europe/Oslo')).toBe(0)
+    expect(hourAt(instantAt('2026-11-02', 23, 'Europe/Oslo'), 'Europe/Oslo')).toBe(23)
   })
 })

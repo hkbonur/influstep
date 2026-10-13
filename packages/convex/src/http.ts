@@ -33,6 +33,14 @@ function requireString(body: Record<string, unknown>, key: string): string {
   return value
 }
 
+/** A key the body may leave out or set to null; when present it is a non-empty string. */
+function optionalString(body: Record<string, unknown>, key: string): string | null {
+  const value = body[key]
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'string' || value.length === 0) throw new Error(`"${key}" must be a non-empty string or null`)
+  return value
+}
+
 function route(handler: (ctx: ActionCtx, body: Record<string, unknown>) => Promise<unknown>) {
   return httpAction(async (ctx, request) => {
     if (!authorized(request)) return unauthorized()
@@ -55,6 +63,7 @@ http.route({
       name: requireString(body, 'name'),
       version: requireString(body, 'version'),
       providersMode: requireString(body, 'providersMode'),
+      jobId: optionalString(body, 'jobId') as Id<'jobs'> | null,
     })
     return { ok: true }
   }),

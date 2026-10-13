@@ -9,6 +9,8 @@ import {
   conversionViaValidator,
   decisionValidator,
   episodeFormatValidator,
+  episodeKindValidator,
+  episodePostValidator,
   episodeStatusValidator,
   experimentKindValidator,
   experimentStatusValidator,
@@ -79,11 +81,17 @@ export default defineSchema({
   episodes: defineTable({
     personaId: v.id('personas'),
     slug: v.string(),
+    // A video, or a post that goes only to X (shared EPISODE_KINDS). A post never has a format, a shot plan
+    // or shots, its script stays empty, and its renders hold at most the one card of an image post.
+    kind: episodeKindValidator,
     status: episodeStatusValidator,
     concept: v.string(),
     title: v.string(),
+    // A video's first sentence; a post's first line (shared postHook). Either way the experiments' hook unit.
     hook: v.string(),
     script: scriptValidator,
+    // A post's parts and card title, exactly what X receives. Set once the post is written; never on a video.
+    post: v.optional(episodePostValidator),
     sponsorSegment: sponsorSegmentValidator,
     // The platforms this episode goes to: a non-empty subset of the persona's.
     platforms: v.array(platformValidator),
@@ -113,16 +121,20 @@ export default defineSchema({
     .index('by_status', ['status'])
     .index('by_day', ['plannedFor']),
 
+  // One episode on one platform. A video publication has `aspect` (the render it uploads, the cut the episode
+  // was scripted to for its platform) and `description`. A post publication goes to X and has `parts`, the post
+  // exactly as written (no footer), and `aspect` only for an image post (its card's).
   publications: defineTable({
     episodeId: v.id('episodes'),
     personaId: v.id('personas'),
     platform: platformValidator,
-    // The render this publication uploads: the aspect of the persona's format for its platform.
-    aspect: aspectRatioValidator,
+    aspect: v.optional(aspectRatioValidator),
     status: v.union(v.literal('queued'), v.literal('uploading'), v.literal('live'), v.literal('failed')),
     title: v.string(),
-    description: v.string(),
+    description: v.optional(v.string()),
+    parts: v.optional(v.array(v.string())),
     // The code the description was written with, so a page shows what viewers see, not the code in force now.
+    // Absent on X: a post and a video's X text carry no code.
     discountCodeId: v.optional(v.id('discountCodes')),
     linkId: v.id('links'),
     scheduledAt: v.number(),
@@ -278,6 +290,8 @@ export default defineSchema({
     attempts: v.number(),
     createdAt: v.number(),
     startedAt: v.optional(v.number()),
+    // The last heartbeat of the runner process running this job; a running job that goes quiet is orphaned.
+    aliveAt: v.optional(v.number()),
     finishedAt: v.optional(v.number()),
   })
     .index('by_runtime_status', ['runsOn', 'status'])

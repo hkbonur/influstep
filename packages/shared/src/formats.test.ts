@@ -4,6 +4,7 @@ import { DEFAULT_FORMATS, formatAspects, formatLength, resolveEpisodeFormat, typ
 const youtube: PlatformFormat = { platform: 'youtube', ...DEFAULT_FORMATS.youtube }
 const tiktok: PlatformFormat = { platform: 'tiktok', ...DEFAULT_FORMATS.tiktok }
 const instagram: PlatformFormat = { platform: 'instagram', ...DEFAULT_FORMATS.instagram }
+const x: PlatformFormat = { platform: 'x', ...DEFAULT_FORMATS.x }
 
 describe('resolveEpisodeFormat', () => {
   it('throws on an empty list', () => {
@@ -17,6 +18,16 @@ describe('resolveEpisodeFormat', () => {
         { platform: 'youtube', aspect: '16:9' },
         { platform: 'tiktok', aspect: '9:16' },
         { platform: 'instagram', aspect: '9:16' },
+      ],
+    })
+  })
+  it('gives X the wide cut, after the video platforms', () => {
+    expect(resolveEpisodeFormat([x, tiktok])).toEqual({
+      lengthSec: 35,
+      delivery: 'talking_head',
+      cuts: [
+        { platform: 'tiktok', aspect: '9:16' },
+        { platform: 'x', aspect: '16:9' },
       ],
     })
   })

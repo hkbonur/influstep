@@ -16,8 +16,9 @@ async function call<T>(route: string, body: unknown): Promise<T> {
 }
 
 export const backend = {
-  async heartbeat(): Promise<void> {
-    await call('/runner/heartbeat', { name: config.name(), version: config.version, providersMode: providersMode() })
+  /** Says this process is alive, and which job it is on (null when idle) so the backend keeps that job with it. */
+  async heartbeat(jobId: string | null): Promise<void> {
+    await call('/runner/heartbeat', { name: config.name(), version: config.version, providersMode: providersMode(), jobId })
   },
   async claim(): Promise<RunnerJob | null> {
     const { job } = await call<{ job: unknown }>('/runner/claim', { name: config.name() })

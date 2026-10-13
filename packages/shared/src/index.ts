@@ -1,4 +1,6 @@
 export * from './episode-status'
+export * from './episode-kinds'
+export * from './posts'
 export * from './platforms'
 export * from './formats'
 export * from './jobs'

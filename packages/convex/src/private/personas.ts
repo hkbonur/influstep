@@ -9,6 +9,7 @@ import {
   giveDiscountCode as giveDiscountCodeRule,
   retireDiscountCode as retireDiscountCodeRule,
 } from '../core/discounts'
+import { openXChecklist } from '../core/checklist'
 import { createTrackedLink, reconcilePlatformDrop } from '../core/episodes'
 import { assertFormats, platformsOf } from '../core/formats'
 import { workingPersonaIds } from '../core/jobs'
@@ -151,12 +152,17 @@ export const create = mutation({
     const persona = await ctx.db.get(personaId)
     if (!persona) throw new Error('persona vanished')
     await createTrackedLink(ctx, { persona, target: workspace.sponsorUrl })
+    if (platformsOf(persona).includes('x')) await openXChecklist(ctx, persona)
     await enqueueJob(ctx, { kind: 'poll_signals', payload: { personaId }, personaId })
     return personaId
   },
 })
 
-/** Save the settings. A platform that leaves the list takes its episodes with it (core/episodes.ts, reconcilePlatformDrop). */
+/**
+ * Save the settings. A platform that leaves the list takes its episodes with
+ * it (core/episodes.ts, reconcilePlatformDrop); gaining X opens its checklist
+ * items (core/checklist.ts).
+ */
 export const update = mutation({
   args: { personaId: v.id('personas'), ...personaFields },
   handler: async (ctx, args) => {
@@ -164,10 +170,16 @@ export const update = mutation({
     assertFormats(fields.formats)
     const persona = await ctx.db.get(personaId)
     if (!persona) throw new Error('persona not found')
+    const before = platformsOf(persona)
     const next = new Set(fields.formats.map((format) => format.platform))
-    const dropped = platformsOf(persona).filter((platform) => !next.has(platform))
+    const dropped = before.filter((platform) => !next.has(platform))
     await ctx.db.patch(personaId, fields)
     await reconcilePlatformDrop(ctx, personaId, dropped)
+    if (next.has('x') && !before.includes('x')) {
+      const saved = await ctx.db.get(personaId)
+      if (!saved) throw new Error('persona vanished')
+      await openXChecklist(ctx, saved)
+    }
   },
 })
 

@@ -20,8 +20,10 @@ export type EpisodeStatus = (typeof EPISODE_STATUSES)[number]
 /** Where an episode may go next. Terminal statuses map to an empty list. */
 export const EPISODE_TRANSITIONS: Record<EpisodeStatus, readonly EpisodeStatus[]> = {
   idea: ['scripted', 'failed', 'killed'],
-  scripted: ['recording', 'waiting_on_you', 'idea', 'failed', 'killed'],
-  waiting_on_you: ['recording', 'scripted', 'failed', 'killed'],
+  // A text post or a thread has nothing to render, so approval schedules it straight away (core/pipeline.ts
+  // refuses that move for a video or an image post).
+  scripted: ['recording', 'scheduled', 'waiting_on_you', 'idea', 'failed', 'killed'],
+  waiting_on_you: ['recording', 'scheduled', 'scripted', 'failed', 'killed'],
   recording: ['rendered', 'waiting_on_you', 'failed', 'killed'],
   rendered: ['scheduled', 'recording', 'failed', 'killed'],
   scheduled: ['published', 'failed', 'killed'],
@@ -38,6 +40,17 @@ export function canTransition(from: EpisodeStatus, to: EpisodeStatus): boolean {
 /** Where an episode goes can change until it is approved: nothing is recorded yet for an idea or a scripted episode. */
 export function platformsOpen(status: EpisodeStatus): boolean {
   return status === 'idea' || status === 'scripted'
+}
+
+const TEXT_EDITABLE: readonly EpisodeStatus[] = ['idea', 'scripted', 'waiting_on_you', 'failed']
+
+/**
+ * What an episode says, its script or its post, stays editable until recording
+ * starts and again once it failed. The backend refuses an edit outside these
+ * statuses and the studio locks its editors by the same rule.
+ */
+export function textEditable(status: EpisodeStatus): boolean {
+  return TEXT_EDITABLE.includes(status)
 }
 
 export const EPISODE_STATUS_LABELS: Record<EpisodeStatus, string> = {

@@ -1,12 +1,24 @@
 import { v } from 'convex/values'
-import { DEFAULT_FORMATS, formatAspects, resolveEpisodeFormat, type PlatformFormat } from '@influstep/shared'
+import {
+  DEFAULT_FORMATS,
+  X_IMAGE_ASPECT,
+  formatAspects,
+  postHook,
+  postSlotHours,
+  resolveEpisodeFormat,
+  type EpisodePost,
+  type Platform,
+  type PlatformFormat,
+  type PostKind,
+} from '@influstep/shared'
 import { internal } from '../_generated/api'
 import type { Id, TableNames } from '../_generated/dataModel'
 import { internalAction, internalMutation } from '../_generated/server'
 import { describePublication } from '../core/attribution'
+import { openXChecklist } from '../core/checklist'
 import { addDays, dayKey, instantAt, weekStart } from '../core/dates'
-import { createIdea, createTrackedLink, shotsFromDraft } from '../core/episodes'
-import { earliestPublishAt, formatsFor, platformsOf } from '../core/formats'
+import { createIdea, createPostPublication, createTrackedLink, shotsFromDraft } from '../core/episodes'
+import { earliestPublishAt, formatFor, formatsFor, platformsOf } from '../core/formats'
 import { enqueueJob } from '../jobs/queue'
 import type { FoundConversion } from '../providers/analytics'
 import { mockAnalytics } from '../providers/analytics/mock'
@@ -15,18 +27,19 @@ import { PRESENTER_TOOL, type ScriptDraft } from '../providers/llm'
 
 /**
  * The demo workspace: two personas, a planned week, a running experiment,
- * signals, one episode at every status, and a month of history so the report
- * shows a funnel on first open. `pnpm seed` runs this; it is idempotent by
+ * signals, one episode at every status, a post of every kind on X, and a
+ * month of history so the report shows a funnel on first open. `pnpm seed` runs this; it is idempotent by
  * workspace name.
  */
 
 const TIMEZONE = 'Europe/Oslo'
 
-/** Ada posts everywhere, on the defaults, with a shorter YouTube tutorial and a slightly longer TikTok. */
+/** Ada posts everywhere, on the defaults, with a shorter YouTube tutorial and a slightly longer TikTok. On X she also writes posts. */
 const ADA_FORMATS: PlatformFormat[] = [
   { platform: 'youtube', ...DEFAULT_FORMATS.youtube, lengthSec: 240 },
   { platform: 'tiktok', ...DEFAULT_FORMATS.tiktok, lengthSec: 40 },
   { platform: 'instagram', ...DEFAULT_FORMATS.instagram },
+  { platform: 'x', ...DEFAULT_FORMATS.x },
 ]
 
 /** Max is a TikTok-only talking-head creator: no screen, no sign-in, one cut, his own hook and hour. */
@@ -39,18 +52,34 @@ const MAX_FORMATS: PlatformFormat[] = [
   },
 ]
 
+/** The card title of the seeded image post; the seeded card image shows the same words. */
+const SEEDED_CARD_TITLE = 'Set an error workflow first'
+
+/**
+ * The seeded image post's card, drawn like the runner's title card (near-white,
+ * dark title, the handle under it) so the episode page shows a real preview.
+ */
+function seededCardSvg(): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900">
+  <rect width="1600" height="900" fill="#fafafa"/>
+  <text x="800" y="450" text-anchor="middle" font-family="Inter, system-ui, sans-serif" font-size="73" font-weight="600" fill="#262626">${SEEDED_CARD_TITLE}</text>
+  <text x="800" y="530" text-anchor="middle" font-family="ui-monospace, monospace" font-size="31" fill="#737373">Ada Automates · @ada.automates</text>
+</svg>`
+}
+
 export const run = internalAction({
   args: { appUrl: v.optional(v.string()) },
   handler: async (ctx, args): Promise<{ workspaceId: Id<'workspaces'> }> => {
-    // A tiny placeholder file stands in for the seeded renders; the runner
+    // A tiny placeholder file stands in for the seeded video renders; the runner
     // uploads real (mock) videos for anything it produces from here on.
     const storageId = await ctx.storage.store(new Blob([new Uint8Array([0, 0, 0, 0x1c, 0x66, 0x74, 0x79, 0x70])], { type: 'video/mp4' }))
-    return ctx.runMutation(internal.internal.seed.write, { storageId, appUrl: args.appUrl ?? 'http://localhost:3300' })
+    const cardStorageId = await ctx.storage.store(new Blob([seededCardSvg()], { type: 'image/svg+xml' }))
+    return ctx.runMutation(internal.internal.seed.write, { storageId, cardStorageId, appUrl: args.appUrl ?? 'http://localhost:3300' })
   },
 })
 
 export const write = internalMutation({
-  args: { storageId: v.id('_storage'), appUrl: v.string() },
+  args: { storageId: v.id('_storage'), cardStorageId: v.id('_storage'), appUrl: v.string() },
   handler: async (ctx, args): Promise<{ workspaceId: Id<'workspaces'> }> => {
     const existing = (await ctx.db.query('workspaces').collect()).find((workspace) => workspace.name === 'Formstep')
     if (existing) return { workspaceId: existing._id }
@@ -306,6 +335,7 @@ export const write = internalMutation({
           .replace(/[^a-z0-9]+/g, '-')
           .replace(/^-+|-+$/g, '')
           .slice(0, 60)}-s${index}`,
+        kind: 'video',
         status: index === historyConcepts.length - 1 ? 'published' : 'measured',
         concept,
         title: concept,
@@ -354,10 +384,7 @@ export const write = internalMutation({
           linkId,
           scheduledAt: liveAt,
           externalId,
-          url:
-            platform === 'youtube'
-              ? `https://youtube.com/watch?v=${externalId}`
-              : `https://${platform}.com/@ada.automates/video/${externalId}`,
+          url: mockPublicationUrl(platform, externalId),
           publishedAt: liveAt,
           mock: true,
         })
@@ -365,7 +392,8 @@ export const write = internalMutation({
         const platformFactor = platform === 'tiktok' ? 2.4 : platform === 'instagram' ? 1.3 : 1
         const baseViews = Math.round((900 + ((index * 131) % 700)) * platformFactor)
         const clickRate = variantKey === 'wrong' ? 0.021 : 0.014
-        const clicks = Math.round(baseViews * clickRate)
+        // Nothing is appended on X, so its tracked link is never printed and never clicked.
+        const clicks = platform === 'x' ? 0 : Math.round(baseViews * clickRate)
         for (let c = 0; c < clicks; c += 1) {
           await ctx.db.insert('linkClicks', {
             linkId,
@@ -485,6 +513,7 @@ export const write = internalMutation({
           .toLowerCase()
           .replace(/[^a-z0-9]+/g, '-')
           .slice(0, 60)}-w${index}`,
+        kind: 'video',
         status: item.status,
         concept: item.concept,
         title: item.concept,
@@ -547,11 +576,129 @@ export const write = internalMutation({
           kind: 'produce',
           personaId: adaId,
           episodeId,
-          payload: { episodeId, personaHandle: ada.handle, voiceId: ada.voiceId, shots: episode.shots, aspects: adaAspects },
+          payload: { kind: 'video', episodeId, personaHandle: ada.handle, voiceId: ada.voiceId, shots: episode.shots, aspects: adaAspects },
         })
       }
     }
     if (signalIds[0]) await ctx.db.patch(signalIds[0], { status: 'used' })
+
+    // Ada on X: the label and connect items a persona gets when it gains X, and one post of each kind.
+    // A text post waits for approval, a thread went live two days ago, and an image post's card is
+    // rendered and queued. Each sits at one of the day's post slots.
+    await openXChecklist(ctx, ada)
+    const [firstSlot, secondSlot] = postSlotHours(formatFor(ada, 'x'))
+    if (firstSlot === undefined || secondSlot === undefined) throw new Error("Ada's X cadence has fewer than two posts a day")
+    const seedPost = async (post: {
+      kind: PostKind
+      status: 'scripted' | 'scheduled' | 'published'
+      day: string
+      hour: number
+      concept: string
+      sponsorSegment: 'none' | 'mention'
+      written: EpisodePost
+    }) => {
+      const scheduledAt = instantAt(post.day, post.hour, TIMEZONE)
+      const episodeId = await ctx.db.insert('episodes', {
+        personaId: adaId,
+        slug: `${post.concept
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '')
+          .slice(0, 60)}-p`,
+        kind: post.kind,
+        status: post.status,
+        concept: post.concept,
+        title: post.concept,
+        hook: postHook(post.written.parts),
+        script: { hook: '', body: '', sponsor: '', cta: '' },
+        post: post.written,
+        sponsorSegment: post.sponsorSegment,
+        platforms: ['x'],
+        shots: [],
+        renders: post.kind === 'image' ? [{ aspect: X_IMAGE_ASPECT, storageId: args.cardStorageId, durationSec: 0, mock: true }] : [],
+        plannedFor: post.day,
+        scheduledAt,
+        signalIds: [],
+        pillar: 'n8n tutorials',
+        approvedAt: post.status === 'scripted' ? undefined : scheduledAt - 86_400_000,
+        publishedAt: post.status === 'published' ? scheduledAt : undefined,
+        createdAt: scheduledAt - 2 * 86_400_000,
+        updatedAt: post.status === 'published' ? scheduledAt : now - 3_600_000,
+      })
+      const episode = await ctx.db.get(episodeId)
+      if (!episode) throw new Error('episode vanished')
+      return episode
+    }
+    await seedPost({
+      kind: 'text',
+      status: 'scripted',
+      day: addDays(today, 1),
+      hour: firstSlot,
+      concept: 'n8n retries a failed node three times by default',
+      sponsorSegment: 'none',
+      written: {
+        parts: [
+          'n8n retries a failed node three times by default.\n\nThat is fine for a flaky API. It is wrong for a payment call: three retries can mean three charges. Turn retries off on any node that moves money, and send the failure to an error workflow instead.',
+        ],
+      },
+    })
+    const thread = await seedPost({
+      kind: 'thread',
+      status: 'published',
+      day: addDays(today, -2),
+      hour: firstSlot,
+      concept: 'Get a customer sign-off inside an n8n workflow',
+      sponsorSegment: 'mention',
+      written: {
+        parts: [
+          'Your workflow needs a yes from the customer before it goes on. Here is how to wait for it without polling.',
+          'Send the customer a request with the quote in it. Formstep gives you a link and calls your webhook with the answer.',
+          'In n8n, end the first workflow there. A second workflow starts on the webhook and reads the answer.',
+          'Approve goes on to the invoice. Reject goes back to the quote. Nothing sleeps, nothing polls.',
+        ],
+      },
+    })
+    const threadPublicationId = await createPostPublication(ctx, thread, ada, { mock: true })
+    const threadExternalId = 'mock-x-thread'
+    await ctx.db.patch(threadPublicationId, {
+      status: 'live',
+      externalId: threadExternalId,
+      url: mockPublicationUrl('x', threadExternalId),
+      publishedAt: thread.scheduledAt,
+    })
+    const threadViews = 4_200
+    await ctx.db.insert('metricSnapshots', {
+      personaId: adaId,
+      episodeId: thread._id,
+      publicationId: threadPublicationId,
+      platform: 'x',
+      takenAt: Math.min(now, thread.scheduledAt + 24 * 3_600_000),
+      // X reports impressions; they fill views. A post has nothing to watch.
+      counts: {
+        views: threadViews,
+        watchRate: 0,
+        follows: Math.round(threadViews * 0.004),
+        likes: Math.round(threadViews * 0.03),
+        comments: Math.round(threadViews * 0.003),
+        clicks: 0,
+        signups: 0,
+        paid: 0,
+      },
+      mock: true,
+    })
+    const image = await seedPost({
+      kind: 'image',
+      status: 'scheduled',
+      day: addDays(today, 1),
+      hour: secondSlot,
+      concept: 'The one n8n setting I change on every new workflow',
+      sponsorSegment: 'none',
+      written: {
+        parts: ['The one n8n setting I change on every new workflow: an error workflow. Set it in the workflow settings, once.'],
+        cardTitle: SEEDED_CARD_TITLE,
+      },
+    })
+    await createPostPublication(ctx, image, ada, { mock: true })
 
     // Max: two ideas on the next two days so the writer has work on first run, whatever today is.
     const max = await ctx.db.get(maxId)
@@ -562,6 +709,7 @@ export const write = internalMutation({
     ] as const) {
       const day = addDays(today, offset)
       await createIdea(ctx, max, {
+        kind: 'video',
         personaId: maxId,
         plannedFor: day,
         concept,
@@ -581,6 +729,19 @@ export const write = internalMutation({
     return { workspaceId }
   },
 })
+
+/** Where a seeded publication lives on its platform. */
+function mockPublicationUrl(platform: Platform, externalId: string): string {
+  switch (platform) {
+    case 'youtube':
+      return `https://youtube.com/watch?v=${externalId}`
+    case 'x':
+      return `https://x.com/ada.automates/status/${externalId}`
+    case 'tiktok':
+    case 'instagram':
+      return `https://${platform}.com/@ada.automates/video/${externalId}`
+  }
+}
 
 /**
  * Every table in the schema, so `reset` cannot forget one: adding a table

@@ -65,7 +65,7 @@ export async function applyEvent(
 ): Promise<EpisodeStatus> {
   const episode = await ctx.db.get(episodeId)
   if (!episode) throw new Error(`episode ${episodeId} not found`)
-  const result = transition(episode.status, event, { previous })
+  const result = transition(episode.status, event, { kind: episode.kind, previous })
   if (!result.ok) throw new Error(result.reason)
   await ctx.db.patch(episodeId, {
     status: result.status,

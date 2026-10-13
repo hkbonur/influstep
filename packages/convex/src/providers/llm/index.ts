@@ -7,4 +7,4 @@ export function llmProvider(): LlmProvider {
   return providersMode() === 'real' ? anthropicLlm : mockLlm
 }
 export { PRESENTER_TOOL } from './types'
-export type { ScriptBrief, ScriptDraft, ChatTurn } from './types'
+export type { ScriptBrief, ScriptDraft, PostBrief, PostDraft, ChatTurn } from './types'

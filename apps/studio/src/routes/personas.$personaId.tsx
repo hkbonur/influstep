@@ -1,17 +1,18 @@
 import { api } from '@influstep/convex/_generated/api'
 import type { Doc, Id } from '@influstep/convex/_generated/dataModel'
-import { DELIVERY_LABELS, formatLength, type PersonaColor, type PlatformFormat } from '@influstep/shared'
+import { DELIVERY_LABELS, EPISODE_KIND_LABELS, formatLength, isPost, type PersonaColor, type PlatformFormat } from '@influstep/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
 import React from 'react'
 import { FormatFields } from '@/components/format-fields'
 import { PersonaColorSwatches, PersonaMascot, personaAvatarState } from '@/components/persona-avatar'
 import { PersonaChat } from '@/components/persona-chat'
-import { PlatformGlyphs, SponsorPill, StatusPill } from '@/components/status'
+import { PlatformGlyphs, PostKindIcon, SponsorPill, StatusPill } from '@/components/status'
 import {
   Button,
   ErrorLine,
   Eyebrow,
+  ExternalLinkButton,
   Field,
   type FormState,
   Input,
@@ -121,9 +122,10 @@ function PersonaPage() {
                     <Link
                       to="/episodes/$episodeId"
                       params={{ episodeId: episode._id }}
-                      className="line-clamp-1 font-medium hover:underline"
+                      className="flex items-center gap-1.5 font-medium hover:underline"
                     >
-                      {episode.title}
+                      {isPost(episode.kind) && <PostKindIcon kind={episode.kind} className="shrink-0 text-graphite" />}
+                      <span className="line-clamp-1">{episode.title}</span>
                     </Link>
                     <p className="line-clamp-1 text-xs text-ash">{episode.hook || episode.concept}</p>
                     {episode.error && <p className="mt-0.5 line-clamp-1 font-mono text-[11px] text-signal-red-deep">{episode.error}</p>}
@@ -174,6 +176,12 @@ function PersonaPage() {
                       <span className="block text-ash">{DELIVERY_LABELS[format.delivery]}</span>
                     </span>
                     <Mono className="text-ash">{formatHour(format.publishHour)}</Mono>
+                    {format.cadence && (
+                      <span className="col-start-2 col-end-4 text-ash">
+                        <span className="tabular">{format.cadence.postsPerDay}</span> {format.cadence.postsPerDay === 1 ? 'post' : 'posts'}{' '}
+                        a day: {format.cadence.kinds.map((kind) => EPISODE_KIND_LABELS[kind].toLowerCase()).join(', ')}
+                      </span>
+                    )}
                   </React.Fragment>
                 ))}
               </dd>
@@ -255,7 +263,7 @@ function PersonaPage() {
 }
 
 function ChecklistRow(props: {
-  item: { _id: Id<'checklistItems'>; title: string; why: string; action?: { kind: string; url?: string; key?: string }; createdAt: number }
+  item: Pick<Doc<'checklistItems'>, '_id' | 'title' | 'why' | 'action' | 'createdAt'>
   episodeTitle: string | null
 }) {
   const complete = useMutation(api.private.checklist.complete)
@@ -291,6 +299,12 @@ function ChecklistRow(props: {
             <LinkButton to="/providers" size="sm">
               Set {props.item.action.key}
             </LinkButton>
+          )}
+          {/* A page the operator reads and acts on by hand; the runner never opens it. */}
+          {props.item.action?.kind === 'visit' && (
+            <ExternalLinkButton href={props.item.action.url} size="sm">
+              Open
+            </ExternalLinkButton>
           )}
         </div>
         {error && <ErrorLine>{error}</ErrorLine>}
@@ -419,7 +433,8 @@ function SettingsForm(props: { persona: Doc<'personas'>; onDone: () => void }) {
         <div className="sm:col-span-2 lg:col-span-3">
           <Eyebrow>Discount code</Eyebrow>
           <p className="mt-1 text-xs text-ash">
-            Create the code in Polar first. The persona puts it into every description from the next publication on.
+            Create the code in Polar first. The persona puts it into every video description from the next publication on; X posts carry no
+            code.
           </p>
         </div>
         <Field label="Code">

@@ -1,10 +1,21 @@
-import { PRESENTER_TOOL, WORDS_PER_SECOND, type LlmProvider, type ScriptBrief, type ScriptDraft } from './types'
+import { CARD_TITLE_MAX, xLength } from '@influstep/shared'
+import {
+  PRESENTER_TOOL,
+  WORDS_PER_SECOND,
+  type LlmProvider,
+  type PostBrief,
+  type PostDraft,
+  type ScriptBrief,
+  type ScriptDraft,
+} from './types'
 
 /**
  * A template writer. Deterministic from the brief, so a seeded demo and a
  * test read the same script twice. It is honest about being a mock: every
  * script opens with the concept and names the variant it follows. The body
  * grows with the format's length and the shot plan follows its delivery.
+ * A post opens with its topic too, and every part is cut to the limit the
+ * brief gives it, so a mock post always passes X's rules.
  */
 export const mockLlm: LlmProvider = {
   name: 'mock',
@@ -20,12 +31,38 @@ export const mockLlm: LlmProvider = {
       budget: Math.round(brief.format.lengthSec * WORDS_PER_SECOND) - wordCount([hook, sponsor, cta].join(' ')),
     })
     return {
-      title: titleFor(brief, topic),
+      title: titleFor(brief.pillar, topic),
       hook,
       script: { hook, body, sponsor, cta },
       shotPlan: shotPlanFor(brief, { hook, body, sponsor }),
       topics: [brief.pillar, ...topic.toLowerCase().split(/\s+/).slice(0, 2)],
     }
+  },
+  async writePost(brief: PostBrief): Promise<PostDraft> {
+    const topic = brief.signals[0]?.title ?? brief.concept
+    const title = titleFor(brief.pillar, topic)
+    const hook = `${topic}: the short version.`
+    const sponsor = brief.sponsorSegment === 'none' ? '' : `I collect what a flow needs from a customer with ${brief.sponsorName}.`
+    if (brief.kind === 'thread') {
+      const last = [
+        `3. Keep the fix small enough to undo.`,
+        sponsor,
+        `Follow ${brief.persona.name} for more ${brief.pillar.toLowerCase()}.`,
+      ]
+      const parts = [
+        fit(`${hook}\nThree steps, in order.`, brief.partLimit),
+        fit('1. Run it once and watch where it stops. Read the log before you touch the config.', brief.partLimit),
+        fit('2. Fix it the plain way, no plugins. Then test the failure path, not just the one that works.', brief.partLimit),
+        fit(last.filter(Boolean).join(' '), brief.partLimit),
+      ]
+      return { title, post: { parts } }
+    }
+    const part = fit(
+      [hook, sponsor, 'Run it once, read the log, and fix the one step that stops.'].filter(Boolean).join('\n'),
+      brief.partLimit
+    )
+    if (brief.kind === 'image') return { title, post: { parts: [part], cardTitle: fit(topic, CARD_TITLE_MAX) } }
+    return { title, post: { parts: [part] } }
   },
   async reply(args) {
     const last = args.history.at(-1)
@@ -42,8 +79,16 @@ function hookFor(brief: ScriptBrief, topic: string): string {
   return `How to ${topic.toLowerCase()} in under a minute.`
 }
 
-function titleFor(brief: ScriptBrief, topic: string): string {
-  return `${topic} (${brief.pillar})`.slice(0, 90)
+function titleFor(pillar: string, topic: string): string {
+  return `${topic} (${pillar})`.slice(0, 90)
+}
+
+/** Drops whole words from the end until the text weighs at most `limit` on X, and marks the cut with an ellipsis. */
+function fit(text: string, limit: number): string {
+  if (xLength(text) <= limit) return text
+  const words = text.split(' ')
+  while (words.length > 1 && xLength(`${words.join(' ')}…`) > limit) words.pop()
+  return `${words.join(' ')}…`
 }
 
 function sponsorFor(brief: ScriptBrief): string {

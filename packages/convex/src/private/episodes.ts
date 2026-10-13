@@ -1,15 +1,17 @@
 import { v } from 'convex/values'
-import { canTransition, EPISODE_STATUS_LABELS } from '@influstep/shared'
+import { canTransition, EPISODE_STATUS_LABELS, isPost, textEditable } from '@influstep/shared'
 import { mutation, query } from '../_generated/server'
-import { instantAt } from '../core/dates'
+import { assertXTitleFits } from '../core/attribution'
+import { hourAt, instantAt } from '../core/dates'
 import { activeDiscountCodeFor } from '../core/discounts'
 import { approveEpisode, setEpisodePlatforms, startProduction } from '../core/episodes'
 import { earliestPublishAt, formatFor, platformsOf } from '../core/formats'
+import { savePost } from '../core/posts'
 import { countConversions } from '../core/report'
 import { workspaceOf } from '../core/workspace'
 import { applyEvent } from '../internal/data'
 import { enqueueJob } from '../jobs/queue'
-import { platformValidator, scriptValidator } from '../lib/validators'
+import { episodePostValidator, platformValidator, scriptValidator } from '../lib/validators'
 import { refusal } from '../lib/errors'
 
 export const get = query({
@@ -99,10 +101,27 @@ export const updateScript = mutation({
   handler: async (ctx, args) => {
     const episode = await ctx.db.get(args.episodeId)
     if (!episode) throw new Error('episode not found')
-    if (episode.status !== 'scripted' && episode.status !== 'idea' && episode.status !== 'waiting_on_you' && episode.status !== 'failed') {
+    if (isPost(episode.kind)) throw refusal('A post has no script; edit the post instead.')
+    if (!textEditable(episode.status)) {
       throw refusal(`The script is locked once recording starts; this episode is at "${EPISODE_STATUS_LABELS[episode.status]}".`)
     }
+    // X posts the title as the video's text. Approval checks it too, but an edit after approval (waiting on a sign-in, or
+    // failed) starts production without passing approval again, so the edit itself is refused.
+    if (episode.platforms.includes('x')) assertXTitleFits(args.title)
     await ctx.db.patch(args.episodeId, { title: args.title, hook: args.script.hook, script: args.script, updatedAt: Date.now() })
+  },
+})
+
+/** Save a post the operator edited. It refuses with the first thing X would not take (shared `postProblems`). */
+export const updatePost = mutation({
+  args: { episodeId: v.id('episodes'), title: v.string(), post: episodePostValidator },
+  handler: async (ctx, args) => {
+    const episode = await ctx.db.get(args.episodeId)
+    if (!episode) throw new Error('episode not found')
+    if (!textEditable(episode.status)) {
+      throw refusal(`The post is locked once it is approved; this episode is at "${EPISODE_STATUS_LABELS[episode.status]}".`)
+    }
+    await savePost(ctx, args.episodeId, { title: args.title, post: args.post })
   },
 })
 
@@ -119,7 +138,7 @@ export const approve = mutation({
     if (!episode) throw new Error('episode not found')
     if (episode.status !== 'scripted')
       throw refusal(`Only an episode at "Needs approval" can be approved; this one is at "${EPISODE_STATUS_LABELS[episode.status]}".`)
-    if (episode.shots.length === 0) throw refusal('The episode has no shots to record.')
+    if (episode.kind === 'video' && episode.shots.length === 0) throw refusal('The episode has no shots to record.')
     await approveEpisode(ctx, args.episodeId)
   },
 })
@@ -138,6 +157,9 @@ export const rewrite = mutation({
     const episode = await ctx.db.get(args.episodeId)
     if (!episode) throw new Error('episode not found')
     await applyEvent(ctx, args.episodeId, { type: 'rewrite' })
+    // An image post's rendered card locks its card title (core/posts.ts). The rewrite gets a new card title, and approval
+    // renders it again, so the old card goes and the title opens for the writer and the operator.
+    if (episode.kind === 'image') await ctx.db.patch(args.episodeId, { renders: [] })
     await enqueueJob(ctx, {
       kind: 'write_script',
       payload: { episodeId: episode._id },
@@ -167,7 +189,9 @@ export const retry = mutation({
       await applyEvent(ctx, args.episodeId, { type: 'retry' }, 'scheduled')
       return
     }
-    if (episode.shots.length > 0) {
+    // A written video or image post failed while rendering: render again.
+    const rendersAgain = episode.kind === 'video' ? episode.shots.length > 0 : episode.kind === 'image' && episode.post !== undefined
+    if (rendersAgain) {
       await applyEvent(ctx, args.episodeId, { type: 'retry' }, 'recording')
       await startProduction(ctx, episode, persona)
       return
@@ -191,13 +215,22 @@ export const reschedule = mutation({
       throw refusal(`An episode at "${EPISODE_STATUS_LABELS[episode.status]}" cannot be killed.`)
     const persona = await ctx.db.get(episode.personaId)
     if (!persona) throw new Error('persona not found')
-    const scheduledAt = earliestPublishAt(persona, episode.platforms, args.plannedFor)
-    await ctx.db.patch(args.episodeId, { plannedFor: args.plannedFor, scheduledAt, updatedAt: Date.now() })
-    // Each queued publication keeps its platform's hour on the new day.
     const publications = await ctx.db
       .query('publications')
       .withIndex('by_episode', (q) => q.eq('episodeId', episode._id))
       .collect()
+    // A post keeps its slot's hour on the new day, and so does its X publication.
+    if (isPost(episode.kind)) {
+      const scheduledAt = instantAt(args.plannedFor, hourAt(episode.scheduledAt, persona.timezone), persona.timezone)
+      await ctx.db.patch(args.episodeId, { plannedFor: args.plannedFor, scheduledAt, updatedAt: Date.now() })
+      for (const publication of publications) {
+        if (publication.status === 'queued') await ctx.db.patch(publication._id, { scheduledAt })
+      }
+      return
+    }
+    const scheduledAt = earliestPublishAt(persona, episode.platforms, args.plannedFor)
+    await ctx.db.patch(args.episodeId, { plannedFor: args.plannedFor, scheduledAt, updatedAt: Date.now() })
+    // Each queued publication keeps its platform's hour on the new day.
     for (const publication of publications) {
       if (publication.status !== 'queued') continue
       const hour = formatFor(persona, publication.platform).publishHour

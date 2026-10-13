@@ -13,12 +13,16 @@ import { openBrowser } from './record'
 const CLAIM_EVERY_MS = 5_000
 const HEARTBEAT_EVERY_MS = 30_000
 
+// The job this process is on, reported with every heartbeat; a job nobody reports goes back to the queue.
+let currentJobId: string | null = null
+
 function log(message: string): void {
   console.log(`${new Date().toISOString()} ${message}`)
 }
 
 async function handle(job: NonNullable<Awaited<ReturnType<typeof backend.claim>>>): Promise<void> {
   log(`job ${job.id}: ${job.kind}`)
+  currentJobId = job.id
   try {
     if (job.kind === 'produce') {
       const result = await produce(job)
@@ -35,13 +39,18 @@ async function handle(job: NonNullable<Awaited<ReturnType<typeof backend.claim>>
     const message = error instanceof Error ? error.message : String(error)
     log(`job ${job.id}: failed: ${message}`)
     await backend.fail(job.id, message)
+  } finally {
+    currentJobId = null
   }
 }
 
 async function main(): Promise<void> {
   log(`runner "${config.name()}" v${config.version}, providers ${providersMode()}, backend ${config.siteUrl()}`)
-  await backend.heartbeat()
-  setInterval(() => backend.heartbeat().catch((error: unknown) => log(`heartbeat failed: ${String(error)}`)), HEARTBEAT_EVERY_MS)
+  await backend.heartbeat(null)
+  setInterval(
+    () => backend.heartbeat(currentJobId).catch((error: unknown) => log(`heartbeat failed: ${String(error)}`)),
+    HEARTBEAT_EVERY_MS
+  )
   for (;;) {
     let job: Awaited<ReturnType<typeof backend.claim>> = null
     try {

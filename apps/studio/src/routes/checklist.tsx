@@ -2,7 +2,7 @@ import { api } from '@influstep/convex/_generated/api'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
 import React from 'react'
-import { Button, Empty, ErrorLine, Eyebrow, LinkButton, Mono, PageHeader, Skeleton } from '@/components/ui'
+import { Button, Empty, ErrorLine, Eyebrow, ExternalLinkButton, LinkButton, Mono, PageHeader, Skeleton } from '@/components/ui'
 import { errorMessage } from '@/lib/errors'
 import { formatDateTime } from '@/lib/format'
 
@@ -99,6 +99,12 @@ function ChecklistRow(props: { item: Item }) {
         <LinkButton to="/providers" size="sm">
           Set {item.action.key}
         </LinkButton>
+      )}
+      {/* A page the operator reads and acts on by hand; the runner never opens it. */}
+      {item.action?.kind === 'visit' && (
+        <ExternalLinkButton href={item.action.url} size="sm">
+          Open
+        </ExternalLinkButton>
       )}
     </li>
   )

@@ -1,4 +1,4 @@
-import { canTransition, type EpisodeStatus } from '@influstep/shared'
+import { canTransition, EPISODE_KIND_LABELS, type EpisodeKind, type EpisodeStatus } from '@influstep/shared'
 
 /**
  * The episode state machine as the domain sees it: one function that either
@@ -36,10 +36,25 @@ const TARGETS: Record<PipelineEvent['type'], EpisodeStatus | 'previous'> = {
 
 export type TransitionResult = { ok: true; status: EpisodeStatus } | { ok: false; reason: string }
 
-export function transition(current: EpisodeStatus, event: PipelineEvent, options: { previous?: EpisodeStatus } = {}): TransitionResult {
+/** Statuses an approved episode leaves for `scheduled` without a render, which only a text post or a thread may do. */
+const UNRENDERED: readonly EpisodeStatus[] = ['scripted', 'waiting_on_you']
+
+/** Kinds that have a render to publish, so they reach `scheduled` only through `rendered`. */
+function rendersFirst(kind: EpisodeKind): boolean {
+  return kind === 'video' || kind === 'image'
+}
+
+export function transition(
+  current: EpisodeStatus,
+  event: PipelineEvent,
+  options: { kind: EpisodeKind; previous?: EpisodeStatus }
+): TransitionResult {
   const target = TARGETS[event.type]
   const next = target === 'previous' ? options.previous : target
   if (!next) return { ok: false, reason: `retry needs the status the episode failed from` }
   if (!canTransition(current, next)) return { ok: false, reason: `an episode cannot go from ${current} to ${next}` }
+  if (next === 'scheduled' && UNRENDERED.includes(current) && rendersFirst(options.kind)) {
+    return { ok: false, reason: `${EPISODE_KIND_LABELS[options.kind]} cannot go from ${current} to scheduled: it renders first` }
+  }
   return { ok: true, status: next }
 }

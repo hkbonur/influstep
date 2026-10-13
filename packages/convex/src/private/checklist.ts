@@ -64,7 +64,8 @@ export const runAction = mutation({
     const item = await ctx.db.get(args.itemId)
     if (!item) throw new Error('checklist item not found')
     if (!item.action) throw refusal('This item has no action.')
-    if (item.action.kind !== 'open_browser') throw refusal(`"${item.action.kind}" is done on the Providers page, not by the runner.`)
+    if (item.action.kind === 'visit') throw refusal('This page opens in your own browser; the runner has nothing to do for it.')
+    if (item.action.kind === 'set_provider_key') throw refusal(`${item.action.key} is set on the Providers page, not by the runner.`)
     return enqueueJob(ctx, {
       kind: 'open_browser',
       payload: { url: item.action.url, checklistItemId: item._id },

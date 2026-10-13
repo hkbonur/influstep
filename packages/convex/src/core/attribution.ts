@@ -1,5 +1,6 @@
-import { AI_DISCLOSURE_LINE, sponsorDisclosureLine, type Platform, type SponsorSegment } from '@influstep/shared'
+import { AI_DISCLOSURE_LINE, X_POST_LIMIT, sponsorDisclosureLine, xLength, type Platform, type SponsorSegment } from '@influstep/shared'
 import type { Doc, Id } from '../_generated/dataModel'
+import { refusal } from '../lib/errors'
 
 /**
  * The description every publication carries. The sponsor is in every
@@ -28,10 +29,21 @@ export function buildDescription(args: {
 }
 
 /**
+ * A video goes to X with its title as the post text and nothing appended
+ * (docs/plan.md, slice 4): the account's automated label is the disclosure.
+ * Approval checks the title fits, before anything renders.
+ */
+export function assertXTitleFits(title: string): void {
+  const length = xLength(title)
+  if (length > X_POST_LIMIT) throw refusal(`The title is ${length} characters; X allows ${X_POST_LIMIT}.`)
+}
+
+/**
  * What a publication is written with, from the rows the rule reads: the
  * description text and the code it carries, so the page can show the code a
  * viewer sees rather than the code in force now. Production, the seed and a
- * code change that rewrites queued descriptions all go through here.
+ * code change that rewrites queued descriptions all go through here. On X the
+ * text is the title alone, so it carries no code.
  */
 export function describePublication(args: {
   workspace: Doc<'workspaces'>
@@ -40,6 +52,11 @@ export function describePublication(args: {
   linkSlug: string
   discountCode: Doc<'discountCodes'> | null
 }): { description: string; discountCodeId: Id<'discountCodes'> | undefined } {
+  if (args.platform === 'x') {
+    if (xLength(args.episode.title) > X_POST_LIMIT)
+      throw new Error(`episode ${args.episode._id} reached X with a title over ${X_POST_LIMIT}`)
+    return { description: args.episode.title, discountCodeId: undefined }
+  }
   return {
     description: buildDescription({
       concept: args.episode.concept,

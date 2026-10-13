@@ -1,20 +1,28 @@
 import {
   ASPECT_RATIOS,
+  CADENCE_POSTS_MAX,
+  CADENCE_POSTS_MIN,
   DEFAULT_FORMATS,
   DELIVERIES,
   DELIVERY_LABELS,
+  EPISODE_KIND_LABELS,
   LENGTH_SEC_MAX,
   LENGTH_SEC_MIN,
   PLATFORMS,
   PLATFORM_LABELS,
+  POST_KINDS,
   formatLength,
+  postSlotHours,
   type Platform,
   type PlatformFormat,
+  type PostKind,
+  type XCadence,
 } from '@influstep/shared'
 import { cn } from '@/lib/cn'
+import { formatHour } from '@/lib/format'
 import { Field, Input, Mono } from './ui'
 
-/** The format a platform starts with when the operator switches it on. */
+/** The format a platform starts with when the operator switches it on; X's carries its default post cadence. */
 export function defaultFormat(platform: Platform): PlatformFormat {
   return { platform, ...DEFAULT_FORMATS[platform] }
 }
@@ -25,7 +33,8 @@ type FormatChange = Partial<Omit<PlatformFormat, 'platform'>>
  * One row per platform: a checkbox, and the format the persona publishes
  * there once it is on. At least one platform stays on, so the last checked
  * box cannot be cleared. Rows keep PLATFORMS order whatever the operator
- * clicks first.
+ * clicks first. Unticking a platform drops its whole format, so X's post
+ * cadence goes with it.
  */
 export function FormatFields(props: { value: PlatformFormat[]; onChange: (next: PlatformFormat[]) => void; className?: string }) {
   const toggle = (platform: Platform, on: boolean) =>
@@ -65,6 +74,7 @@ export function FormatFields(props: { value: PlatformFormat[]; onChange: (next: 
       <p className="text-xs text-ash">
         One script goes to every platform of an episode: it fits the shortest length and is produced the way the longest-form platform
         needs.
+        {props.value.some((format) => format.platform === 'x') && ' On X the persona also posts without a video, at the cadence above.'}
       </p>
     </fieldset>
   )
@@ -114,10 +124,65 @@ function FormatRow(props: { format: PlatformFormat; onChange: (change: FormatCha
       <Field label="Publish hour">
         <NumberInput value={props.format.publishHour} min={0} max={23} onChange={(publishHour) => props.onChange({ publishHour })} />
       </Field>
+      {props.format.cadence && (
+        <CadenceFields format={props.format} cadence={props.format.cadence} onChange={(cadence) => props.onChange({ cadence })} />
+      )}
       <Field label="Hook note" className="col-span-2 lg:col-span-4">
         <Input required value={props.format.hookNote} onChange={(event) => props.onChange({ hookNote: event.target.value })} />
       </Field>
     </div>
+  )
+}
+
+/**
+ * X's post cadence: how many posts a day, three hours apart from the publish
+ * hour, and which kinds the planner rotates through. Kinds keep POST_KINDS
+ * order, and the last ticked kind cannot be cleared, because the backend
+ * refuses an X format without one.
+ */
+function CadenceFields(props: { format: PlatformFormat; cadence: XCadence; onChange: (cadence: XCadence) => void }) {
+  const toggle = (kind: PostKind, on: boolean) =>
+    props.onChange({
+      ...props.cadence,
+      kinds: POST_KINDS.filter((candidate) => (candidate === kind ? on : props.cadence.kinds.includes(candidate))),
+    })
+  // The field reports every number the operator types, out of range ones too; the hours only mean something inside the range.
+  const postsPerDay = props.cadence.postsPerDay
+  const inRange = Number.isInteger(postsPerDay) && postsPerDay >= CADENCE_POSTS_MIN && postsPerDay <= CADENCE_POSTS_MAX
+  return (
+    <>
+      <Field
+        label="Posts a day"
+        hint={inRange ? postSlotHours(props.format).map(formatHour).join(', ') : `${CADENCE_POSTS_MIN} to ${CADENCE_POSTS_MAX}`}
+      >
+        <NumberInput
+          value={props.cadence.postsPerDay}
+          min={CADENCE_POSTS_MIN}
+          max={CADENCE_POSTS_MAX}
+          onChange={(postsPerDay) => props.onChange({ ...props.cadence, postsPerDay })}
+        />
+      </Field>
+      <fieldset className="col-span-2 flex flex-col gap-1.5 sm:col-span-1 lg:col-span-3">
+        <legend className="mb-1.5 text-xs font-medium text-graphite">Post kinds</legend>
+        <div className="flex min-h-8 flex-wrap items-center gap-x-4 gap-y-1">
+          {POST_KINDS.map((kind) => {
+            const on = props.cadence.kinds.includes(kind)
+            return (
+              <label key={kind} className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="size-3.5 accent-ink"
+                  checked={on}
+                  disabled={on && props.cadence.kinds.length === 1}
+                  onChange={(event) => toggle(kind, event.target.checked)}
+                />
+                {EPISODE_KIND_LABELS[kind]}
+              </label>
+            )
+          })}
+        </div>
+      </fieldset>
+    </>
   )
 }
 

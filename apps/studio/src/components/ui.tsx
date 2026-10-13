@@ -53,6 +53,30 @@ export function LinkButton(
   )
 }
 
+/**
+ * A page outside the studio, styled as a button. It always opens in a new tab,
+ * so the operator keeps the studio where they left it; a router Link would try
+ * to route the address inside the app.
+ */
+export function ExternalLinkButton(props: {
+  href: string
+  className?: string
+  variant?: ButtonVariant
+  size?: ButtonSize
+  children: React.ReactNode
+}) {
+  return (
+    <a
+      href={props.href}
+      target="_blank"
+      rel="noreferrer"
+      className={buttonClass(props.variant ?? 'outline', props.size ?? 'md', props.className)}
+    >
+      {props.children}
+    </a>
+  )
+}
+
 function Spinner() {
   return <span aria-hidden className="size-3 animate-spin rounded-full border-[1.5px] border-current border-r-transparent" />
 }
@@ -103,7 +127,8 @@ export function Pill(props: { tint: StatusTint; children: React.ReactNode; class
   )
 }
 
-export function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+/** Takes a `ref` like the element (React 19 passes it as a prop), so the post editor can move focus between parts. */
+export function Textarea(props: React.ComponentProps<'textarea'>) {
   const { className, ...rest } = props
   return <textarea {...rest} className={cn('field h-auto min-h-20 resize-y py-2 leading-relaxed', className)} />
 }

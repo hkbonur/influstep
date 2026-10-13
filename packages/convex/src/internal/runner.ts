@@ -1,8 +1,9 @@
 import { v } from 'convex/values'
-import { produceResultSchema, publishResultSchema, type RunnerJob } from '@influstep/shared'
+import { isPost, produceResultSchema, publishResultSchema, type AspectRatio, type PublishPayload, type RunnerJob } from '@influstep/shared'
 import type { Doc, Id } from '../_generated/dataModel'
-import { internalMutation, internalQuery } from '../_generated/server'
+import { internalMutation, internalQuery, type MutationCtx, type QueryCtx } from '../_generated/server'
 import { completeProduction, completePublication, failPublication, startProduction } from '../core/episodes'
+import { RUNNER_STALE_MS } from '../core/jobs'
 import { enqueueJob, markDone, markFailed, markRunning } from '../jobs/queue'
 import { applyEvent, failEpisodeIfPossible } from './data'
 
@@ -15,6 +16,7 @@ import { applyEvent, failEpisodeIfPossible } from './data'
 export const claimNext = internalMutation({
   args: { runnerName: v.string() },
   handler: async (ctx, args): Promise<RunnerJob | null> => {
+    await requeueOrphanedJobs(ctx, Date.now())
     const job = await ctx.db
       .query('jobs')
       .withIndex('by_runtime_status', (q) => q.eq('runsOn', 'runner').eq('status', 'queued'))
@@ -36,6 +38,31 @@ export const claimNext = internalMutation({
   },
 })
 
+/**
+ * A running runner job goes back to the queue when no runner process has said
+ * it is still on it for RUNNER_STALE_MS: the process holding it crashed,
+ * stopped or restarted. Liveness is per job, not per runner name, because two
+ * processes can share a name (RUNNER_NAME defaults to "runner"), and a rule by
+ * name would hand a live process's job to its twin and run it twice. A
+ * running job without a start time has no sign of life at all, so it goes
+ * back too. The claim that picks the job up again counts the attempt.
+ */
+async function requeueOrphanedJobs(ctx: MutationCtx, now: number): Promise<void> {
+  const running = await ctx.db
+    .query('jobs')
+    .withIndex('by_runtime_status', (q) => q.eq('runsOn', 'runner').eq('status', 'running'))
+    .collect()
+  if (running.length === 0) return
+  const runners = await ctx.db.query('runners').collect()
+  for (const job of running) {
+    const lastSign = job.aliveAt ?? job.startedAt
+    if (lastSign !== undefined && now - lastSign < RUNNER_STALE_MS) continue
+    await ctx.db.patch(job._id, { status: 'queued', startedAt: undefined, aliveAt: undefined })
+    // Only the job pointer goes: the holder said nothing, so its last seen time stays as it was.
+    for (const runner of runners) if (runner.currentJobId === job._id) await ctx.db.patch(runner._id, { currentJobId: undefined })
+  }
+}
+
 function toRunnerJob(job: Doc<'jobs'>): RunnerJob {
   if (job.kind === 'produce') return { id: job._id, kind: 'produce', payload: job.payload }
   if (job.kind === 'publish') return { id: job._id, kind: 'publish', payload: job.payload }
@@ -44,17 +71,24 @@ function toRunnerJob(job: Doc<'jobs'>): RunnerJob {
 }
 
 export const heartbeat = internalMutation({
-  args: { name: v.string(), version: v.string(), providersMode: v.string() },
+  // jobId is the job this process is running right now, or null when it is idle.
+  args: { name: v.string(), version: v.string(), providersMode: v.string(), jobId: v.union(v.id('jobs'), v.null()) },
   handler: async (ctx, args) => {
+    const now = Date.now()
+    if (args.jobId) {
+      const job = await ctx.db.get(args.jobId)
+      // A job requeued or finished meanwhile is no longer this process's; its own complete or fail call says so.
+      if (job?.status === 'running') await ctx.db.patch(job._id, { aliveAt: now })
+    }
     const runner = await ctx.db
       .query('runners')
       .withIndex('by_name', (q) => q.eq('name', args.name))
       .first()
     if (runner) {
-      await ctx.db.patch(runner._id, { version: args.version, providersMode: args.providersMode, lastSeenAt: Date.now() })
+      await ctx.db.patch(runner._id, { version: args.version, providersMode: args.providersMode, lastSeenAt: now })
       return
     }
-    await ctx.db.insert('runners', { name: args.name, version: args.version, providersMode: args.providersMode, lastSeenAt: Date.now() })
+    await ctx.db.insert('runners', { name: args.name, version: args.version, providersMode: args.providersMode, lastSeenAt: now })
   },
 })
 
@@ -82,6 +116,8 @@ export const fail = internalMutation({
   handler: async (ctx, args) => {
     const job = await ctx.db.get(args.jobId)
     if (!job) throw new Error(`job ${args.jobId} not found`)
+    // A job that went back to the queue, or that another process finished, is not this caller's to fail.
+    if (job.status !== 'running') throw new Error(`job ${args.jobId} is ${job.status}, not running`)
     await markFailed(ctx, args.jobId, args.error)
     await clearRunnerJob(ctx, args.jobId)
     if (job.kind === 'publish') {
@@ -109,7 +145,8 @@ export const latest = internalQuery({
 /**
  * Publications whose time has come become publish jobs (crons.ts, every five
  * minutes). The render URL is resolved here so the runner needs no storage
- * access of its own.
+ * access of its own. A publication that cannot be handed over fails with the
+ * reason, and the rest go out.
  */
 export const dispatchDuePublications = internalMutation({
   args: { now: v.optional(v.number()) },
@@ -125,37 +162,75 @@ export const dispatchDuePublications = internalMutation({
       if (!episode || episode.status !== 'scheduled') continue
       const persona = await ctx.db.get(publication.personaId)
       if (!persona || persona.paused) continue
-      // The publication names its cut: the aspect of the persona's format for its platform.
-      const render = episode.renders.find((candidate) => candidate.aspect === publication.aspect)
-      if (!render) {
-        await failPublication(ctx, publication._id, `no ${publication.aspect} render`)
-        continue
-      }
-      const renderUrl = await ctx.storage.getUrl(render.storageId)
-      if (!renderUrl) {
-        await failPublication(ctx, publication._id, 'render file is missing from storage')
+      const built = await publishPayloadFor(ctx, publication, episode)
+      if (!built.ok) {
+        await failPublication(ctx, publication._id, built.error)
         continue
       }
       await ctx.db.patch(publication._id, { status: 'uploading' })
-      await enqueueJob(ctx, {
-        kind: 'publish',
-        personaId: persona._id,
-        episodeId: episode._id,
-        payload: {
-          publicationId: publication._id,
-          platform: publication.platform,
-          title: publication.title,
-          description: publication.description,
-          renderStorageId: render.storageId,
-          renderUrl,
-          scheduledAt: publication.scheduledAt,
-        },
-      })
+      await enqueueJob(ctx, { kind: 'publish', personaId: persona._id, episodeId: episode._id, payload: built.value })
       dispatched += 1
     }
     return { dispatched }
   },
 })
+
+type Built<T> = { ok: true; value: T } | { ok: false; error: string }
+
+/**
+ * What the runner uploads for one publication. A video publication carries
+ * its title, description and the render of its cut; a post publication
+ * carries its parts exactly as written, with nothing appended, and, for an
+ * image post, the card render its aspect names.
+ */
+async function publishPayloadFor(
+  ctx: { storage: QueryCtx['storage'] },
+  publication: Doc<'publications'>,
+  episode: Doc<'episodes'>
+): Promise<Built<PublishPayload>> {
+  if (isPost(episode.kind)) {
+    if (publication.platform !== 'x') return { ok: false, error: `a post goes only to X, not ${publication.platform}` }
+    if (!publication.parts) return { ok: false, error: 'the post publication has no parts' }
+    const base = { kind: 'post' as const, publicationId: publication._id, platform: publication.platform, parts: publication.parts }
+    if (!publication.aspect) return { ok: true, value: { ...base, scheduledAt: publication.scheduledAt } }
+    const media = await renderOf(ctx, episode, publication.aspect)
+    if (!media.ok) return media
+    return {
+      ok: true,
+      value: { ...base, mediaStorageId: media.value.storageId, mediaUrl: media.value.url, scheduledAt: publication.scheduledAt },
+    }
+  }
+  if (!publication.aspect || publication.description === undefined)
+    return { ok: false, error: 'the video publication has no cut or no description' }
+  const render = await renderOf(ctx, episode, publication.aspect)
+  if (!render.ok) return render
+  return {
+    ok: true,
+    value: {
+      kind: 'video',
+      publicationId: publication._id,
+      platform: publication.platform,
+      title: publication.title,
+      description: publication.description,
+      renderStorageId: render.value.storageId,
+      renderUrl: render.value.url,
+      scheduledAt: publication.scheduledAt,
+    },
+  }
+}
+
+/** The episode's render for one aspect and the URL the runner downloads it from. */
+async function renderOf(
+  ctx: { storage: QueryCtx['storage'] },
+  episode: Doc<'episodes'>,
+  aspect: AspectRatio
+): Promise<Built<{ storageId: Id<'_storage'>; url: string }>> {
+  const render = episode.renders.find((candidate) => candidate.aspect === aspect)
+  if (!render) return { ok: false, error: `no ${aspect} render` }
+  const url = await ctx.storage.getUrl(render.storageId)
+  if (!url) return { ok: false, error: 'render file is missing from storage' }
+  return { ok: true, value: { storageId: render.storageId, url } }
+}
 
 /** A checklist item is done: the host is signed in, and the episode it blocked resumes. */
 export const resumeBlockedEpisode = internalMutation({

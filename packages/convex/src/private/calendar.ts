@@ -6,7 +6,11 @@ import { addDays } from '../core/dates'
 
 export interface CalendarEpisode {
   _id: Doc<'episodes'>['_id']
+  /** A video, or a post the card draws with its kind icon and first line. */
+  kind: Doc<'episodes'>['kind']
   title: string
+  /** A post's first line (empty until it is written); a video's first sentence. */
+  hook: string
   status: Doc<'episodes'>['status']
   sponsorSegment: Doc<'episodes'>['sponsorSegment']
   /** Where this episode goes (the episode's own platforms, not the persona's). */
@@ -37,7 +41,9 @@ export const week = query({
         if (!persona) continue
         episodes.push({
           _id: episode._id,
+          kind: episode.kind,
           title: episode.title,
+          hook: episode.hook,
           status: episode.status,
           sponsorSegment: episode.sponsorSegment,
           platforms: episode.platforms,

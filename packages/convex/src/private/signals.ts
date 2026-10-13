@@ -38,6 +38,7 @@ export const makeEpisode = mutation({
       persona.pillars[0] ??
       ''
     return createIdea(ctx, persona, {
+      kind: 'video',
       personaId: persona._id,
       plannedFor: args.plannedFor,
       concept: `React to: ${signal.title}`,

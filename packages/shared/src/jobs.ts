@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { PLATFORMS } from './platforms'
+import { ASPECT_RATIOS, PLATFORMS } from './platforms'
 
 export const AGENT_ROLES = ['researcher', 'writer', 'producer', 'publisher', 'analyst'] as const
 export type AgentRole = (typeof AGENT_ROLES)[number]
@@ -78,31 +78,63 @@ export const shotSchema = z.discriminatedUnion('kind', [
 export type Shot = z.infer<typeof shotSchema>
 export type RecipeStep = Extract<Shot, { kind: 'screen' }>['recipe'][number]
 
-export const producePayloadSchema = z.object({
-  episodeId: z.string(),
-  personaHandle: z.string(),
-  voiceId: z.string(),
-  shots: z.array(shotSchema).min(1),
-  aspects: z.array(z.enum(['16:9', '9:16'])).min(1),
-})
+/**
+ * What the producer makes: a video records, voices and renders one cut per
+ * aspect; an image post renders its one 16:9 title card, with no voice.
+ */
+export const producePayloadSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('video'),
+    episodeId: z.string(),
+    personaHandle: z.string(),
+    voiceId: z.string(),
+    shots: z.array(shotSchema).min(1),
+    aspects: z.array(z.enum(ASPECT_RATIOS)).min(1),
+  }),
+  z.object({
+    kind: z.literal('image'),
+    episodeId: z.string(),
+    cardTitle: z.string(),
+    personaName: z.string(),
+    handle: z.string(),
+  }),
+])
 export type ProducePayload = z.infer<typeof producePayloadSchema>
 
+/** An image render is one card at `durationSec: 0`. */
 export const produceResultSchema = z.object({
-  renders: z.array(z.object({ aspect: z.enum(['16:9', '9:16']), storageId: z.string(), durationSec: z.number(), mock: z.boolean() })),
+  renders: z.array(z.object({ aspect: z.enum(ASPECT_RATIOS), storageId: z.string(), durationSec: z.number(), mock: z.boolean() })),
   voiceStorageId: z.string().optional(),
   captionsStorageId: z.string().optional(),
 })
 export type ProduceResult = z.infer<typeof produceResultSchema>
 
-export const publishPayloadSchema = z.object({
-  publicationId: z.string(),
-  platform: z.enum(PLATFORMS),
-  title: z.string(),
-  description: z.string(),
-  renderStorageId: z.string(),
-  renderUrl: z.string(),
-  scheduledAt: z.number(),
-})
+/**
+ * What the publisher uploads: a video's render with its title and
+ * description, or a post's parts exactly as written for X, with the card as
+ * media when it is an image post.
+ */
+export const publishPayloadSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('video'),
+    publicationId: z.string(),
+    platform: z.enum(PLATFORMS),
+    title: z.string(),
+    description: z.string(),
+    renderStorageId: z.string(),
+    renderUrl: z.string(),
+    scheduledAt: z.number(),
+  }),
+  z.object({
+    kind: z.literal('post'),
+    publicationId: z.string(),
+    platform: z.literal('x'),
+    parts: z.array(z.string()).min(1),
+    mediaStorageId: z.string().optional(),
+    mediaUrl: z.string().optional(),
+    scheduledAt: z.number(),
+  }),
+])
 export type PublishPayload = z.infer<typeof publishPayloadSchema>
 
 export const publishResultSchema = z.object({

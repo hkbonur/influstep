@@ -9,14 +9,18 @@ import {
   SIGNAL_SOURCE_LABELS,
   VALUE_LABEL,
   formatLength,
+  isPost,
   platformsOpen,
+  type EpisodeKind,
   type Platform,
 } from '@influstep/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
+import type { FunctionReturnType } from 'convex/server'
 import React from 'react'
+import { PostEditor } from '@/components/post-editor'
 import { ScriptEditor } from '@/components/script-editor'
-import { PlatformGlyphs, SponsorPill, StatusPill } from '@/components/status'
+import { PlatformGlyphs, PostKindIcon, SponsorPill, StatusPill } from '@/components/status'
 import {
   AttributionNote,
   Button,
@@ -35,6 +39,24 @@ import { errorMessage } from '@/lib/errors'
 import { formatCount, formatDateTime, formatDay, formatMoney, relativeTime } from '@/lib/format'
 
 export const Route = createFileRoute('/episodes/$episodeId')({ component: EpisodePage })
+
+type EpisodeData = NonNullable<FunctionReturnType<typeof api.private.episodes.get>>
+
+/** What approving does next: a video records, an image post renders its card, a text post or a thread goes straight to the schedule. */
+const APPROVE_LABEL: Record<EpisodeKind, string> = {
+  video: 'Approve and record',
+  image: 'Approve and render',
+  text: 'Approve and schedule',
+  thread: 'Approve and schedule',
+}
+
+/** Where publications come from before there are any: text posts and threads skip rendering. */
+const NO_PUBLICATIONS: Record<EpisodeKind, string> = {
+  video: 'Queued when the episode is approved and rendered.',
+  image: 'Queued when the card is rendered.',
+  text: 'Queued when the post is approved.',
+  thread: 'Queued when the post is approved.',
+}
 
 function EpisodePage() {
   const params = Route.useParams()
@@ -65,6 +87,7 @@ function EpisodePage() {
   const mock = data.renders.some((render) => render.mock) || data.publications.some((publication) => publication.mock) || data.value.mock
   const openItems = data.checklist.filter((item) => item.status === 'open')
   const showValue = episode.status === 'published' || episode.status === 'measured' || data.value.clicks > 0
+  const carriesCode = !isPost(episode.kind) && episode.platforms.some((platform) => platform !== 'x')
 
   return (
     <>
@@ -78,6 +101,11 @@ function EpisodePage() {
             <Mono className="text-ash">@{persona.handle}</Mono> ·{' '}
             {formatDay(episode.plannedFor, { weekday: 'long', month: 'long', day: 'numeric' })} · <StatusPill status={episode.status} />{' '}
             <SponsorPill segment={episode.sponsorSegment} /> <PlatformGlyphs platforms={episode.platforms} />
+            {isPost(episode.kind) && (
+              <span className="ml-1 inline-flex items-center gap-1 whitespace-nowrap text-graphite">
+                <PostKindIcon kind={episode.kind} showLabel />
+              </span>
+            )}
             {episode.format && (
               <>
                 {' '}
@@ -92,7 +120,7 @@ function EpisodePage() {
           <>
             {episode.status === 'scripted' && (
               <Button variant="primary" onClick={run(() => approve({ episodeId }))}>
-                Approve and record
+                {APPROVE_LABEL[episode.kind]}
               </Button>
             )}
             {episode.status === 'failed' && (
@@ -111,12 +139,17 @@ function EpisodePage() {
           </>
         }
       />
-      <PlatformsSection
-        episodeId={episodeId}
-        platforms={episode.platforms}
-        personaPlatforms={data.personaPlatforms}
-        locked={!platformsOpen(episode.status)}
-      />
+      {/* A post goes only to X, so it has nothing to choose here. */}
+      {isPost(episode.kind) ? (
+        <p className="mb-6 text-sm">Goes to {PLATFORM_LABELS.x}</p>
+      ) : (
+        <PlatformsSection
+          episodeId={episodeId}
+          platforms={episode.platforms}
+          personaPlatforms={data.personaPlatforms}
+          locked={!platformsOpen(episode.status)}
+        />
+      )}
       {error && (
         <div className="mb-4">
           <ErrorLine>{error}</ErrorLine>
@@ -148,89 +181,55 @@ function EpisodePage() {
       <div className="grid gap-8 lg:grid-cols-[1.4fr_1fr]">
         <div className="space-y-8">
           <section>
-            <Eyebrow className="mb-3">Script</Eyebrow>
+            <Eyebrow className="mb-3">{isPost(episode.kind) ? 'Post' : 'Script'}</Eyebrow>
             <p className="mb-3 text-ash">
               Concept: {episode.concept}
               {episode.pillar && <span> · pillar: {episode.pillar}</span>}
             </p>
-            {/* Keyed on the text it edits: a saved or rewritten script remounts it, a platform change or a move does not. */}
-            <ScriptEditor
-              key={[episode.title, episode.hook, episode.script.hook, episode.script.body, episode.script.sponsor, episode.script.cta].join(
-                '\u0000'
-              )}
-              episode={episode}
-              sponsorName={data.sponsorName}
-            />
+            {isPost(episode.kind) ? (
+              // Keyed on the post it edits, like the script editor: a saved or rewritten post remounts it.
+              <PostEditor
+                key={[episode.title, ...(episode.post?.parts ?? []), episode.post?.cardTitle ?? ''].join('\u0000')}
+                episode={episode}
+                kind={episode.kind}
+                persona={{ name: persona.name, handle: persona.handle }}
+                card={cardOf(data)}
+              />
+            ) : (
+              // Keyed on the text it edits: a saved or rewritten script remounts it, a platform change or a move does not.
+              <ScriptEditor
+                key={[
+                  episode.title,
+                  episode.hook,
+                  episode.script.hook,
+                  episode.script.body,
+                  episode.script.sponsor,
+                  episode.script.cta,
+                ].join('\u0000')}
+                episode={episode}
+                sponsorName={data.sponsorName}
+              />
+            )}
           </section>
 
-          <section>
-            <Eyebrow className="mb-3">Shots</Eyebrow>
-            {episode.shots.length === 0 && <p className="text-ash">The writer adds shots with the script.</p>}
-            <ol className="space-y-2">
-              {episode.shots.map((shot, index) => (
-                <li key={shot.id} className="flex gap-3 text-sm">
-                  <span className="tabular w-5 shrink-0 font-mono text-xs text-ash">{index + 1}</span>
-                  <div className="min-w-0">
-                    <p>
-                      <span className="font-medium">{shot.title}</span> <span className="text-xs text-ash">{shot.kind}</span>
-                    </p>
-                    <p className="text-xs text-graphite">{shot.voiceover}</p>
-                    {shot.kind === 'screen' && (
-                      <p className="mt-0.5 font-mono text-[11px] text-ash">
-                        {shot.recipe
-                          .map((step) =>
-                            step.step === 'goto'
-                              ? step.url
-                              : step.step === 'wait'
-                                ? `wait ${step.ms}ms`
-                                : step.step === 'scroll'
-                                  ? `scroll ${step.y}`
-                                  : `${step.step} ${step.selector}`
-                          )
-                          .join(' › ')}
-                      </p>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ol>
-          </section>
+          {!isPost(episode.kind) && <ShotsSection shots={episode.shots} />}
         </div>
 
         <div className="space-y-8">
-          <section>
-            <Eyebrow className="mb-3">Renders</Eyebrow>
-            {data.renders.length === 0 && <p className="text-ash">Nothing rendered yet.</p>}
-            <div className="flex flex-wrap gap-3">
-              {data.renders.map((render) => (
-                <figure key={render.aspect} className="w-40">
-                  {render.url && (
-                    <video
-                      src={render.url}
-                      controls
-                      preload="metadata"
-                      className={cn('w-full rounded-lg bg-ink-deep', {
-                        'aspect-video': render.aspect === '16:9',
-                        'aspect-[9/16]': render.aspect === '9:16',
-                      })}
-                    />
-                  )}
-                  <figcaption className="tabular mt-1 font-mono text-[11px] text-ash">
-                    {render.aspect} · {Math.round(render.durationSec)} s{render.mock && ' · mock'}
-                  </figcaption>
-                </figure>
-              ))}
-            </div>
-          </section>
+          {/* An image post's one render is its card, shown in the post editor; a picture does not belong in a video player. */}
+          {!isPost(episode.kind) && <RendersSection renders={data.renders} />}
 
           <section>
             <Eyebrow className="mb-3">Publications</Eyebrow>
-            {data.publications.length === 0 && <p className="text-ash">Queued when the episode is approved and rendered.</p>}
-            <DescriptionCode
-              codesInDescriptions={data.codesInDescriptions}
-              nextCode={data.discountCode}
-              written={data.publications.length > 0}
-            />
+            {data.publications.length === 0 && <p className="text-ash">{NO_PUBLICATIONS[episode.kind]}</p>}
+            {/* Nothing is appended on X, posts and videos alike, so the code line speaks only for a video's other platforms. */}
+            {carriesCode && (
+              <DescriptionCode
+                codesInDescriptions={data.codesInDescriptions}
+                nextCode={data.discountCode}
+                written={data.publications.length > 0}
+              />
+            )}
             {data.publications.length > 0 && (
               <ul className="divide-y divide-mist border-y border-mist">
                 {data.publications.map((publication) => {
@@ -239,7 +238,7 @@ function EpisodePage() {
                     <li key={publication._id} className="grid gap-0.5 py-2 text-sm">
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{PLATFORM_LABELS[publication.platform]}</span>
-                        <Mono className="text-ash">{publication.aspect}</Mono>
+                        {publication.aspect && <Mono className="text-ash">{publication.aspect}</Mono>}
                         <Pill
                           tint={
                             publication.status === 'live'
@@ -259,6 +258,7 @@ function EpisodePage() {
                             : `due ${relativeTime(publication.scheduledAt)}`}
                         </span>
                       </div>
+                      {publication.parts && <PublishedParts parts={publication.parts} />}
                       {publication.url && (
                         <a
                           href={publication.url}
@@ -269,7 +269,8 @@ function EpisodePage() {
                           {publication.url}
                         </a>
                       )}
-                      {link && (
+                      {/* Nothing is appended on X, so its tracked link never reaches a reader; showing it would suggest it does. */}
+                      {link && publication.platform !== 'x' && (
                         <span className="font-mono text-[11px] text-ash">
                           {data.appUrl}/go/{link.slug} · {link.clicks} clicks
                         </span>
@@ -517,4 +518,92 @@ function Snapshots(props: {
       </tbody>
     </table>
   )
+}
+
+function ShotsSection(props: { shots: EpisodeData['episode']['shots'] }) {
+  return (
+    <section>
+      <Eyebrow className="mb-3">Shots</Eyebrow>
+      {props.shots.length === 0 && <p className="text-ash">The writer adds shots with the script.</p>}
+      <ol className="space-y-2">
+        {props.shots.map((shot, index) => (
+          <li key={shot.id} className="flex gap-3 text-sm">
+            <span className="tabular w-5 shrink-0 font-mono text-xs text-ash">{index + 1}</span>
+            <div className="min-w-0">
+              <p>
+                <span className="font-medium">{shot.title}</span> <span className="text-xs text-ash">{shot.kind}</span>
+              </p>
+              <p className="text-xs text-graphite">{shot.voiceover}</p>
+              {shot.kind === 'screen' && (
+                <p className="mt-0.5 font-mono text-[11px] text-ash">
+                  {shot.recipe
+                    .map((step) =>
+                      step.step === 'goto'
+                        ? step.url
+                        : step.step === 'wait'
+                          ? `wait ${step.ms}ms`
+                          : step.step === 'scroll'
+                            ? `scroll ${step.y}`
+                            : `${step.step} ${step.selector}`
+                    )
+                    .join(' › ')}
+                </p>
+              )}
+            </div>
+          </li>
+        ))}
+      </ol>
+    </section>
+  )
+}
+
+function RendersSection(props: { renders: EpisodeData['renders'] }) {
+  return (
+    <section>
+      <Eyebrow className="mb-3">Renders</Eyebrow>
+      {props.renders.length === 0 && <p className="text-ash">Nothing rendered yet.</p>}
+      <div className="flex flex-wrap gap-3">
+        {props.renders.map((render) => (
+          <figure key={render.aspect} className="w-40">
+            {render.url && (
+              <video
+                src={render.url}
+                controls
+                preload="metadata"
+                className={cn('w-full rounded-lg bg-ink-deep', {
+                  'aspect-video': render.aspect === '16:9',
+                  'aspect-[9/16]': render.aspect === '9:16',
+                })}
+              />
+            )}
+            <figcaption className="tabular mt-1 font-mono text-[11px] text-ash">
+              {render.aspect} · {Math.round(render.durationSec)} s{render.mock && ' · mock'}
+            </figcaption>
+          </figure>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+/** A post publication as X receives it: the parts exactly as written, numbered when it is a thread. */
+function PublishedParts(props: { parts: string[] }) {
+  return (
+    <ol className="my-1 grid gap-1">
+      {props.parts.map((part, index) => (
+        // Copied from the post and never reordered, so the position is the part's identity.
+        <li key={index} className="flex gap-2 text-xs">
+          {props.parts.length > 1 && <span className="tabular w-4 shrink-0 font-mono text-[11px] text-ash">{index + 1}</span>}
+          <p className="min-w-0 whitespace-pre-line text-graphite">{part}</p>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
+/** An image post's card: its one render once the producer made it, null before. */
+function cardOf(data: EpisodeData): { url: string | null; mock: boolean } | null {
+  const [render] = data.renders
+  if (!render) return null
+  return { url: render.url, mock: render.mock }
 }

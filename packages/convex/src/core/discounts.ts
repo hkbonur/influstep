@@ -141,6 +141,8 @@ export async function retireDiscountCode(ctx: MutationCtx, discountCodeId: Id<'d
  * reaches the publications that are still queued: one episode's when the
  * code is bound to it, every episode's when it is persona-wide (an episode
  * with its own bound code resolves to that code again and keeps it).
+ * Publications on X carry no code (a post goes out exactly as written, a
+ * video's X text is its title), so they have nothing to rewrite.
  */
 export async function refreshQueuedDescriptions(ctx: MutationCtx, persona: Doc<'personas'>, episodeId?: Id<'episodes'>): Promise<number> {
   const workspace = await workspaceOf(ctx, persona)
@@ -151,6 +153,7 @@ export async function refreshQueuedDescriptions(ctx: MutationCtx, persona: Doc<'
   let rewritten = 0
   for (const publication of publications) {
     if (publication.status !== 'queued') continue
+    if (publication.platform === 'x') continue
     if (episodeId !== undefined && publication.episodeId !== episodeId) continue
     const episode = await ctx.db.get(publication.episodeId)
     if (!episode) throw new Error(`episode ${publication.episodeId} of publication ${publication._id} not found`)

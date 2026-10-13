@@ -1,10 +1,9 @@
 import { PLATFORMS, SIGNAL_SOURCES } from '@influstep/shared'
 import { query } from '../_generated/server'
+import { RUNNER_STALE_MS } from '../core/jobs'
 import { hasEnv, providersMode } from '../lib/env'
 import { platformHasRealAdapter } from '../providers/comments'
 import { signalSourceHasRealAdapter } from '../providers/signals'
-
-const RUNNER_STALE_MS = 2 * 60_000
 
 /** The Providers page: what runs mock, what runs real, which keys are set, and whether the runner is alive. */
 export const status = query({

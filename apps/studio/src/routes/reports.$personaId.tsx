@@ -4,7 +4,7 @@ import { CONVERSION_KIND_LABELS, EXPERIMENT_KIND_LABELS, METRIC_LABELS, PLATFORM
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useQuery } from 'convex/react'
 import { Funnel, MetricStrip, Trend } from '@/components/charts'
-import { SponsorPill, StatusPill } from '@/components/status'
+import { PlatformGlyphs, SponsorPill, StatusPill } from '@/components/status'
 import { AttributionNote, Empty, Eyebrow, LinkButton, MockNote, Mono, PageHeader, Pill, Skeleton } from '@/components/ui'
 import { cn } from '@/lib/cn'
 import { formatCount, formatDay, formatMoney, formatPercent } from '@/lib/format'
@@ -97,7 +97,15 @@ function ReportPage() {
                 <tbody className="tabular">
                   {report.platforms.map((row) => (
                     <tr key={row.platform} className="border-t border-mist">
-                      <td className="py-1.5">{PLATFORM_LABELS[row.platform]}</td>
+                      <td className="py-1.5">
+                        <span className="inline-flex items-center gap-2">
+                          {/* The name follows, so the glyph is hidden from screen readers, which would say the platform twice. */}
+                          <span aria-hidden>
+                            <PlatformGlyphs platforms={[row.platform]} />
+                          </span>
+                          {PLATFORM_LABELS[row.platform]}
+                        </span>
+                      </td>
                       <td className="py-1.5 pl-3 text-right">{row.publications}</td>
                       <td className="py-1.5 pl-3 text-right">{formatCount(row.views)}</td>
                       <td className="py-1.5 pl-3 text-right">{formatCount(row.follows)}</td>

@@ -1,3 +1,4 @@
+import type { PostKind } from './episode-kinds'
 import { PLATFORMS, PLATFORM_ASPECT, type AspectRatio, type Platform } from './platforms'
 
 /**
@@ -15,6 +16,20 @@ export const DELIVERY_LABELS: Record<Delivery, string> = {
   screen_only: 'Screen only',
 }
 
+/**
+ * How often an X persona posts without a video, and which kinds of post the
+ * planner rotates through. Only X has one.
+ */
+export interface XCadence {
+  /** Posts a day, CADENCE_POSTS_MIN to CADENCE_POSTS_MAX, three hours apart from the publish hour. */
+  postsPerDay: number
+  /** Each kind at most once, never empty. */
+  kinds: PostKind[]
+}
+
+export const CADENCE_POSTS_MIN = 1
+export const CADENCE_POSTS_MAX = 4
+
 export interface PlatformFormat {
   platform: Platform
   /** Target spoken length, 10 to 1200 seconds. */
@@ -25,6 +40,8 @@ export interface PlatformFormat {
   hookNote: string
   /** Local hour (0 to 23) publications on this platform default to. */
   publishHour: number
+  /** Present if and only if the platform is X (core/formats.ts refuses anything else). */
+  cadence?: XCadence
 }
 
 export const LENGTH_SEC_MIN = 10
@@ -52,6 +69,14 @@ export const DEFAULT_FORMATS: Record<Platform, Omit<PlatformFormat, 'platform'>>
     delivery: 'talking_head',
     hookNote: 'Open on the problem, show the fix, ask one question at the end.',
     publishHour: 12,
+  },
+  x: {
+    lengthSec: 60,
+    aspect: PLATFORM_ASPECT.x,
+    delivery: 'talking_head',
+    hookNote: 'Put the point in the first line; the video proves it.',
+    publishHour: 15,
+    cadence: { postsPerDay: 2, kinds: ['text', 'image', 'thread'] },
   },
 }
 

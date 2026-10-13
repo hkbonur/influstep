@@ -1,8 +1,10 @@
 import {
   EPISODE_STATUS_LABELS,
   PLATFORM_LABELS,
+  X_IMAGE_ASPECT,
   canTransition,
   formatAspects,
+  isPost,
   makeSlug,
   platformsOpen,
   resolveEpisodeFormat,
@@ -10,6 +12,7 @@ import {
   type Delivery,
   type EpisodeFormat,
   type Platform,
+  type PostKind,
   type ProducePayload,
   type ProduceResult,
   type PublishResult,
@@ -19,11 +22,13 @@ import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx } from '../_generated/server'
 import { applyEvent } from '../internal/data'
 import { enqueueJob } from '../jobs/queue'
+import { providersMode } from '../lib/env'
 import { PRESENTER_TOOL, type ScriptDraft } from '../providers/llm'
-import { describePublication } from './attribution'
+import { assertXTitleFits, describePublication } from './attribution'
 import { instantAt } from './dates'
 import { activeDiscountCodeFor } from './discounts'
 import { earliestPublishAt, formatFor, formatsFor, platformsOf } from './formats'
+import { assertPostFits, findXPublication } from './posts'
 import { workspaceOf } from './workspace'
 import { refusal } from '../lib/errors'
 
@@ -34,7 +39,11 @@ import { refusal } from '../lib/errors'
  * episode. Operator mutations and agent actions both call these.
  */
 
-export interface PlannedEpisodeInput {
+/**
+ * One planned episode. A video goes to every platform the persona has; a post
+ * goes only to X, at one of the day's post slots (shared `postSlotHours`).
+ */
+export type PlannedEpisodeInput = {
   personaId: Id<'personas'>
   plannedFor: string
   concept: string
@@ -43,15 +52,27 @@ export interface PlannedEpisodeInput {
   signalIds: Id<'signals'>[]
   experimentId?: Id<'experiments'>
   variantKey?: string
+} & ({ kind: 'video' } | { kind: PostKind; publishHour: number })
+
+/** Where a new idea goes and when: a video everywhere the persona publishes, a post on X at its slot. */
+function placement(persona: Doc<'personas'>, input: PlannedEpisodeInput): { platforms: Platform[]; scheduledAt: number } {
+  if (input.kind === 'video') {
+    const platforms = platformsOf(persona)
+    return { platforms, scheduledAt: earliestPublishAt(persona, platforms, input.plannedFor) }
+  }
+  // Refuses by name when the persona has no X format.
+  formatFor(persona, 'x')
+  return { platforms: ['x'], scheduledAt: instantAt(input.plannedFor, input.publishHour, persona.timezone) }
 }
 
-/** A new idea goes to every platform the persona has; the operator narrows it per episode. */
+/** A new idea, queued for the writer. The operator narrows a video's platforms per episode; a post stays on X. */
 export async function createIdea(ctx: MutationCtx, persona: Doc<'personas'>, input: PlannedEpisodeInput): Promise<Id<'episodes'>> {
   const now = Date.now()
-  const platforms = platformsOf(persona)
+  const { platforms, scheduledAt } = placement(persona, input)
   const episodeId = await ctx.db.insert('episodes', {
     personaId: input.personaId,
     slug: `${slugify(input.concept) || 'episode'}-${makeSlug(4)}`,
+    kind: input.kind,
     status: 'idea',
     concept: input.concept,
     title: input.concept,
@@ -62,7 +83,7 @@ export async function createIdea(ctx: MutationCtx, persona: Doc<'personas'>, inp
     shots: [],
     renders: [],
     plannedFor: input.plannedFor,
-    scheduledAt: earliestPublishAt(persona, platforms, input.plannedFor),
+    scheduledAt,
     experimentId: input.experimentId,
     variantKey: input.variantKey,
     signalIds: input.signalIds,
@@ -140,6 +161,7 @@ export function formatAndShots(args: {
 export async function setEpisodePlatforms(ctx: MutationCtx, episodeId: Id<'episodes'>, platforms: Platform[]): Promise<void> {
   const episode = await ctx.db.get(episodeId)
   if (!episode) throw new Error(`episode ${episodeId} not found`)
+  if (isPost(episode.kind)) throw refusal('A post goes only to X.')
   if (!platformsOpen(episode.status))
     throw refusal(`The platforms are locked once recording starts; this episode is at "${EPISODE_STATUS_LABELS[episode.status]}".`)
   const persona = await ctx.db.get(episode.personaId)
@@ -224,9 +246,12 @@ export function toolsNeededBy(shots: Shot[]): string[] {
 }
 
 /**
- * Approval: either the producer can start, or a sign-in is missing and the
- * episode waits on the operator with a checklist item that opens the runner's
- * browser at the tool. A talking-head episode opens no screen, so it never waits.
+ * Approval. A text post or a thread has nothing to record, so it is
+ * scheduled with its X publication at once. An image post goes to the
+ * producer for its card. A video either starts recording, or a sign-in is
+ * missing and it waits on the operator with a checklist item that opens the
+ * runner's browser at the tool; a talking-head video opens no screen, so it
+ * never waits.
  */
 export async function approveEpisode(ctx: MutationCtx, episodeId: Id<'episodes'>): Promise<void> {
   const episode = await ctx.db.get(episodeId)
@@ -236,6 +261,18 @@ export async function approveEpisode(ctx: MutationCtx, episodeId: Id<'episodes'>
   const workspace = await workspaceOf(ctx, persona)
 
   await ctx.db.patch(episodeId, { approvedAt: Date.now() })
+  if (episode.kind === 'text' || episode.kind === 'thread') {
+    await createPostPublication(ctx, episode, persona, { mock: providersMode() === 'mock' })
+    await applyEvent(ctx, episodeId, { type: 'scheduled' })
+    return
+  }
+  if (episode.kind === 'image') {
+    assertPostFits(episode.kind, episode.post)
+    await applyEvent(ctx, episodeId, { type: 'approved' })
+    await startProduction(ctx, episode, persona)
+    return
+  }
+  if (episode.platforms.includes('x')) assertXTitleFits(episode.title)
   const missing = toolsNeededBy(episode.shots).filter(
     (host) => workspace.signInRequiredHosts.includes(host) && !workspace.signedInHosts.includes(host)
   )
@@ -264,31 +301,55 @@ export async function approveEpisode(ctx: MutationCtx, episodeId: Id<'episodes'>
   await startProduction(ctx, episode, persona)
 }
 
-/** The producer renders one cut per aspect the episode's platforms publish, as fixed when it was scripted. */
+/**
+ * The producer renders a video once per aspect its platforms publish, as
+ * fixed when it was scripted, and an image post's one title card. A text post
+ * or a thread has nothing to produce.
+ */
 export async function startProduction(ctx: MutationCtx, episode: Doc<'episodes'>, persona: Doc<'personas'>): Promise<void> {
-  if (!episode.format) throw new Error(`episode ${episode._id} has no format: it cannot be produced before it is scripted`)
-  const payload: ProducePayload = {
-    episodeId: episode._id,
-    personaHandle: persona.handle,
-    voiceId: persona.voiceId,
-    shots: episode.shots,
-    aspects: formatAspects(episode.format),
-  }
+  const payload = producePayload(episode, persona)
   await enqueueJob(ctx, { kind: 'produce', payload, personaId: persona._id, episodeId: episode._id })
+}
+
+function producePayload(episode: Doc<'episodes'>, persona: Doc<'personas'>): ProducePayload {
+  switch (episode.kind) {
+    case 'video': {
+      if (!episode.format) throw new Error(`episode ${episode._id} has no format: it cannot be produced before it is scripted`)
+      return {
+        kind: 'video',
+        episodeId: episode._id,
+        personaHandle: persona.handle,
+        voiceId: persona.voiceId,
+        shots: episode.shots,
+        aspects: formatAspects(episode.format),
+      }
+    }
+    case 'image': {
+      const cardTitle = episode.post?.cardTitle
+      if (cardTitle === undefined)
+        throw new Error(`image post ${episode._id} has no card title: it cannot be rendered before it is written`)
+      return { kind: 'image', episodeId: episode._id, cardTitle, personaName: persona.name, handle: persona.handle }
+    }
+    case 'text':
+    case 'thread':
+      throw new Error(`episode ${episode._id} is a ${episode.kind} post: it has nothing to produce`)
+  }
 }
 
 /**
  * The runner rendered the episode: store renders, then queue one publication
  * per cut the episode was produced to, each with the cut's aspect at that
  * platform's current hour. The cut is the episode's own, frozen when it was
- * scripted; the hour and timezone are the persona's today.
+ * scripted; the hour and timezone are the persona's today. An image post
+ * rendered its card and gets its one X publication instead.
  */
 export async function completeProduction(ctx: MutationCtx, episodeId: Id<'episodes'>, result: ProduceResult): Promise<void> {
   const episode = await ctx.db.get(episodeId)
   if (!episode) throw new Error(`episode ${episodeId} not found`)
-  if (!episode.format) throw new Error(`episode ${episodeId} has no format: it cannot be scheduled before it is scripted`)
   const persona = await ctx.db.get(episode.personaId)
   if (!persona) throw new Error(`persona ${episode.personaId} not found`)
+  if (episode.kind === 'text' || episode.kind === 'thread')
+    throw new Error(`episode ${episodeId} is a ${episode.kind} post: it has no render`)
   const workspace = await workspaceOf(ctx, persona)
 
   await ctx.db.patch(episodeId, {
@@ -296,6 +357,14 @@ export async function completeProduction(ctx: MutationCtx, episodeId: Id<'episod
     updatedAt: Date.now(),
   })
   await applyEvent(ctx, episodeId, { type: 'produced' })
+
+  // An image post's card goes out with the post, at the post's own slot.
+  if (episode.kind === 'image') {
+    await createPostPublication(ctx, episode, persona, { mock: result.renders.some((render) => render.mock) })
+    await applyEvent(ctx, episodeId, { type: 'scheduled' })
+    return
+  }
+  if (!episode.format) throw new Error(`episode ${episodeId} has no format: it cannot be scheduled before it is scripted`)
 
   // The same code on every platform: the episode's own, else the persona's.
   const discountCode = await activeDiscountCodeFor(ctx, persona._id, episodeId)
@@ -306,7 +375,25 @@ export async function completeProduction(ctx: MutationCtx, episodeId: Id<'episod
       .withIndex('by_episode', (q) => q.eq('episodeId', episodeId))
       .filter((q) => q.eq(q.field('platform'), platform))
       .first()
-    if (existing) continue
+    const scheduledAt = instantAt(episode.plannedFor, formatFor(persona, platform).publishHour, persona.timezone)
+    const mock = result.renders.some((render) => render.mock)
+    if (existing) {
+      // A publication that failed before goes out again from this render, with today's text and hour; anything
+      // queued, uploading or live stays as it is.
+      if (existing.status !== 'failed') continue
+      const link = await ctx.db.get(existing.linkId)
+      if (!link) throw new Error(`link ${existing.linkId} not found`)
+      await ctx.db.patch(existing._id, {
+        status: 'queued',
+        aspect: cut.aspect,
+        title: episode.title,
+        ...describePublication({ workspace, episode, platform, linkSlug: link.slug, discountCode }),
+        scheduledAt,
+        mock,
+        error: undefined,
+      })
+      continue
+    }
     const linkId = await createTrackedLink(ctx, { persona, episode, platform, target: workspace.sponsorUrl })
     const link = await ctx.db.get(linkId)
     if (!link) throw new Error('link vanished')
@@ -319,12 +406,57 @@ export async function completeProduction(ctx: MutationCtx, episodeId: Id<'episod
       title: episode.title,
       ...describePublication({ workspace, episode, platform, linkSlug: link.slug, discountCode }),
       linkId,
-      scheduledAt: instantAt(episode.plannedFor, formatFor(persona, platform).publishHour, persona.timezone),
-      mock: result.renders.some((render) => render.mock),
+      scheduledAt,
+      mock,
     })
   }
   await ctx.db.patch(episodeId, { scheduledAt: earliestPublishAt(persona, episode.platforms, episode.plannedFor) })
   await applyEvent(ctx, episodeId, { type: 'scheduled' })
+}
+
+/**
+ * A post's one publication, on X at the post's slot, with the parts exactly
+ * as written: no footer, no code. It gets a tracked link of its own like
+ * every publication (the schema's one link per publication); the post does
+ * not print it. An image post's publication carries its card's aspect.
+ */
+export async function createPostPublication(
+  ctx: MutationCtx,
+  episode: Doc<'episodes'>,
+  persona: Doc<'personas'>,
+  args: { mock: boolean }
+): Promise<Id<'publications'>> {
+  if (!isPost(episode.kind)) throw new Error(`episode ${episode._id} is a video: its publications follow its render`)
+  const post = assertPostFits(episode.kind, episode.post)
+  const existing = await findXPublication(ctx, episode._id)
+  if (existing) {
+    // A post approved again after its publication failed (a rewrite, a retry) sends the new words at the new slot.
+    if (existing.status !== 'failed') return existing._id
+    await ctx.db.patch(existing._id, {
+      status: 'queued',
+      aspect: episode.kind === 'image' ? X_IMAGE_ASPECT : undefined,
+      title: episode.title,
+      parts: post.parts,
+      scheduledAt: episode.scheduledAt,
+      mock: args.mock,
+      error: undefined,
+    })
+    return existing._id
+  }
+  const workspace = await workspaceOf(ctx, persona)
+  const linkId = await createTrackedLink(ctx, { persona, episode, platform: 'x', target: workspace.sponsorUrl })
+  return ctx.db.insert('publications', {
+    episodeId: episode._id,
+    personaId: persona._id,
+    platform: 'x',
+    aspect: episode.kind === 'image' ? X_IMAGE_ASPECT : undefined,
+    status: 'queued',
+    title: episode.title,
+    parts: post.parts,
+    linkId,
+    scheduledAt: episode.scheduledAt,
+    mock: args.mock,
+  })
 }
 
 export async function createTrackedLink(

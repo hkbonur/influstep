@@ -1,19 +1,47 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import type { AspectRatio, ProducePayload, ProduceResult, Shot } from '@influstep/shared'
+import { X_IMAGE_ASPECT, type AspectRatio, type ProducePayload, type ProduceResult, type Shot } from '@influstep/shared'
 import { backend } from './backend'
 import { artifactsDir, providersMode } from './config'
 import { SIZE, fitClip, joinWithVoice, stillClip } from './ffmpeg'
 import { recordScreen, renderTitleCard } from './record'
 import { makeVoice, spokenSeconds } from './voice'
 
+type VideoPayload = Extract<ProducePayload, { kind: 'video' }>
+type ImagePayload = Extract<ProducePayload, { kind: 'image' }>
+
 /**
  * The producer: one clip per shot (a screen recording in real mode, a title
  * card in mock mode), the voice track, then one render per aspect ratio,
- * uploaded to Convex storage.
+ * uploaded to Convex storage. An image post is one title card and nothing else.
  */
 export async function produce(job: { id: string; payload: ProducePayload }): Promise<ProduceResult> {
-  const { payload } = job
+  if (job.payload.kind === 'image') return produceImage(job.payload)
+  return produceVideo(job.payload)
+}
+
+/**
+ * An image post's card: the card title on the 16:9 card X shows under the
+ * post, with the persona's name and handle. No voice. The card itself is the
+ * same in both modes; the render carries the providers mode like a video's,
+ * because the post's publication takes its mock flag from its renders.
+ */
+async function produceImage(payload: ImagePayload): Promise<ProduceResult> {
+  const dir = path.join(artifactsDir, payload.episodeId)
+  await fs.mkdir(dir, { recursive: true })
+  const { width, height } = SIZE[X_IMAGE_ASPECT]
+  const card = await renderTitleCard({
+    title: payload.cardTitle,
+    subtitle: `${payload.personaName} · @${payload.handle}`,
+    out: path.join(dir, 'card.png'),
+    width,
+    height,
+  })
+  const storageId = await backend.upload(card, 'image/png')
+  return { renders: [{ aspect: X_IMAGE_ASPECT, storageId, durationSec: 0, mock: providersMode() === 'mock' }] }
+}
+
+async function produceVideo(payload: VideoPayload): Promise<ProduceResult> {
   const dir = path.join(artifactsDir, payload.episodeId)
   await fs.mkdir(dir, { recursive: true })
   const mock = providersMode() === 'mock'

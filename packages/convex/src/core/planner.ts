@@ -1,5 +1,6 @@
-import type { SponsorSegment } from '@influstep/shared'
-import { addDays } from './dates'
+import { postSlotHours, type PlatformFormat, type PostKind, type SponsorSegment } from '@influstep/shared'
+import type { Doc } from '../_generated/dataModel'
+import { addDays, instantAt } from './dates'
 
 /**
  * The weekly plan (CONTEXT.md, "Plan"): which days get an episode, which of
@@ -88,6 +89,74 @@ export function planWeek(args: {
       variantKey,
     }
   })
+}
+
+/** One post slot of the plan: a day, its hour on X, the kind it takes, and what it is about. */
+export interface PlannedPost extends Omit<PlannedEpisode, 'experimentId' | 'variantKey'> {
+  hour: number
+  kind: PostKind
+}
+
+/**
+ * The post slots of a persona with an X format: every day of the week at the
+ * hours of its cadence (postSlotHours), skipping a day that already holds
+ * posts and any hour already gone. Kinds rotate through the cadence in time
+ * order and carry on from the posts the persona already has, so a new week
+ * continues where the last one stopped.
+ *
+ * Concepts, pillars and the sponsor follow the same rule as the video slots:
+ * planWeek plans one slot per day, so it runs once per slot hour with every
+ * open day free. A post shows no screen, so a sponsored post mentions the
+ * sponsor where a video would demo it.
+ */
+export function planPostSlots(args: {
+  weekStart: string
+  persona: Pick<Doc<'personas'>, 'pillars' | 'sponsorDial' | 'sponsorRampEpisodes' | 'timezone'>
+  format: PlatformFormat
+  /** The persona's live posts. */
+  posts: Pick<Doc<'episodes'>, 'plannedFor'>[]
+  /** Every live episode of the persona plus the videos planned this run, for the sponsor ramp and the pillar rotation. */
+  episodeCount: number
+  /** Signals no video took. */
+  signals: PlannerSignal[]
+  now: number
+}): PlannedPost[] {
+  const cadence = args.format.cadence
+  if (!cadence) throw new Error('an X format without a post cadence cannot plan posts')
+  if (cadence.kinds.length === 0) throw new Error('an X cadence without post kinds cannot plan posts')
+  const week = Array.from({ length: 7 }, (_, offset) => addDays(args.weekStart, offset))
+  const open = (day: string, hour: number) =>
+    !args.posts.some((post) => post.plannedFor === day) && instantAt(day, hour, args.persona.timezone) > args.now
+  const slots: Omit<PlannedPost, 'kind'>[] = []
+  let signals = args.signals
+  for (const hour of postSlotHours(args.format)) {
+    const row = planWeek({
+      weekStart: args.weekStart,
+      persona: {
+        pillars: args.persona.pillars,
+        sponsorDial: args.persona.sponsorDial,
+        sponsorRampEpisodes: args.persona.sponsorRampEpisodes,
+        episodesPerWeek: week.length,
+        episodeCount: args.episodeCount + slots.length,
+      },
+      signals,
+      takenDays: week.filter((day) => !open(day, hour)),
+    })
+    for (const planned of row) {
+      slots.push({
+        plannedFor: planned.plannedFor,
+        hour,
+        pillar: planned.pillar,
+        signalId: planned.signalId,
+        concept: planned.concept,
+        sponsorSegment: planned.sponsorSegment === 'none' ? 'none' : 'mention',
+      })
+    }
+    const taken = new Set(row.map((planned) => planned.signalId))
+    signals = signals.filter((signal) => !taken.has(signal.id))
+  }
+  slots.sort((a, b) => a.plannedFor.localeCompare(b.plannedFor) || a.hour - b.hour)
+  return slots.map((slot, index) => ({ ...slot, kind: cadence.kinds[(args.posts.length + index) % cadence.kinds.length] }))
 }
 
 /** Which slots of the week carry the sponsor, honoring the ramp and the dial. */

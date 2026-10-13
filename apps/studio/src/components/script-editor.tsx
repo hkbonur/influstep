@@ -1,11 +1,10 @@
 import { api } from '@influstep/convex/_generated/api'
 import type { Doc } from '@influstep/convex/_generated/dataModel'
+import { textEditable } from '@influstep/shared'
 import { useMutation } from 'convex/react'
 import React from 'react'
 import { errorMessage } from '@/lib/errors'
 import { Button, ErrorLine, Field, Input, Textarea } from './ui'
-
-const EDITABLE = new Set<Doc<'episodes'>['status']>(['idea', 'scripted', 'waiting_on_you', 'failed'])
 
 /** Hook, body, sponsor segment, call to action. Saves as one script; the hook is also the episode's hook. */
 export function ScriptEditor(props: { episode: Doc<'episodes'>; sponsorName: string }) {
@@ -15,7 +14,7 @@ export function ScriptEditor(props: { episode: Doc<'episodes'>; sponsorName: str
   const [error, setError] = React.useState<string | null>(null)
   const [saving, setSaving] = React.useState(false)
   const [savedAt, setSavedAt] = React.useState<number | null>(null)
-  const locked = !EDITABLE.has(props.episode.status)
+  const locked = !textEditable(props.episode.status)
   const dirty = title !== props.episode.title || JSON.stringify(script) !== JSON.stringify(props.episode.script)
   const words = Object.values(script).join(' ').split(/\s+/).filter(Boolean).length
 

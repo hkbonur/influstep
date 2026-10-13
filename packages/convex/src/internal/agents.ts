@@ -2,30 +2,42 @@ import { v, type Infer } from 'convex/values'
 import {
   MEASUREMENT_WINDOW_MS,
   SIGNAL_SOURCES,
+  X_POST_LIMIT,
   decideExperiment,
+  isPost,
   METRIC_DENOMINATOR,
   normalizeDiscountCode,
+  postProblems,
   resolveEpisodeFormat,
+  type PostKind,
   type SignalSource,
   type VariantStats,
 } from '@influstep/shared'
 import { internal } from '../_generated/api'
 import type { Doc, Id } from '../_generated/dataModel'
-import { internalAction, internalMutation, internalQuery, type QueryCtx } from '../_generated/server'
+import { internalAction, internalMutation, internalQuery, type ActionCtx, type QueryCtx } from '../_generated/server'
 import { addDays, dayKey } from '../core/dates'
 import { discountCodesFor as discountCodesRule, redemptionOwner } from '../core/discounts'
 import { approveEpisode, createIdea, formatAndShots } from '../core/episodes'
-import { formatsFor } from '../core/formats'
-import { planWeek as planWeekRule } from '../core/planner'
+import { formatFor, formatsFor } from '../core/formats'
+import { planPostSlots, planWeek as planWeekRule } from '../core/planner'
+import { savePost } from '../core/posts'
 import { latestPerPublication } from '../core/report'
 import { workspaceOf } from '../core/workspace'
 import { providersMode } from '../lib/env'
 import { analyticsProvider } from '../providers/analytics'
 import { platformProvider } from '../providers/comments'
 import { discountsProvider } from '../providers/discounts'
-import { llmProvider } from '../providers/llm'
+import { llmProvider, type PostBrief } from '../providers/llm'
 import { signalSourceHasRealAdapter, signalsProvider } from '../providers/signals'
-import { conversionKindValidator, platformValidator, scriptValidator, shotPlanValidator, signalSourceValidator } from '../lib/validators'
+import {
+  conversionKindValidator,
+  episodePostValidator,
+  platformValidator,
+  scriptValidator,
+  shotPlanValidator,
+  signalSourceValidator,
+} from '../lib/validators'
 import { applyEvent, type EpisodeContext } from './data'
 
 /**
@@ -121,10 +133,11 @@ export const planWeekMutation = internalMutation({
       .withIndex('by_persona', (q) => q.eq('personaId', persona._id))
       .collect()
     const live = all.filter((episode) => episode.status !== 'killed')
-    // Days already holding an episode, plus days already gone: the planner never schedules into the past.
+    // Days already holding a video, plus days already gone: the planner never schedules into the past.
+    // Posts have slots of their own, so a day of posts still takes a video.
     const today = dayKey(Date.now(), persona.timezone)
     const takenDays = [
-      ...live.filter((episode) => episode.plannedFor >= args.weekStart).map((episode) => episode.plannedFor),
+      ...live.filter((episode) => !isPost(episode.kind) && episode.plannedFor >= args.weekStart).map((episode) => episode.plannedFor),
       ...Array.from({ length: 7 }, (_, offset) => addDays(args.weekStart, offset)).filter((day) => day < today),
     ]
     const signals = await ctx.db
@@ -164,9 +177,36 @@ export const planWeekMutation = internalMutation({
         signalIds: planned.signalId ? [planned.signalId as Id<'signals'>] : [],
         experimentId: planned.experimentId ? (planned.experimentId as Id<'experiments'>) : undefined,
         variantKey: planned.variantKey,
+        kind: 'video',
       })
     }
-    return { planned: plan.length }
+    const xFormat = persona.formats.find((format) => format.platform === 'x')
+    if (!xFormat) return { planned: plan.length }
+    const usedSignals = new Set(plan.map((planned) => planned.signalId))
+    const posts = planPostSlots({
+      weekStart: args.weekStart,
+      persona,
+      format: xFormat,
+      posts: live.filter((episode) => isPost(episode.kind)),
+      episodeCount: live.length + plan.length,
+      signals: signals
+        .filter((signal) => !usedSignals.has(signal._id))
+        .map((signal) => ({ id: signal._id, title: signal.title, score: signal.score, topics: signal.topics })),
+      now: Date.now(),
+    })
+    for (const post of posts) {
+      await createIdea(ctx, persona, {
+        personaId: persona._id,
+        plannedFor: post.plannedFor,
+        concept: post.concept,
+        pillar: post.pillar,
+        sponsorSegment: post.sponsorSegment,
+        signalIds: post.signalId ? [post.signalId as Id<'signals'>] : [],
+        kind: post.kind,
+        publishHour: post.hour,
+      })
+    }
+    return { planned: plan.length + posts.length }
   },
 })
 
@@ -175,6 +215,8 @@ export const writeScript = internalAction({
   handler: async (ctx, args): Promise<{ title: string }> => {
     const episodeId = args.episodeId as Id<'episodes'>
     const context: EpisodeContext = await ctx.runQuery(internal.internal.data.getEpisodeContext, { episodeId })
+    const kind = context.episode.kind
+    if (isPost(kind)) return writePost(ctx, context, kind)
     const { episode, persona, workspace, directives, signals, experiment } = context
     const variant = experiment?.variants.find((candidate) => candidate.key === episode.variantKey)
     // One script for every platform the episode goes to: the writer gets the resolved length and
@@ -246,6 +288,67 @@ export const storeScript = internalMutation({
       shots,
       updatedAt: Date.now(),
     })
+    await applyEvent(ctx, args.episodeId, { type: 'script_written' })
+    if (args.autoApprove) await approveEpisode(ctx, args.episodeId)
+  },
+})
+
+/**
+ * The writer's post path. The limits are X's: every part up to X_POST_LIMIT,
+ * and X gets the parts exactly as written. A draft that breaks them goes back
+ * to the model once with the problems named; a second miss fails the episode
+ * with them.
+ */
+async function writePost(ctx: ActionCtx, context: EpisodeContext, kind: PostKind): Promise<{ title: string }> {
+  const { episode, persona, workspace, directives, signals } = context
+  const brief: PostBrief = {
+    persona: {
+      name: persona.name,
+      handle: persona.handle,
+      niche: persona.niche,
+      tone: persona.tone,
+      bible: persona.bible,
+      pillars: persona.pillars,
+    },
+    kind,
+    concept: episode.concept,
+    pillar: episode.pillar ?? persona.pillars[0] ?? '',
+    sponsorSegment: episode.sponsorSegment,
+    sponsorName: workspace.sponsorName,
+    directives: directives.map((directive) => directive.text),
+    signals: signals.map((signal) => ({ title: signal.title, summary: signal.summary, url: signal.url })),
+    hookNote: formatFor(persona, 'x').hookNote,
+    partLimit: X_POST_LIMIT,
+    problems: [],
+  }
+  const llm = llmProvider()
+  const first = await llm.writePost(brief)
+  const firstProblems = postProblems(kind, first.post)
+  const draft = firstProblems.length === 0 ? first : await llm.writePost({ ...brief, problems: firstProblems })
+  const problems = postProblems(kind, draft.post)
+  if (problems.length > 0) throw new Error(`The writer missed X's limits twice: ${problems.join(' ')}`)
+  await ctx.runMutation(internal.internal.agents.storePost, {
+    episodeId: episode._id,
+    title: draft.title,
+    post: draft.post,
+    autoApprove: persona.autoApprove,
+  })
+  return { title: draft.title }
+}
+
+/**
+ * The written post becomes the episode's post, through the same save as the
+ * operator's editor, so its first line is the hook the experiments compare.
+ */
+export const storePost = internalMutation({
+  args: {
+    episodeId: v.id('episodes'),
+    title: v.string(),
+    post: episodePostValidator,
+    autoApprove: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    await savePost(ctx, args.episodeId, { title: args.title, post: args.post })
     await applyEvent(ctx, args.episodeId, { type: 'script_written' })
     if (args.autoApprove) await approveEpisode(ctx, args.episodeId)
   },

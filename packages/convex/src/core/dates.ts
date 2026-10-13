@@ -36,6 +36,15 @@ export function instantAt(day: string, hour: number, timezone: string): number {
   return guess - offset
 }
 
+/** The local hour (0 to 23) of an instant in `timezone`, so a moved post keeps its slot on the new day. */
+export function hourAt(at: number, timezone: string): number {
+  const hour = new Intl.DateTimeFormat('en-US', { timeZone: timezone, hourCycle: 'h23', hour: '2-digit' })
+    .formatToParts(new Date(at))
+    .find((part) => part.type === 'hour')
+  if (!hour) throw new Error(`Intl gave no hour for ${at} in ${timezone}`)
+  return Number(hour.value)
+}
+
 function timezoneOffsetMs(at: number, timezone: string): number {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: timezone,
