@@ -75,7 +75,7 @@ The rule that a script, or a post's text, is written the day before the episode 
 _Avoid_: lazy script, late script, draft (that is a publication in a package).
 
 **Beat**:
-One part of a video's script: what is spoken (its line) and what is shown while it is spoken (the presenter to camera, or a tool's screen at a URL). The beats are the script: the shots and the voice track are built from them, so an edit to a beat is what the recording says. The operator edits a beat's title and line; the writer chooses how many beats there are and what each shows.
+One part of a video's script: what is spoken (its line) and what is shown while it is spoken (the presenter to camera, a tool's screen at a URL, or an asset from the persona's library). The beats are the script: the shots and the voice track are built from them, so an edit to a beat is what the recording says. The operator edits a beat's title and line; the writer chooses how many beats there are and what each shows.
 _Avoid_: section, scene, segment (reserved for the sponsor segment), shot (that is the recorded piece built from a beat).
 
 **Sponsor segment**:
@@ -83,7 +83,7 @@ Where the sponsor appears in a script, in one of three shapes: a **mention** (a 
 _Avoid_: ad read, plug, promo, placement.
 
 **Shot**:
-One recorded piece of an episode: a screen recording of a web app driven by a recipe, an avatar take of the persona speaking, or a title card. Each beat becomes one shot, the way the episode's delivery asks; the shot list orders them and the render joins them.
+One recorded piece of an episode: a screen recording of a web app driven by a recipe, an avatar take of the persona speaking, a title card, or an asset held on screen (an image as a still, a clip looped for as long as the beat is spoken). Each beat becomes one shot, the way the episode's delivery asks; the shot list orders them and the render joins them.
 _Avoid_: clip (that is the file), scene, segment (reserved for the sponsor segment).
 
 **Recipe**:
@@ -207,6 +207,14 @@ _Avoid_: note, info, knowledge.
 **Rule**:
 Something the writer must always or never do, from the operator ("never show a customer's real email address on screen"), in the chat ("remember to …", "remember: always …") or on the Memory page. A directive steers what the persona makes for a while and is withdrawn when it is done; a rule is a lasting constraint on how every script and post is written, kept until the operator forgets it. The writer never breaks one.
 _Avoid_: constraint, guideline, policy, directive (that is a focus for a while).
+
+**Asset**:
+A file in a persona's asset library: an image, a clip, an audio track or a document, with the name the writer asks for it by, tags and a note. The operator uploads one on the Assets page, or the producer saves one: each render, the voice track, an image post's card, named after its episode. The writer can show an image or a clip in a beat by its name ("show the retry loop"), never in the sponsor demo beat, and the producer places it in that beat's shot. An asset a script that may still be recorded shows stays until that episode is measured or killed; taking a render out of the library leaves it on its episode.
+_Avoid_: media, attachment, upload (that is how the operator adds one), file (that is what it holds).
+
+**Asset library**:
+A persona's assets, the operator's uploads and what the producer made, newest first. Before every script the writer sees up to 30 of its images and clips, the operator's first, with their names, tags and notes.
+_Avoid_: media library, gallery, drive.
 
 **Goal**:
 The one thing every persona works toward: paying Formstep customers. It is the workspace's, named from its sponsor; the strategy review aims experiments at it through the goal metric, and every review writes a goal note against it.

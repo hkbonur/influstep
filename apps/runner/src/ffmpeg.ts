@@ -25,9 +25,14 @@ export async function durationOf(file: string): Promise<number> {
   return seconds
 }
 
+/** Scales a picture into the aspect's frame and pads it on the paper background, at 30 fps: every clip of a render matches. */
+function frameFilter(aspect: AspectRatio): string {
+  const { width, height } = SIZE[aspect]
+  return `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=0xfafafa,fps=30,format=yuv420p`
+}
+
 /** A still image held for `seconds`, at the aspect's frame size. */
 export async function stillClip(args: { image: string; out: string; aspect: AspectRatio; seconds: number }): Promise<void> {
-  const { width, height } = SIZE[args.aspect]
   await ffmpeg([
     '-loop',
     '1',
@@ -36,7 +41,7 @@ export async function stillClip(args: { image: string; out: string; aspect: Aspe
     '-t',
     args.seconds.toFixed(2),
     '-vf',
-    `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=0xfafafa,fps=30,format=yuv420p`,
+    frameFilter(args.aspect),
     '-c:v',
     'libx264',
     args.out,
@@ -45,12 +50,20 @@ export async function stillClip(args: { image: string; out: string; aspect: Aspe
 
 /** Scale and pad any clip to the aspect's frame, 30 fps, no audio. */
 export async function fitClip(args: { input: string; out: string; aspect: AspectRatio }): Promise<void> {
-  const { width, height } = SIZE[args.aspect]
+  await ffmpeg(['-i', args.input, '-vf', frameFilter(args.aspect), '-an', '-c:v', 'libx264', args.out])
+}
+
+/** A clip played from its start and looped until `seconds`, fitted to the aspect's frame, no audio: the voice track speaks over it. */
+export async function loopedClip(args: { input: string; out: string; aspect: AspectRatio; seconds: number }): Promise<void> {
   await ffmpeg([
+    '-stream_loop',
+    '-1',
     '-i',
     args.input,
+    '-t',
+    args.seconds.toFixed(2),
     '-vf',
-    `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=0xfafafa,fps=30,format=yuv420p`,
+    frameFilter(args.aspect),
     '-an',
     '-c:v',
     'libx264',

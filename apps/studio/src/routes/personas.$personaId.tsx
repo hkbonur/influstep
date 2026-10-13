@@ -35,6 +35,7 @@ import {
   Skeleton,
   Textarea,
 } from '@/components/ui'
+import { assetCounts } from '@/lib/assets'
 import { cn } from '@/lib/cn'
 import { errorMessage } from '@/lib/errors'
 import { formatDate, formatDateTime, formatDay, formatHour, languageName, plural, relativeTime } from '@/lib/format'
@@ -269,6 +270,8 @@ function PersonaPage() {
 
           <MemorySummary personaId={personaId} />
 
+          <AssetsSummary personaId={personaId} />
+
           <section>
             <Eyebrow className="mb-3">Recent jobs</Eyebrow>
             <ul className="space-y-1 font-mono text-[11px]">
@@ -326,6 +329,31 @@ function MemorySummary(props: { personaId: Id<'personas'> }) {
         {memory === undefined && <Skeleton className="h-4 w-40" />}
         {memory === null && <span className="block text-ash">This persona does not exist.</span>}
         {memory !== undefined && memory !== null && <MemoryLines entries={memory.entries} />}
+      </Link>
+    </section>
+  )
+}
+
+/** The asset library in the Memory section's two-line form, one link to the assets page. */
+function AssetsSummary(props: { personaId: Id<'personas'> }) {
+  const library = useQuery(api.private.assets.list, { personaId: props.personaId })
+  return (
+    <section>
+      <Eyebrow className="mb-3">Assets</Eyebrow>
+      <Link to="/personas/$personaId/assets" params={{ personaId: props.personaId }} className="group block space-y-0.5 text-xs">
+        {library === undefined && <Skeleton className="h-4 w-40" />}
+        {library === null && <span className="block text-ash">This persona does not exist.</span>}
+        {library !== undefined && library !== null && (
+          <>
+            <span className="block group-hover:underline">{assetCounts(library.assets)}</span>
+            <span className="block text-ash">
+              {/* Newest first from the backend. */}
+              {library.assets[0] === undefined
+                ? 'Upload what the writer can show'
+                : `Last added ${formatDate(library.assets[0].createdAt)}`}
+            </span>
+          </>
+        )}
       </Link>
     </section>
   )

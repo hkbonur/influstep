@@ -16,6 +16,7 @@ import {
 import {
   PRESENTER_TOOL,
   type AccountPostSample,
+  type DraftBeat,
   type LlmProvider,
   type PostBrief,
   type PostDraft,
@@ -364,22 +365,45 @@ function linesFor(brief: ScriptBrief, topic: string, args: { compact: boolean })
  * Talking head: the presenter speaks every beat. Screen with avatar: the
  * presenter says the hook, then the screens. Screen only: every beat is a
  * screen. A demo is its own beat on the sponsor's site under every delivery,
- * and a talking head speaks it to camera all the same.
+ * and a talking head speaks it to camera all the same. The fix shows the
+ * library's asset that fits the topic, when one does (`assetFor`).
  */
-function beatsFor(brief: ScriptBrief, topic: string, args: { compact: boolean }): Beat[] {
+function beatsFor(brief: ScriptBrief, topic: string, args: { compact: boolean }): DraftBeat[] {
   const lines = linesFor(brief, topic, args)
   const fixed = [lines.hook, lines.mention, lines.demo, lines.cta].filter((line) => line !== null).join(' ')
   const body = bodyFor(brief, { budget: Math.round(brief.format.lengthSec * WORDS_PER_SECOND) - wordCount(fixed) })
   const fix = lines.mention === null ? body : `${body} ${lines.mention}`
   const opening = openingBeat(brief.format.delivery, lines.hook)
-  const fixScreen =
-    brief.format.delivery === 'talking_head' ? { tool: PRESENTER_TOOL, url: '' } : { tool: 'n8n', url: 'http://localhost:5678' }
+  const asset = assetFor(brief, topic)
+  const fixScreen = {
+    ...(brief.format.delivery === 'talking_head' ? { tool: PRESENTER_TOOL, url: '' } : { tool: 'n8n', url: 'http://localhost:5678' }),
+    ...(asset === undefined ? {} : { asset }),
+  }
   if (lines.demo === null) return [opening, { title: 'The fix', voiceover: `${fix} ${lines.cta}`, ...fixScreen }]
   return [
     opening,
     { title: 'The fix', voiceover: fix, ...fixScreen },
     { title: `${brief.sponsorName} demo`, voiceover: `${lines.demo} ${lines.cta}`, tool: brief.sponsorName, url: brief.sponsorUrl },
   ]
+}
+
+/**
+ * The first asset of the library, in the brief's order, with a tag the
+ * concept, the pillar or the topic says word for word: the mock's stand-in
+ * for a writer choosing a picture.
+ */
+function assetFor(brief: ScriptBrief, topic: string): string | undefined {
+  const text = ` ${wordsOf(`${brief.concept} ${brief.pillar} ${topic}`)} `
+  return brief.assets.find((asset) => asset.tags.some((tag) => wordsOf(tag) !== '' && text.includes(` ${wordsOf(tag)} `)))?.name
+}
+
+/** Lowercase words separated by one space, so "Error-workflow" and "error workflow" read the same. */
+function wordsOf(text: string): string {
+  return text
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .join(' ')
 }
 
 /** The first beat says the hook and nothing else, so the hook is its first sentence. */

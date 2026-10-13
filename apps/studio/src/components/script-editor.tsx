@@ -18,9 +18,17 @@ import { Button, ErrorLine, Field, type FormState, Input, Textarea } from './ui'
 /** What the operator edits of a beat: its title and what is spoken over it. Its tool and its URL stay the writer's. */
 type BeatDraft = Pick<Beat, 'title' | 'voiceover'>
 
+/** An asset a beat shows, as the episode query names it. */
+interface BeatAsset {
+  _id: string
+  name: string
+}
+
 interface ScriptEditorProps {
   episode: Doc<'episodes'>
   sponsorName: string
+  /** The assets the beats show (private.episodes.get `assets`). */
+  assets: BeatAsset[]
 }
 
 /**
@@ -33,18 +41,18 @@ export function ScriptEditor(props: ScriptEditorProps) {
   const beats = props.episode.shotPlan
   if (beats === undefined) return <p className="text-ash">The writer writes the beats when it scripts the episode.</p>
   if (!textEditable(props.episode.status)) return <ScriptReadView episode={props.episode} beats={beats} />
-  return <BeatsForm episode={props.episode} beats={beats} sponsorName={props.sponsorName} />
+  return <BeatsForm episode={props.episode} beats={beats} sponsorName={props.sponsorName} assets={props.assets} />
 }
 
 /**
  * The title, then one block per beat in order: its number, its title, the
  * line spoken over it and, for a beat the delivery records as a screen, what
- * is on screen. Save sends every beat at once, and the backend refuses with
+ * is on screen, or the asset of the library it shows instead. Save sends every beat at once, and the backend refuses with
  * the first script problem, the same list this form shows as the operator
  * types. The page keys the form on the saved beats, so a save that goes
  * through remounts it clean.
  */
-function BeatsForm(props: { episode: Doc<'episodes'>; beats: Beat[]; sponsorName: string }) {
+function BeatsForm(props: { episode: Doc<'episodes'>; beats: Beat[]; sponsorName: string; assets: BeatAsset[] }) {
   const update = useMutation(api.private.episodes.updateBeats)
   const [title, setTitle] = React.useState(props.episode.title)
   const [drafts, setDrafts] = React.useState<BeatDraft[]>(() =>
@@ -85,6 +93,7 @@ function BeatsForm(props: { episode: Doc<'episodes'>; beats: Beat[]; sponsorName
               index={index}
               beat={beat}
               screen={props.episode.shots[index]?.kind === 'screen'}
+              shows={beatAssetName(beat, props.assets)}
               onChange={(change) => setBeat(index, change)}
             />
           </li>
@@ -121,14 +130,22 @@ function BeatsForm(props: { episode: Doc<'episodes'>; beats: Beat[]; sponsorName
   )
 }
 
-function BeatFields(props: { index: number; beat: Beat; screen: boolean; onChange: (change: Partial<BeatDraft>) => void }) {
+function BeatFields(props: {
+  index: number
+  beat: Beat
+  screen: boolean
+  /** The name of the asset the beat shows, or null when it shows none. */
+  shows: string | null
+  onChange: (change: Partial<BeatDraft>) => void
+}) {
   const id = React.useId()
   const hookId = `${id}-hook`
   const screenId = `${id}-screen`
   const n = props.index + 1
   // The hook is not a field of its own: the backend takes it from the first beat's first sentence when it saves.
   const opensTheScript = props.index === 0
-  const describedBy = [opensTheScript ? hookId : null, props.screen ? screenId : null].filter((part) => part !== null).join(' ')
+  const pictured = props.screen || props.shows !== null
+  const describedBy = [opensTheScript ? hookId : null, pictured ? screenId : null].filter((part) => part !== null).join(' ')
   return (
     <div className="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-x-2">
       <span aria-hidden className="tabular pt-2 font-mono text-xs text-ash">
@@ -150,6 +167,11 @@ function BeatFields(props: { index: number; beat: Beat; screen: boolean; onChang
         {opensTheScript && (
           <p id={hookId} className="text-xs text-ash">
             Its first sentence is the hook.
+          </p>
+        )}
+        {props.shows !== null && (
+          <p id={screenId} className="text-[11px] text-ash">
+            Shows {props.shows}, from the asset library
           </p>
         )}
         {props.screen && (
@@ -189,6 +211,14 @@ function SpokenLength(props: { beats: Beat[]; lengthSec: number | undefined }) {
       {props.lengthSec !== undefined && ` of ${props.lengthSec} s`}
     </span>
   )
+}
+
+/** The name of the asset a beat shows; null when it shows none. A beat's asset stays while its script may be recorded. */
+function beatAssetName(beat: Beat, assets: BeatAsset[]): string | null {
+  if (beat.assetId === undefined) return null
+  const asset = assets.find((candidate) => candidate._id === beat.assetId)
+  if (!asset) throw new Error(`beat "${beat.title}" shows asset ${beat.assetId}, which the episode query did not return`)
+  return asset.name
 }
 
 /** "n8n · app.n8n.cloud": the tool and the host it opens. A URL the browser cannot read shows as the writer wrote it. */

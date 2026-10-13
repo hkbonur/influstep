@@ -15,6 +15,12 @@ export interface Beat {
   /** The tool the screen shows, or the presenter speaking to camera (no screen, no URL). */
   tool: string
   url: string
+  /**
+   * An image or a clip of the persona's asset library the beat shows in place
+   * of the tool's screen or the presenter (shared `PLACEABLE_ASSET_KINDS`).
+   * The writer places it by name; the producer shows it for the beat's length.
+   */
+  assetId?: string
 }
 
 /** The spoken pace a script's length is measured at. */

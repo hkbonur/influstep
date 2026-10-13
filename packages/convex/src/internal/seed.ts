@@ -16,7 +16,7 @@ import {
   variantRate,
   voiceStats,
   weekdayOf,
-  type Beat,
+  type AssetKind,
   type CatalogVariant,
   type EpisodePost,
   type ExperimentKind,
@@ -25,6 +25,7 @@ import {
   type PlatformFormat,
   type PostIntent,
   type PostKind,
+  type ProducePayload,
   type SponsorSegment,
   type VoiceEdit,
 } from '@influstep/shared'
@@ -46,6 +47,7 @@ import type { FoundConversion } from '../providers/analytics'
 import { mockAnalytics } from '../providers/analytics/mock'
 import { mockDiscounts } from '../providers/discounts/mock'
 import { PRESENTER_TOOL } from '../providers/llm'
+import type { StoredBeat } from '../lib/validators'
 
 /**
  * The demo workspace: two personas, a planned week, a running experiment,
@@ -106,18 +108,26 @@ const N8N_URL = 'http://localhost:5678'
  */
 function seededBeats(args: {
   hook: string
-  opener: Omit<Beat, 'voiceover'>
+  opener: Omit<StoredBeat, 'voiceover'>
   fix: string
   sponsorSegment: SponsorSegment
   sponsorName: string
   sponsorUrl: string
   /** The call to action that closes the last beat. */
   closing: string
-}): Beat[] {
+  /** An asset of the library the fix beat shows in place of n8n. */
+  fixAssetId?: Id<'assets'>
+}): StoredBeat[] {
   const mention = `This one is sponsored by ${args.sponsorName}: when the workflow needs something from a customer, ${args.sponsorName} collects it.`
-  const beats: Beat[] = [
+  const beats: StoredBeat[] = [
     { ...args.opener, voiceover: `${args.hook} Here is the setup.` },
-    { title: 'The fix', voiceover: args.sponsorSegment === 'mention' ? `${args.fix} ${mention}` : args.fix, tool: 'n8n', url: N8N_URL },
+    {
+      title: 'The fix',
+      voiceover: args.sponsorSegment === 'mention' ? `${args.fix} ${mention}` : args.fix,
+      tool: 'n8n',
+      url: N8N_URL,
+      ...(args.fixAssetId === undefined ? {} : { assetId: args.fixAssetId }),
+    },
   ]
   if (args.sponsorSegment === 'demo') {
     beats.push({
@@ -458,6 +468,39 @@ function seededCardSvg(): string {
 </svg>`
 }
 
+/**
+ * A screenshot of an n8n error workflow, drawn for Ada's asset library: the
+ * Error Trigger wired to a Slack alert on n8n's dotted canvas. The writer
+ * places it in a beat that explains error workflows.
+ */
+function seededCanvasSvg(): string {
+  const node = (x: number, label: string, detail: string, color: string) => `
+  <rect x="${x}" y="370" width="340" height="160" rx="18" fill="#ffffff" stroke="#d4d4d4" stroke-width="3"/>
+  <rect x="${x}" y="370" width="16" height="160" rx="8" fill="${color}"/>
+  <text x="${x + 40}" y="440" font-family="Inter, system-ui, sans-serif" font-size="34" font-weight="600" fill="#262626">${label}</text>
+  <text x="${x + 40}" y="485" font-family="ui-monospace, monospace" font-size="22" fill="#737373">${detail}</text>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900">
+  <defs><pattern id="dots" width="32" height="32" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="2" fill="#e5e5e5"/></pattern></defs>
+  <rect width="1600" height="900" fill="#fafafa"/>
+  <rect width="1600" height="900" fill="url(#dots)"/>
+  <text x="80" y="120" font-family="Inter, system-ui, sans-serif" font-size="40" font-weight="600" fill="#262626">Error workflow</text>
+  <text x="80" y="170" font-family="ui-monospace, monospace" font-size="24" fill="#737373">Settings → Error workflow → this one</text>
+  ${node(120, 'Error Trigger', 'on any failed run', '#e11d48')}
+  <path d="M460 450 H 630" stroke="#a3a3a3" stroke-width="4" fill="none"/>
+  ${node(630, 'Set message', 'workflow, node, error', '#0d9488')}
+  <path d="M970 450 H 1140" stroke="#a3a3a3" stroke-width="4" fill="none"/>
+  ${node(1140, 'Slack', '#alerts, once a run', '#7c3aed')}
+</svg>`
+}
+
+/** Ada's brand notes, a document in her asset library: it stays in the library, a beat never shows it. */
+const SEEDED_BRAND_NOTES = `Ada Automates, brand notes
+
+Colours: paper background, teal accents, no gradients.
+Screens: n8n at 125% zoom, dark mode off, the canvas tidied before recording.
+Words: "you", never "guys". No "game changer", no "insane".
+`
+
 export const run = internalAction({
   args: { appUrl: v.optional(v.string()) },
   handler: async (ctx, args): Promise<{ workspaceId: Id<'workspaces'> }> => {
@@ -465,12 +508,26 @@ export const run = internalAction({
     // included. It is not a playable video. The runner uploads real (mock) videos for anything it produces.
     const storageId = await ctx.storage.store(new Blob([new Uint8Array([0, 0, 0, 0x1c, 0x66, 0x74, 0x79, 0x70])], { type: 'video/mp4' }))
     const cardStorageId = await ctx.storage.store(new Blob([seededCardSvg()], { type: 'image/svg+xml' }))
-    return ctx.runMutation(internal.internal.seed.write, { storageId, cardStorageId, appUrl: args.appUrl ?? 'http://localhost:3300' })
+    const canvasStorageId = await ctx.storage.store(new Blob([seededCanvasSvg()], { type: 'image/svg+xml' }))
+    const brandStorageId = await ctx.storage.store(new Blob([SEEDED_BRAND_NOTES], { type: 'text/plain' }))
+    return ctx.runMutation(internal.internal.seed.write, {
+      storageId,
+      cardStorageId,
+      canvasStorageId,
+      brandStorageId,
+      appUrl: args.appUrl ?? 'http://localhost:3300',
+    })
   },
 })
 
 export const write = internalMutation({
-  args: { storageId: v.id('_storage'), cardStorageId: v.id('_storage'), appUrl: v.string() },
+  args: {
+    storageId: v.id('_storage'),
+    cardStorageId: v.id('_storage'),
+    canvasStorageId: v.id('_storage'),
+    brandStorageId: v.id('_storage'),
+    appUrl: v.string(),
+  },
   handler: async (ctx, args): Promise<{ workspaceId: Id<'workspaces'> }> => {
     const existing = (await ctx.db.query('workspaces').collect()).find((workspace) => workspace.name === 'Formstep')
     if (existing) return { workspaceId: existing._id }
@@ -538,6 +595,41 @@ export const write = internalMutation({
       if (!persona) throw new Error('persona vanished')
       await createTrackedLink(ctx, { persona, target: 'https://formstep.io' })
     }
+
+    // Ada's asset library: a screenshot the writer can place, and a document that stays in the library.
+    const seededAsset = async (
+      storageId: Id<'_storage'>,
+      asset: { kind: AssetKind; name: string; tags: string[]; note: string; daysAgo: number }
+    ) => {
+      const file = await ctx.db.system.get(storageId)
+      if (!file) throw new Error(`seeded file ${storageId} is not in storage`)
+      return ctx.db.insert('assets', {
+        personaId: adaId,
+        storageId,
+        kind: asset.kind,
+        name: asset.name,
+        contentType: file.contentType ?? '',
+        size: file.size,
+        tags: asset.tags,
+        note: asset.note,
+        source: 'operator',
+        createdAt: now - asset.daysAgo * DAY_MS,
+      })
+    }
+    const canvasId = await seededAsset(args.canvasStorageId, {
+      kind: 'image',
+      name: 'Error workflow canvas',
+      tags: ['error workflow', 'error trigger', 'canvas'],
+      note: 'The Error Trigger wired to one Slack alert. Show it when a script explains error workflows.',
+      daysAgo: 6,
+    })
+    await seededAsset(args.brandStorageId, {
+      kind: 'document',
+      name: 'Brand notes',
+      tags: ['brand'],
+      note: 'Colours, screens and words Ada keeps to.',
+      daysAgo: 20,
+    })
 
     await ctx.db.insert('directives', {
       personaId: adaId,
@@ -1167,6 +1259,8 @@ export const write = internalMutation({
         sponsorName: workspace.sponsorName,
         sponsorUrl: workspace.sponsorUrl,
         closing: SEEDED_CLOSINGS.comment,
+        // The error workflow episode shows the canvas screenshot, so its page names the asset its fix beat shows.
+        fixAssetId: index === 2 ? canvasId : undefined,
       })
       const description = seededDescription(item.concept)
       const episodeId = await ctx.db.insert('episodes', {
@@ -1240,7 +1334,15 @@ export const write = internalMutation({
           kind: 'produce',
           personaId: adaId,
           episodeId,
-          payload: { kind: 'video', episodeId, personaHandle: ada.handle, voiceId: ada.voiceId, shots: episode.shots, aspects: adaAspects },
+          payload: {
+            kind: 'video',
+            episodeId,
+            personaHandle: ada.handle,
+            voiceId: ada.voiceId,
+            shots: episode.shots,
+            aspects: adaAspects,
+            assets: [],
+          } satisfies ProducePayload,
         })
       }
     }
@@ -1559,6 +1661,7 @@ const TABLES = {
   experiments: true,
   journal: true,
   memories: true,
+  assets: true,
   directives: true,
   messages: true,
   checklistItems: true,

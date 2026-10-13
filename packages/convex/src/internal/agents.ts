@@ -59,6 +59,7 @@ import {
   variantStatsFor,
   type EpisodeVariant,
 } from '../core/experiments'
+import { placeAssets } from '../core/assets'
 import { formatFor, formatsFor } from '../core/formats'
 import { PILLAR_HISTORY_DAYS, planPostSlots, planWeek as planWeekRule } from '../core/planner'
 import { savePost } from '../core/posts'
@@ -92,6 +93,7 @@ import {
   shotPlanValidator,
   signalSourceValidator,
   voiceValidator,
+  type StoredBeat,
 } from '../lib/validators'
 import { applyEvent, type EpisodeContext } from './data'
 
@@ -411,7 +413,7 @@ export const writeScript = internalAction({
     const context: EpisodeContext = await ctx.runQuery(internal.internal.data.getEpisodeContext, { episodeId })
     const kind = context.episode.kind
     if (isPost(kind)) return writePost(ctx, context, kind)
-    const { episode, persona, workspace, directives, signals, experiment, memory, research } = context
+    const { episode, persona, workspace, directives, signals, experiment, memory, assets, research } = context
     const variant = episodeVariant(episode, experiment)
     const style = effectiveStyle({ variant, sponsorSegment: episode.sponsorSegment }, persona.strategy?.defaults)
     const formats = formatsFor(persona, episode.platforms)
@@ -432,6 +434,7 @@ export const writeScript = internalAction({
       sponsorUrl: workspace.sponsorUrl,
       variant: scriptVariantOf(variant),
       memory,
+      assets,
       style,
       styleLines: styleLines(style, variant?.kind),
       directives: directives.map((directive) => directive.text),
@@ -445,16 +448,14 @@ export const writeScript = internalAction({
       problems: [],
     }
     const llm = llmProvider()
-    const first = await llm.writeScript(brief)
-    const firstProblems = scriptDraftProblems(brief, first)
-    const draft = firstProblems.length === 0 ? first : await llm.writeScript({ ...brief, problems: firstProblems })
-    const problems = scriptDraftProblems(brief, draft)
-    if (problems.length > 0) throw new Error(`The writer missed the script's rules twice: ${problems.join(' ')}`)
+    const first = checkedScript(brief, await llm.writeScript(brief))
+    const final = first.problems.length === 0 ? first : checkedScript(brief, await llm.writeScript({ ...brief, problems: first.problems }))
+    if (final.problems.length > 0) throw new Error(`The writer missed the script's rules twice: ${final.problems.join(' ')}`)
     return ctx.runMutation(internal.internal.agents.storeScript, {
       episodeId,
-      title: draft.title,
-      description: draft.description,
-      shotPlan: draft.shotPlan,
+      title: final.draft.title,
+      description: final.draft.description,
+      shotPlan: final.beats,
       autoApprove: persona.autoApprove,
     })
   },
@@ -484,6 +485,16 @@ function scriptVariantOf(variant: EpisodeVariant | undefined): ScriptBrief['vari
  * where a late draft is dropped, and the job still ends done.
  */
 type WriterResult = { title: string } | { skipped: 'killed' }
+
+/**
+ * The draft with each asset it asked for placed (core `placeAssets`), and
+ * everything wrong with it: an asset the library does not hold, then the
+ * script's own rules.
+ */
+function checkedScript(brief: ScriptBrief, draft: ScriptDraft): { draft: ScriptDraft; beats: StoredBeat[]; problems: string[] } {
+  const placed = placeAssets(draft.shotPlan, brief.assets, brief.sponsorName)
+  return { draft, beats: placed.beats, problems: [...placed.problems, ...scriptDraftProblems(brief, draft)] }
+}
 
 /**
  * The shared beat rules for the sponsor segment, the format's length, then

@@ -50,6 +50,7 @@ function scriptBrief(args: { delivery: Delivery; sponsorSegment: SponsorSegment;
     sponsorUrl: 'https://formstep.io',
     // An empty memory and the catalog control on every dimension: the brief of a persona that has tested nothing yet.
     memory: { goal: 'Paying Formstep customers', standing: null, rules: [], facts: [], learnings: [] },
+    assets: [],
     style: effectiveStyle({ sponsorSegment: args.sponsorSegment }, undefined),
     styleLines: [],
     directives: ['focus on n8n error handling for two weeks'],

@@ -4,6 +4,7 @@ import type { Doc, Id } from '../_generated/dataModel'
 import { internalMutation, internalQuery, type MutationCtx } from '../_generated/server'
 import { internal } from '../_generated/api'
 import { deleteHistoryPage as deleteHistoryPageRule, examplePostsOf } from '../core/account'
+import { writerAssets, type WriterAsset } from '../core/assets'
 import { writerMemory, type WriterMemory } from '../core/memory'
 import { transition, type PipelineEvent } from '../core/pipeline'
 import { researchFor } from '../core/research'
@@ -43,6 +44,8 @@ export interface EpisodeContext {
   examples: Doc<'accountPosts'>[]
   /** What the writer reads of the persona's memory (core/memory.ts `writerMemory`). */
   memory: WriterMemory
+  /** The images and clips a beat may show (core/assets.ts `writerAssets`); only read for a video. */
+  assets: WriterAsset[]
   /**
    * What the researcher found (core/research.ts): the morning brief while it
    * has not expired, else null, and the open problems' texts, newest first, at
@@ -70,8 +73,9 @@ export const getEpisodeContext = internalQuery({
     // setExample caps the marks at VOICE_EXAMPLES_MAX; the cap holds here too, so the writer's prompt stays short.
     const examples = isPost(episode.kind) ? (await examplePostsOf(ctx, persona._id)).slice(0, VOICE_EXAMPLES_MAX) : []
     const memory = await writerMemory(ctx, persona._id, workspace.sponsorName)
+    const assets = isPost(episode.kind) ? [] : await writerAssets(ctx, persona._id)
     const research = await researchFor(ctx, persona._id, Date.now())
-    return { episode, persona, workspace, directives, signals, experiment, examples, memory, research }
+    return { episode, persona, workspace, directives, signals, experiment, examples, memory, assets, research }
   },
 })
 

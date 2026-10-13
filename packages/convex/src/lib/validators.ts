@@ -1,8 +1,10 @@
-import { v, type Validator } from 'convex/values'
+import { v, type Infer, type Validator } from 'convex/values'
 import {
   ACCOUNT_POST_SOURCES,
   AGENT_ROLES,
   ASPECT_RATIOS,
+  ASSET_KINDS,
+  ASSET_SOURCES,
   CHECKLIST_STATUSES,
   CONVERSION_KINDS,
   CONVERSION_VIAS,
@@ -71,6 +73,8 @@ export const actorValidator = literals(JOURNAL_ACTORS)
 export const memoryKindValidator = literals(MEMORY_KINDS)
 export const memoryStatusValidator = literals(MEMORY_STATUSES)
 export const operatorMemoryKindValidator = literals(OPERATOR_MEMORY_KINDS)
+export const assetKindValidator = literals(ASSET_KINDS)
+export const assetSourceValidator = literals(ASSET_SOURCES)
 
 /** X's post cadence (shared `XCadence`). Ranges, and each kind and intent once, are checked by core/formats.ts. */
 export const xCadenceValidator = v.object({
@@ -144,12 +148,17 @@ export const episodeFormatValidator = v.object({
   cuts: v.array(v.object({ platform: platformValidator, aspect: aspectRatioValidator })),
 })
 
-/** One beat of a video's script (shared `Beat`): what is spoken over it, and the tool and URL it shows. */
-export const beatValidator = v.object({ title: v.string(), voiceover: v.string(), tool: v.string(), url: v.string() }) satisfies Validator<
-  Beat,
-  'required',
-  keyof Beat
->
+/** One beat of a video's script (shared `Beat`): what is spoken over it, the tool and URL it shows, and the asset it shows instead. */
+export const beatValidator = v.object({
+  title: v.string(),
+  voiceover: v.string(),
+  tool: v.string(),
+  url: v.string(),
+  assetId: v.optional(v.id('assets')),
+}) satisfies Validator<Beat, 'required', keyof Beat>
+
+/** A beat as an episode stores it: the shared `Beat` with its asset's id checked. */
+export type StoredBeat = Infer<typeof beatValidator>
 
 /** A video's beats, the only script: the shots, the voice track and the hook are derived from them. */
 export const shotPlanValidator = v.array(beatValidator)
@@ -168,7 +177,15 @@ const recipeStepValidator = v.union(
 export const shotValidator = v.union(
   v.object({ kind: v.literal('screen'), id: v.string(), title: v.string(), voiceover: v.string(), recipe: v.array(recipeStepValidator) }),
   v.object({ kind: v.literal('avatar'), id: v.string(), title: v.string(), voiceover: v.string() }),
-  v.object({ kind: v.literal('title'), id: v.string(), title: v.string(), voiceover: v.string() })
+  v.object({ kind: v.literal('title'), id: v.string(), title: v.string(), voiceover: v.string() }),
+  v.object({
+    kind: v.literal('asset'),
+    id: v.string(),
+    title: v.string(),
+    voiceover: v.string(),
+    // The runner's contract (shared `shotSchema`) carries it as a string; the beat it came from holds the checked id.
+    assetId: v.string(),
+  })
 )
 
 export const renderValidator = v.object({

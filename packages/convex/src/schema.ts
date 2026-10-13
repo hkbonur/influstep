@@ -6,6 +6,8 @@ import {
   actorValidator,
   agentRoleValidator,
   aspectRatioValidator,
+  assetKindValidator,
+  assetSourceValidator,
   checklistActionValidator,
   checklistStatusValidator,
   conversionKindValidator,
@@ -388,6 +390,24 @@ export default defineSchema({
   })
     .index('by_persona_status', ['personaId', 'status'])
     .index('by_persona_kind_status', ['personaId', 'kind', 'status']),
+
+  // A persona's asset library (shared assets.ts): a file in storage with its kind, name, tags and note. The operator
+  // uploads one; the producer saves each render, voice track and post card it makes, naming the episode.
+  assets: defineTable({
+    personaId: v.id('personas'),
+    storageId: v.id('_storage'),
+    kind: assetKindValidator,
+    name: v.string(),
+    contentType: v.string(),
+    size: v.number(),
+    tags: v.array(v.string()),
+    note: v.string(),
+    source: assetSourceValidator,
+    episodeId: v.optional(v.id('episodes')),
+    createdAt: v.number(),
+  })
+    .index('by_persona', ['personaId'])
+    .index('by_episode', ['episodeId']),
 
   directives: defineTable({
     personaId: v.id('personas'),

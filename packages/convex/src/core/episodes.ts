@@ -31,6 +31,7 @@ import { applyEvent, failEpisodeIfPossible } from '../internal/data'
 import { enqueueJob, markFailed } from '../jobs/queue'
 import { providersMode } from '../lib/env'
 import { PRESENTER_TOOL } from '../providers/llm'
+import { shotAssets, saveProduced } from './assets'
 import { assertXTitleFits } from './attribution'
 import { dayKey, hourAt, instantAt } from './dates'
 import { episodeEffectiveVariant, episodeVariant, plannedVariant } from './experiments'
@@ -253,6 +254,8 @@ export interface BeatsDraft {
 export function shotsFromDraft(draft: BeatsDraft, sponsorName: string, delivery: Delivery): Shot[] {
   return draft.shotPlan.map((beat, index) => {
     const id = `shot-${index + 1}`
+    // An asset the writer placed shows under every delivery: the beat asked for that picture, not a screen or a face.
+    if (beat.assetId !== undefined) return { kind: 'asset', id, title: beat.title, voiceover: beat.voiceover, assetId: beat.assetId }
     const presenter = delivery === 'talking_head' || beat.tool === PRESENTER_TOOL || (delivery === 'screen_with_avatar' && index === 0)
     if (presenter) return { kind: 'avatar', id, title: beat.title, voiceover: beat.voiceover }
     if (beat.tool.toLowerCase() === sponsorName.toLowerCase()) {
@@ -464,11 +467,11 @@ export async function approveEpisode(ctx: MutationCtx, episodeId: Id<'episodes'>
  * or a thread has nothing to produce.
  */
 export async function startProduction(ctx: MutationCtx, episode: Doc<'episodes'>, persona: Doc<'personas'>): Promise<void> {
-  const payload = producePayload(episode, persona)
+  const payload = await producePayload(ctx, episode, persona)
   await enqueueJob(ctx, { kind: 'produce', payload, personaId: persona._id, episodeId: episode._id })
 }
 
-function producePayload(episode: Doc<'episodes'>, persona: Doc<'personas'>): ProducePayload {
+async function producePayload(ctx: MutationCtx, episode: Doc<'episodes'>, persona: Doc<'personas'>): Promise<ProducePayload> {
   switch (episode.kind) {
     case 'video': {
       if (!episode.format) throw new Error(`episode ${episode._id} has no format: it cannot be produced before it is scripted`)
@@ -479,6 +482,7 @@ function producePayload(episode: Doc<'episodes'>, persona: Doc<'personas'>): Pro
         voiceId: persona.voiceId,
         shots: episode.shots,
         aspects: formatAspects(episode.format),
+        assets: await shotAssets(ctx, episode.shots),
       }
     }
     case 'image': {
@@ -536,10 +540,12 @@ export async function completeProduction(ctx: MutationCtx, episodeId: Id<'episod
     throw new Error(`episode ${episodeId} is a ${episode.kind} post: it has no render`)
   const workspace = await workspaceOf(ctx, persona)
 
+  const now = Date.now()
   await ctx.db.patch(episodeId, {
     renders: result.renders.map((render) => ({ ...render, storageId: render.storageId as Id<'_storage'> })),
-    updatedAt: Date.now(),
+    updatedAt: now,
   })
+  await saveProduced(ctx, episode, result, now)
   await applyEvent(ctx, episodeId, { type: 'produced' })
   const status = armedStatus(persona)
   const mock = result.renders.some((render) => render.mock)

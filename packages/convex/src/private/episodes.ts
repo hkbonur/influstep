@@ -1,6 +1,6 @@
 import { v } from 'convex/values'
-import { EPISODE_STATUS_LABELS, hookOf, isPost, scriptProblems, textEditable } from '@influstep/shared'
-import type { Doc } from '../_generated/dataModel'
+import { EPISODE_STATUS_LABELS, hookOf, isPost, scriptProblems, textEditable, type AssetKind } from '@influstep/shared'
+import type { Doc, Id } from '../_generated/dataModel'
 import { mutation, query, type QueryCtx } from '../_generated/server'
 import { assertXTitleFits, descriptionFormatOf, publicationFooter, type DescriptionFooter } from '../core/attribution'
 import { activeDiscountCodeFor } from '../core/discounts'
@@ -57,6 +57,12 @@ export const get = query({
     const experiment = episode.experimentId ? await ctx.db.get(episode.experimentId) : null
     const renders = []
     for (const render of episode.renders) renders.push({ ...render, url: await ctx.storage.getUrl(render.storageId) })
+    // The assets the beats show, by id, for the beat lines; a removed asset never sits in a script that may still be recorded.
+    const assets: { _id: Id<'assets'>; name: string; kind: AssetKind }[] = []
+    for (const assetId of new Set((episode.shotPlan ?? []).flatMap((beat) => (beat.assetId === undefined ? [] : [beat.assetId])))) {
+      const asset = await ctx.db.get(assetId)
+      if (asset) assets.push({ _id: asset._id, name: asset.name, kind: asset.kind })
+    }
     // The code in force now: what every publication that has not gone out will carry, a failed one included.
     const discountCode = await activeDiscountCodeFor(ctx, persona._id, episode._id)
     // The publish package: each publication with the render it uploads and the footer dispatch adds around its body.
@@ -121,6 +127,7 @@ export const get = query({
       signals,
       experiment,
       renders,
+      assets,
       snapshots,
       value,
       discountCode: discountCode ? { code: discountCode.code, offer: discountCode.offer } : null,
@@ -182,7 +189,8 @@ export const updateBeats = mutation({
     const shotPlan = stored.map((beat, index) => {
       const edit = args.beats[index]
       if (!edit) throw new Error(`beat ${index + 1} of episode ${episode._id} has no edit`)
-      return { title: edit.title.trim(), voiceover: edit.voiceover.trim(), tool: beat.tool, url: beat.url }
+      // The tool, the URL and the asset stay the writer's.
+      return { ...beat, title: edit.title.trim(), voiceover: edit.voiceover.trim() }
     })
     const persona = await ctx.db.get(episode.personaId)
     if (!persona) throw new Error(`persona ${episode.personaId} not found`)

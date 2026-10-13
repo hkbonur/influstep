@@ -52,6 +52,7 @@ function scriptBrief(args: {
     sponsorUrl: 'https://formstep.io',
     variant: args.variant,
     memory: { goal: 'Paying Formstep customers', standing: null, rules: [], facts: [], learnings: [] },
+    assets: [],
     style: args.style,
     styleLines: [],
     directives: [],

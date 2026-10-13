@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod'
 import { z } from 'zod'
 import {
+  ASSET_KIND_LABELS,
   CARD_TITLE_MAX,
   DELIVERY_LABELS,
   EPISODE_KIND_LABELS,
@@ -46,7 +47,8 @@ const MODEL = 'claude-opus-5-5'
 const scriptDraftSchema = z.object({
   title: z.string(),
   description: z.string(),
-  shotPlan: z.array(z.object({ title: z.string(), voiceover: z.string(), tool: z.string(), url: z.string() })),
+  // The asset is a name from the brief's asset library, or empty when the beat shows none: structured outputs take no optional field.
+  shotPlan: z.array(z.object({ title: z.string(), voiceover: z.string(), tool: z.string(), url: z.string(), asset: z.string() })),
 })
 
 // One shape for every kind keeps the structured output simple; the card title is empty unless the post is an image post.
@@ -94,6 +96,7 @@ export const anthropicLlm: LlmProvider = {
             `Concept: ${brief.concept}`,
             `Pillar: ${brief.pillar}`,
             memoryInstruction(brief.memory),
+            assetsInstruction(brief),
             defaultsInstruction(brief),
             variantInstruction(brief),
             sponsorInstruction(brief),
@@ -114,7 +117,8 @@ export const anthropicLlm: LlmProvider = {
     })
     if (response.stop_reason === 'refusal') throw new Error('The model declined to write this script')
     if (!response.parsed_output) throw new Error('The model returned no parseable script')
-    return response.parsed_output
+    const { shotPlan, ...draft } = response.parsed_output
+    return { ...draft, shotPlan: shotPlan.map(({ asset, ...beat }) => (asset.trim() === '' ? beat : { ...beat, asset })) }
   },
   async writePost(brief: PostBrief): Promise<PostDraft> {
     const response = await client().messages.parse({
@@ -397,6 +401,25 @@ function memoryInstruction(memory: WriterMemory): string {
   ]
     .filter(Boolean)
     .join('\n\n')
+}
+
+/**
+ * The images and clips of the persona's asset library (core/assets.ts
+ * `writerAssets`). A beat that should show one names it in its asset field,
+ * and the producer shows it in place of the beat's screen or the presenter.
+ */
+function assetsInstruction(brief: ScriptBrief): string {
+  const none = "Leave every beat's asset empty."
+  if (brief.assets.length === 0) return `Your asset library holds no images or clips. ${none}`
+  const lines = brief.assets.map((asset) => {
+    const tags = asset.tags.length === 0 ? '' : ` (${asset.tags.join(', ')})`
+    const note = asset.note === '' ? '' : `: ${asset.note}`
+    return `- "${asset.name}", ${ASSET_KIND_LABELS[asset.kind].toLowerCase()}${tags}${note}`
+  })
+  return [
+    `Your asset library, which a beat can show in place of its screen or you on camera:\n${lines.join('\n')}`,
+    `Where a beat is better told by one of these, put its exact name in that beat's asset; an image is held and a clip is looped for the beat. Never put one on the ${brief.sponsorName} demo beat. Leave the asset empty on every other beat.`,
+  ].join('\n')
 }
 
 /** The dimensions where the persona no longer does what it did at the start (shared `styleLines`); nothing while every one is the control. */

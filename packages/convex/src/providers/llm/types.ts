@@ -21,6 +21,7 @@ import {
   type VoiceStats,
   type Weekday,
 } from '@influstep/shared'
+import type { WriterAsset } from '../../core/assets'
 import type { WriterMemory } from '../../core/memory'
 import type { Funnel } from '../../core/report'
 
@@ -50,6 +51,8 @@ export interface ScriptBrief {
   variant?: { kind: ScriptKind; key: string; description: string }
   /** What the persona knows (core/memory.ts `writerMemory`): its goal and standing, the operator's rules and facts, its learnings. */
   memory: WriterMemory
+  /** The images and clips of the persona's asset library a beat may show, by name (core/assets.ts `writerAssets`). */
+  assets: WriterAsset[]
   /**
    * What the episode does on every dimension (shared `effectiveStyle`): its
    * own variant where its experiment varies the dimension, else the persona's
@@ -75,6 +78,13 @@ export interface ScriptBrief {
 /** The "tool" of a beat the presenter speaks to camera: no screen, no URL, an avatar take whatever the delivery. */
 export const PRESENTER_TOOL = 'presenter'
 
+/**
+ * A beat as the writer writes it: an asset of the brief's library asked for
+ * by its name, which the pipeline resolves to the asset's id
+ * (core/assets.ts `placeAssets`).
+ */
+export type DraftBeat = Omit<Beat, 'assetId'> & { asset?: string }
+
 export interface ScriptDraft {
   title: string
   /**
@@ -87,9 +97,10 @@ export interface ScriptDraft {
    * The beats are the script: each voiceover is exactly what is spoken over
    * its beat, the first sentence of the first one is the hook, and the call
    * to action closes the last. A beat names the tool on screen and the URL
-   * to open, or the presenter (tool PRESENTER_TOOL, no URL).
+   * to open, or the presenter (tool PRESENTER_TOOL, no URL), and may show an
+   * asset of the library instead.
    */
-  shotPlan: Beat[]
+  shotPlan: DraftBeat[]
 }
 
 /**

@@ -303,7 +303,7 @@ function personaSummary(persona: PersonaRow, mark: PersonaMark): string {
 
 /**
  * The persona the current page belongs to: its own page, its voice, its
- * strategy, its report, or one of its episodes. An episode route names only the episode, so
+ * strategy, its memory, its assets, its report, or one of its episodes. An episode route names only the episode, so
  * its persona comes from the episode itself.
  */
 function useSelectedPersonaId(): string | null {
@@ -312,12 +312,16 @@ function useSelectedPersonaId(): string | null {
   // Their own matches: route matching is exact by default, so the persona page's match never covers /voice or /strategy.
   const voicePage = matchRoute({ to: '/personas/$personaId/voice' })
   const strategyPage = matchRoute({ to: '/personas/$personaId/strategy' })
+  const memoryPage = matchRoute({ to: '/personas/$personaId/memory' })
+  const assetsPage = matchRoute({ to: '/personas/$personaId/assets' })
   const reportPage = matchRoute({ to: '/reports/$personaId' })
   const episodePage = matchRoute({ to: '/episodes/$episodeId' })
   const episode = useQuery(api.private.episodes.get, episodePage ? { episodeId: episodePage.episodeId as Id<'episodes'> } : 'skip')
   if (personaPage) return personaPage.personaId
   if (voicePage) return voicePage.personaId
   if (strategyPage) return strategyPage.personaId
+  if (memoryPage) return memoryPage.personaId
+  if (assetsPage) return assetsPage.personaId
   if (reportPage) return reportPage.personaId
   // Undefined while the episode loads, null when it does not exist: no row is selected in either case.
   if (episode) return episode.episode.personaId

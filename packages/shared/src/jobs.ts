@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { PLACEABLE_ASSET_KINDS } from './assets'
 import { ASPECT_RATIOS, PLATFORMS } from './platforms'
 
 export const AGENT_ROLES = ['researcher', 'writer', 'producer', 'publisher', 'analyst'] as const
@@ -103,6 +104,14 @@ export const shotSchema = z.discriminatedUnion('kind', [
   }),
   z.object({ kind: z.literal('avatar'), id: z.string(), title: z.string(), voiceover: z.string() }),
   z.object({ kind: z.literal('title'), id: z.string(), title: z.string(), voiceover: z.string() }),
+  // An image or a clip of the asset library, held or looped for the beat's length (shared `Beat.assetId`).
+  z.object({
+    kind: z.literal('asset'),
+    id: z.string(),
+    title: z.string(),
+    voiceover: z.string(),
+    assetId: z.string(),
+  }),
 ])
 export type Shot = z.infer<typeof shotSchema>
 export type RecipeStep = Extract<Shot, { kind: 'screen' }>['recipe'][number]
@@ -119,6 +128,8 @@ export const producePayloadSchema = z.discriminatedUnion('kind', [
     voiceId: z.string(),
     shots: z.array(shotSchema).min(1),
     aspects: z.array(z.enum(ASPECT_RATIOS)).min(1),
+    // Where the runner downloads each asset its asset shots show, once per job, and whether it holds or loops it.
+    assets: z.array(z.object({ assetId: z.string(), url: z.string(), kind: z.enum(PLACEABLE_ASSET_KINDS) })),
   }),
   z.object({
     kind: z.literal('image'),

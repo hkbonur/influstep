@@ -274,11 +274,12 @@ function EpisodePage() {
                 key={[episode.title, ...(episode.shotPlan ?? []).flatMap((beat) => [beat.title, beat.voiceover])].join('\u0000')}
                 episode={episode}
                 sponsorName={data.sponsorName}
+                assets={data.assets}
               />
             )}
           </section>
 
-          {!isPost(episode.kind) && <ShotsSection shots={episode.shots} />}
+          {!isPost(episode.kind) && <ShotsSection shots={episode.shots} assets={data.assets} personaId={persona._id} />}
         </div>
 
         <div className="space-y-8">
@@ -516,7 +517,7 @@ function Snapshots(props: {
   )
 }
 
-function ShotsSection(props: { shots: EpisodeData['episode']['shots'] }) {
+function ShotsSection(props: { shots: EpisodeData['episode']['shots']; assets: EpisodeData['assets']; personaId: Id<'personas'> }) {
   return (
     <section>
       <Eyebrow className="mb-3">Shots</Eyebrow>
@@ -545,12 +546,33 @@ function ShotsSection(props: { shots: EpisodeData['episode']['shots'] }) {
                     .join(' › ')}
                 </p>
               )}
+              {shot.kind === 'asset' && (
+                <p className="mt-0.5 text-[11px] text-ash">
+                  Shows{' '}
+                  <Link
+                    to="/personas/$personaId/assets"
+                    params={{ personaId: props.personaId }}
+                    className="underline decoration-fog hover:text-ink hover:decoration-ink"
+                  >
+                    {assetName(props.assets, shot.assetId)}
+                  </Link>
+                </p>
+              )}
             </div>
           </li>
         ))}
       </ol>
     </section>
   )
+}
+
+/**
+ * The name of an asset a shot shows. An episode keeps its assets until it is
+ * measured or killed (core/assets.ts `mayRecord`); after that the operator
+ * may have deleted one, and the line says so.
+ */
+function assetName(assets: EpisodeData['assets'], assetId: string): string {
+  return assets.find((asset) => asset._id === assetId)?.name ?? 'an asset no longer in the library'
 }
 
 function RendersSection(props: { renders: EpisodeData['renders'] }) {

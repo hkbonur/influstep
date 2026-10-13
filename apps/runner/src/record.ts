@@ -106,6 +106,39 @@ export async function renderTitleCard(args: {
   }
 }
 
+/**
+ * An image of the asset library fitted into the frame on the paper
+ * background, drawn by headless Chromium: ffmpeg builds often decode no SVG
+ * or WebP, and a browser decodes every image the library takes.
+ */
+export async function renderImageFrame(args: {
+  image: string
+  contentType: string
+  out: string
+  width: number
+  height: number
+}): Promise<string> {
+  await fs.mkdir(path.dirname(args.out), { recursive: true })
+  const source = `data:${args.contentType};base64,${(await fs.readFile(args.image)).toString('base64')}`
+  const browser = await chromium.launch({ headless: true })
+  try {
+    const page = await browser.newPage({ viewport: { width: args.width, height: args.height } })
+    await page.setContent(`<!doctype html><html><body style="margin:0;background:#fafafa">
+      <img src="${source}" style="display:block;width:100vw;height:100vh;object-fit:contain" alt=""></body></html>`)
+    // decode() rejects when the browser cannot draw the file, so a broken image fails the job instead of rendering blank.
+    await page
+      .locator('img')
+      .evaluate((image: HTMLImageElement) => image.decode())
+      .catch((error: unknown) => {
+        throw new Error(`the browser could not draw the image ${path.basename(args.image)} (${args.contentType})`, { cause: error })
+      })
+    await page.screenshot({ path: args.out, type: 'png' })
+    return args.out
+  } finally {
+    await browser.close()
+  }
+}
+
 function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
