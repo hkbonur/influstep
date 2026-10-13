@@ -120,7 +120,7 @@ export const anthropicLlm: LlmProvider = {
               ? `What the audience is talking about:\n${brief.signals.map((signal) => `- ${signal.title}: ${signal.summary} (${signal.url})`).join('\n')}`
               : '',
             `The first line of the first part is the hook. Your convention on X: ${brief.hookNote}`,
-            `Every part is at most ${brief.partLimit} characters, and X counts every link as 23. X gets the parts exactly as you write them; nothing is added.`,
+            `Every part is at most ${brief.partLimit} characters, and X counts every link as 23. X gets the parts exactly as you write them; nothing is added. End on the post's own last point: no sign-off, no call to follow, no link.`,
             brief.problems.length > 0 ? `Your last draft broke these rules. Fix every one:\n- ${brief.problems.join('\n- ')}` : '',
             `Return a short title for the operator's calendar, in English, the parts in order, and ${brief.kind === 'image' ? 'the card title, in the language of the post' : 'an empty card title'}.`,
           ]

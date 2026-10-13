@@ -177,8 +177,10 @@ function postPartsFor(brief: PostBrief, args: { topic: string; intent: PostInten
   const [opener, ...rest] = THREAD_LINES[args.intent](text)
   const last = rest.pop()
   if (opener === undefined || last === undefined) throw new Error('a mock thread needs an opener and a last part')
-  const closing = [sponsorLine, `Follow ${brief.persona.name} for more ${brief.pillar.toLowerCase()}.`].filter(Boolean).join(' ')
-  return [lead(`${args.topic}: ${opener}`), ...rest, `${last} ${closing}`].map((part) => fit(part, brief.partLimit))
+  // Nothing is appended on X: the last part ends on its own point, with the sponsor mention when the slot carries one.
+  return [lead(`${args.topic}: ${opener}`), ...rest, [last, sponsorLine].filter(Boolean).join(' ')].map((part) =>
+    fit(part, brief.partLimit)
+  )
 }
 
 const LENGTH_WORDS: Record<PostLength, string> = { short: 'one-liners', medium: 'full posts', long: 'threads' }
