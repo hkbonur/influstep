@@ -123,19 +123,39 @@ const REPLY_OPENINGS: Record<ReplyOrigin, (handle: string) => string> = {
   search: () => 'Been there.',
 }
 
-const REPLY_TIPS = [
-  'Cap the retries, log the last one, and alert on it. The first failure is never the one that hurts.',
-  'Name every step and write down what you changed before the next change. Most of these bugs are naming bugs.',
-  'Decide what happens when the other side never answers. Build that path first; the happy one is easy.',
-]
+/** What the mock says in each catalog reply style (shared EXPERIMENT_CATALOG.reply_style), three of each, picked by the post. */
+const REPLY_BODIES: Record<string, readonly string[]> = {
+  tip: [
+    'Cap the retries, log the last one, and alert on it. The first failure is never the one that hurts.',
+    'Name every step and write down what you changed before the next change. Most of these bugs are naming bugs.',
+    'Decide what happens when the other side never answers. Build that path first; the happy one is easy.',
+  ],
+  question: [
+    'What does your flow do when a step fails halfway: retry, or stop and tell you?',
+    'Which step broke first for you, the trigger or the one after it?',
+    'Do you know today when the other side never answers, or only when a customer asks?',
+  ],
+  story: [
+    'Same thing hit me last month: a retry ran twice and sent two invoices. Now every step has a name and a cap.',
+    'I lost a weekend to this once. The fix was boring: one log line per step, and an alert on the last retry.',
+    'My first client flow broke on a Monday too. A missing answer, not a bug; I build that path first now.',
+  ],
+}
 
-/** A reply in the persona's voice: an opening for where the post came from, then one tip, picked by the post. */
+/**
+ * A reply in the persona's voice: an opening for where the post came from,
+ * then one line in the reply's style, picked by the post. A style the catalog
+ * does not list (an operator's own variant) gets the control's tip: only a
+ * real model reads the description.
+ */
 function replyTextFor(brief: ReplyBrief): string {
   if (brief.operatorAsked && namesSponsor(brief.post.text, brief.sponsorName))
     return `${REPLY_OPENINGS[brief.origin](brief.post.author.handle)} ${brief.sponsorName} does that: your flow sends one customer a prefilled form, and the answers come back into the flow.`
-  const tip = REPLY_TIPS[brief.post.text.length % REPLY_TIPS.length]
-  if (tip === undefined) throw new Error('the mock writer has no reply tips')
-  return `${REPLY_OPENINGS[brief.origin](brief.post.author.handle)} ${tip}`
+  const bodies = REPLY_BODIES[brief.style.key] ?? REPLY_BODIES.tip
+  if (bodies === undefined) throw new Error('the mock writer has no tips')
+  const body = bodies[brief.post.text.length % bodies.length]
+  if (body === undefined) throw new Error(`the mock writer has no "${brief.style.key}" lines`)
+  return `${REPLY_OPENINGS[brief.origin](brief.post.author.handle)} ${body}`
 }
 
 const REPORT_TITLES = 3

@@ -1,4 +1,5 @@
 import {
+  EXPERIMENT_CATALOG,
   POST_INTENTS,
   RUNNER_STALE_MS,
   isPost,
@@ -13,6 +14,7 @@ import { describe, expect, it } from 'vitest'
 import { internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
 import { addDays, dayKey, instantAt, weekStart } from './core/dates'
+import { startExperiment } from './core/experiments'
 import { writeScriptsDueBefore } from '../test/scripts'
 import { setup } from '../test/setup'
 
@@ -160,6 +162,38 @@ describe('posts on X', () => {
     }
     expect(written.find((episode) => episode.kind === 'image')?.post?.cardTitle).toBeTruthy()
     expect(written.find((episode) => episode.kind === 'thread')?.post?.parts.length).toBeGreaterThan(1)
+  })
+
+  it('gives the single posts of the week a post kind test’s variants, and neither the threads nor the video', async () => {
+    const t = setup()
+    const personaId = await xPersona(t)
+    const experimentId = await t.run(async (ctx) => {
+      const persona = await ctx.db.get(personaId)
+      if (!persona) throw new Error('persona vanished')
+      const variants = EXPERIMENT_CATALOG.post_kind.filter((variant) => variant.key === 'rotate' || variant.key === 'image')
+      return startExperiment(ctx, persona, {
+        name: 'Post kind: Image posts vs Rotate',
+        hypothesis: 'Image posts bring more follows.',
+        kind: 'post_kind',
+        metric: 'follows',
+        variants,
+        minExposures: 2000,
+        minConfidence: 0.9,
+        createdBy: 'operator',
+        reason: 'A test.',
+      })
+    })
+    const nextMonday = addDays(weekStart(dayKey(Date.now(), TIMEZONE)), 7)
+    await t.mutation(internal.internal.agents.planWeekMutation, { personaId, weekStart: nextMonday })
+    const planned = await episodesOf(t, personaId)
+    const singles = planned.filter((episode) => episode.kind === 'text' || episode.kind === 'image')
+    expect(singles.length).toBeGreaterThan(2)
+    for (const episode of planned.filter((candidate) => candidate.kind === 'video' || candidate.kind === 'thread'))
+      expect(episode.variantKey).toBeUndefined()
+    for (const post of singles) expect(post.experimentId).toBe(experimentId)
+    for (const post of singles.filter((candidate) => candidate.variantKey === 'image')) expect(post.kind).toBe('image')
+    const count = (key: string) => singles.filter((post) => post.variantKey === key).length
+    expect(Math.abs(count('rotate') - count('image'))).toBeLessThanOrEqual(1)
   })
 
   it('hands the runner a due post with its parts as written, and an image post with its card', async () => {

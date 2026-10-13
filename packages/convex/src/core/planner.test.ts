@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { pillarWeights, type PlatformFormat } from '@influstep/shared'
-import { planPostSlots, planWeek } from './planner'
+import { pillarWeights, type PlatformFormat, type XCadence } from '@influstep/shared'
+import { planPostSlots, planWeek, type PostKindPlan } from './planner'
 
 const persona = {
   pillars: ['n8n tutorials', 'AI agents', 'automation fails'],
@@ -148,11 +148,63 @@ describe('planPostSlots', () => {
       ],
       episodeCount: 0,
       signals: [],
+      postKinds: { mode: 'default', key: 'rotate' },
       now: Date.UTC(2026, 9, 13),
     })
     // Six of a in the last 28 days: b catches up first and ends with 3 of the 13. Without the history, or with
     // the August post counted, b would get 2.
     expect(posts).toHaveLength(7)
     expect(posts.filter((post) => post.pillar === 'b')).toHaveLength(3)
+  })
+
+  const mixedCadence = { postsPerDay: 3, kinds: ['text', 'image', 'thread'], intents: ['teach'], repliesPerDay: 5 } satisfies XCadence
+  const mixed: PlatformFormat = { ...format, cadence: mixedCadence }
+  const plainPersona = {
+    pillars: ['a'],
+    sponsorDial: 0,
+    sponsorRampEpisodes: 0,
+    timezone: 'UTC',
+    voice: undefined,
+    strategy: { pillarWeights: [], defaults: [] },
+  }
+  const week = (postKinds: PostKindPlan, slotFormat = mixed) =>
+    planPostSlots({
+      weekStart: '2026-10-19',
+      persona: plainPersona,
+      format: slotFormat,
+      posts: [],
+      episodeCount: 0,
+      signals: [],
+      postKinds,
+      now: Date.UTC(2026, 9, 13),
+    })
+
+  it('gives a post kind experiment’s variants to the single posts, balanced, and none to a thread', () => {
+    const posts = week({ mode: 'experiment', id: 'exp', variantKeys: ['rotate', 'image'], assigned: { rotate: 2 } })
+    const singles = posts.filter((post) => post.kind !== 'thread')
+    expect(singles.length).toBeGreaterThan(4)
+    for (const post of posts.filter((candidate) => candidate.kind === 'thread')) {
+      expect(post.experimentId).toBeUndefined()
+      expect(post.variantKey).toBeUndefined()
+    }
+    for (const post of singles) expect(post.experimentId).toBe('exp')
+    // Image posts are every single post of the image variant; rotate keeps alternating text and image.
+    for (const post of singles.filter((candidate) => candidate.variantKey === 'image')) expect(post.kind).toBe('image')
+    const count = (key: string) => singles.filter((post) => post.variantKey === key).length
+    expect(Math.abs(count('rotate') + 2 - count('image'))).toBeLessThanOrEqual(1)
+    expect(singles.slice(0, 2).map((post) => post.variantKey)).toEqual(['image', 'image'])
+  })
+
+  it('makes every single post the kind a decided default names, unless the cadence lacks it', () => {
+    const texts = week({ mode: 'default', key: 'text' })
+    expect(new Set(texts.filter((post) => post.kind !== 'thread').map((post) => post.kind))).toEqual(new Set(['text']))
+    for (const post of texts) expect(post.variantKey).toBeUndefined()
+
+    const rotated = week({ mode: 'default', key: 'rotate' })
+    expect(new Set(rotated.filter((post) => post.kind !== 'thread').map((post) => post.kind))).toEqual(new Set(['text', 'image']))
+
+    // The operator's cadence holds no image posts, so an image default cannot be honored: the posts rotate.
+    const noImages = week({ mode: 'default', key: 'image' }, { ...mixed, cadence: { ...mixedCadence, kinds: ['text', 'thread'] } })
+    expect(noImages.some((post) => post.kind === 'image')).toBe(false)
   })
 })

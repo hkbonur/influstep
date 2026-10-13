@@ -1,22 +1,29 @@
 import {
   DRAFT_STALE_MS,
+  EXPERIMENT_SUBJECT,
   REPLY_MEASURE_MS,
+  REPLY_PEER_MAX,
   REPLY_STATUS_LABELS,
+  effectiveVariant,
   engagedFirst,
   heardVerdict,
+  isReplyTargetKey,
+  leastAssigned,
   repliesLeft,
   replyProblems,
   type HeardPost,
   type PublishResult,
   type ReplyCounts,
   type ReplyStatus,
+  type ReplyTargetKey,
 } from '@influstep/shared'
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import { enqueueJob } from '../jobs/queue'
 import { refusal } from '../lib/errors'
 import { dayKey, instantAt } from './dates'
-import { formatFor, platformsOf } from './formats'
+import { episodeVariant } from './experiments'
+import { platformsOf, replyBudget } from './formats'
 import { workspaceOf } from './workspace'
 
 /**
@@ -35,19 +42,6 @@ export const REPLY_SEARCH_PER_SWEEP = 3
 
 /** How many heard posts one write_replies job writes. */
 export const REPLY_WRITES_PER_RUN = 10
-
-/** The persona's daily reply budget: its X cadence's, and none without X. */
-export function replyBudget(persona: Doc<'personas'>): number {
-  if (!platformsOf(persona).includes('x')) return 0
-  const cadence = formatFor(persona, 'x').cadence
-  if (!cadence) throw new Error(`persona ${persona._id} has an X format without a cadence`)
-  return cadence.repliesPerDay
-}
-
-/** Whether the persona listens on X at all: it has X and a reply budget above zero. */
-export function listens(persona: Doc<'personas'>): boolean {
-  return replyBudget(persona) > 0
-}
 
 /** Replies handed to the runner since the persona's local midnight that did not fail: what the budget counts. */
 export async function repliesSentToday(ctx: Reader, persona: Doc<'personas'>, now: number): Promise<number> {
@@ -70,13 +64,87 @@ export interface HeardOutcome {
   stale: number
 }
 
+/** The variant a reply carries from the reply experiment that ran when it was heard. */
+interface ReplyTag {
+  experimentId: Id<'experiments'>
+  variantKey: string
+}
+
+/**
+ * What one sweep answers and how (the reply dimensions). The target picks
+ * among the found posts: the most reach first, or authors under
+ * REPLY_PEER_MAX only. A running reply target experiment picks the sweep's
+ * target by its variants, balanced by the replies each already has, and every
+ * reply to a found post it keeps carries that variant; otherwise the target in
+ * force does (shared `effectiveVariant`). A running reply style experiment
+ * gives each kept reply a style the same way, one reply at a time.
+ */
+interface SweepPlan {
+  target: ReplyTargetKey
+  targetTag: ReplyTag | null
+  styles: { experimentId: Id<'experiments'>; keys: string[]; assigned: Record<string, number> } | null
+}
+
+async function sweepPlan(ctx: Reader, persona: Doc<'personas'>): Promise<SweepPlan> {
+  const running = await ctx.db
+    .query('experiments')
+    .withIndex('by_persona_status', (q) => q.eq('personaId', persona._id).eq('status', 'running'))
+    .first()
+  if (!running || EXPERIMENT_SUBJECT[running.kind] !== 'reply') {
+    return { target: targetKey(effectiveVariant('reply_target', {}, persona.strategy?.defaults).key), targetTag: null, styles: null }
+  }
+  const keys = running.variants.map((variant) => variant.key)
+  const assigned: Record<string, number> = {}
+  const tagged = await ctx.db
+    .query('replies')
+    .withIndex('by_experiment', (q) => q.eq('experimentId', running._id))
+    .collect()
+  for (const reply of tagged) {
+    if (reply.variantKey === undefined) continue
+    assigned[reply.variantKey] = (assigned[reply.variantKey] ?? 0) + 1
+  }
+  if (running.kind === 'reply_target') {
+    const variantKey = leastAssigned(keys, assigned)
+    return { target: targetKey(variantKey), targetTag: { experimentId: running._id, variantKey }, styles: null }
+  }
+  return {
+    target: targetKey(effectiveVariant('reply_target', {}, persona.strategy?.defaults).key),
+    targetTag: null,
+    styles: { experimentId: running._id, keys, assigned },
+  }
+}
+
+/** `startExperiment` takes only reply targets the listener knows, and the default came from one, so another key is a bug. */
+function targetKey(key: string): ReplyTargetKey {
+  if (!isReplyTargetKey(key)) throw new Error(`"${key}" is no reply target the listener knows`)
+  return key
+}
+
+/** Whether a found post is one the target answers. */
+function targeted(target: ReplyTargetKey, post: HeardPost): boolean {
+  if (target === 'reach') return true
+  return post.author.followers < REPLY_PEER_MAX
+}
+
+/** The variant a kept reply carries: the sweep's target for a reply to a found post, else the next balanced style, else none. */
+function tagFor(plan: SweepPlan, post: HeardPost): ReplyTag | null {
+  if (plan.targetTag !== null) return post.origin === 'search' ? plan.targetTag : null
+  if (plan.styles === null) return null
+  const variantKey = leastAssigned(plan.styles.keys, plan.styles.assigned)
+  plan.styles.assigned[variantKey] = (plan.styles.assigned[variantKey] ?? 0) + 1
+  return { experimentId: plan.styles.experimentId, variantKey }
+}
+
 /**
  * What the listener heard becomes rows: a post worth answering is heard and
  * waits for the writer, a post naming the sponsor is passed on with the
  * reason, everything else is dropped unseen (shared `heardVerdict`). Found
- * posts are kept by reach, at most REPLY_SEARCH_PER_SWEEP a sweep; a mention
- * or a reply under the persona's post is always kept. Drafts nobody posted
- * within a day go stale first.
+ * posts are kept by the sweep's target (`SweepPlan`), the ones with the most
+ * reach first, at most REPLY_SEARCH_PER_SWEEP a sweep; a mention or a reply
+ * under the persona's post is always kept. A kept reply carries the variant a
+ * running reply experiment gives it; a passed one carries none, since only
+ * the operator can ask for it. Drafts nobody posted within a day go stale
+ * first.
  */
 export async function storeHeard(
   ctx: MutationCtx,
@@ -84,6 +152,7 @@ export async function storeHeard(
   args: { posts: HeardPost[]; now: number; mock: boolean }
 ): Promise<HeardOutcome> {
   const stale = await skipStale(ctx, persona._id, args.now)
+  const plan = await sweepPlan(ctx, persona)
   const workspace = await workspaceOf(ctx, persona)
   const answered = new Set<string>()
   for (const post of args.posts) {
@@ -96,7 +165,7 @@ export async function storeHeard(
   const context = { personaHandle: persona.handle, sponsorName: workspace.sponsorName, answered, now: args.now }
   const judged = args.posts.map((post) => ({ post, verdict: heardVerdict(post, context) }))
   const found = judged
-    .filter(({ post, verdict }) => verdict.kind === 'keep' && post.origin === 'search')
+    .filter(({ post, verdict }) => verdict.kind === 'keep' && post.origin === 'search' && targeted(plan.target, post))
     .sort((a, b) => b.post.author.followers - a.post.author.followers)
     .slice(0, REPLY_SEARCH_PER_SWEEP)
   let kept = 0
@@ -104,12 +173,14 @@ export async function storeHeard(
   for (const { post, verdict } of judged) {
     if (verdict.kind === 'drop') continue
     if (verdict.kind === 'keep' && post.origin === 'search' && !found.some((candidate) => candidate.post === post)) continue
+    const tag = verdict.kind === 'keep' ? tagFor(plan, post) : null
     await ctx.db.insert('replies', {
       personaId: persona._id,
       origin: post.origin,
       inReplyTo: post.externalId,
       target: { text: post.text, url: post.url, postedAt: post.postedAt, author: post.author },
       pillar: post.pillar ?? undefined,
+      ...(tag === null ? {} : tag),
       status: verdict.kind === 'keep' ? 'heard' : 'skipped',
       text: '',
       skipReason: verdict.kind === 'skip' ? verdict.reason : undefined,
@@ -364,15 +435,35 @@ const HISTORY_ROWS = 30
 /**
  * The replies page: what waits for the operator, what goes out on its own or
  * is being written or sent, what went out with what it brought back, what
- * failed, and what the persona passed on and why.
+ * failed, and what the persona passed on and why. A reply heard during a
+ * reply experiment names the variant it tests.
  */
 export async function repliesView(ctx: Reader, persona: Doc<'personas'>, now: number) {
-  const of = (status: ReplyStatus) =>
-    ctx.db
-      .query('replies')
-      .withIndex('by_persona_status', (q) => q.eq('personaId', persona._id).eq('status', status))
-      .collect()
-  const newest = (rows: Doc<'replies'>[], at: (reply: Doc<'replies'>) => number) => rows.sort((a, b) => at(b) - at(a))
+  const experiments = new Map<Id<'experiments'>, Doc<'experiments'> | null>()
+  const withVariant = async (rows: Doc<'replies'>[]) => {
+    const out: (Doc<'replies'> & { variant: { label: string } | null })[] = []
+    for (const reply of rows) {
+      if (reply.experimentId === undefined) {
+        out.push({ ...reply, variant: null })
+        continue
+      }
+      const experiment = experiments.has(reply.experimentId)
+        ? (experiments.get(reply.experimentId) ?? null)
+        : await ctx.db.get(reply.experimentId)
+      experiments.set(reply.experimentId, experiment)
+      const variant = episodeVariant(reply, experiment)
+      out.push({ ...reply, variant: variant === undefined ? null : { label: variant.label } })
+    }
+    return out
+  }
+  const of = async (status: ReplyStatus) =>
+    withVariant(
+      await ctx.db
+        .query('replies')
+        .withIndex('by_persona_status', (q) => q.eq('personaId', persona._id).eq('status', status))
+        .collect()
+    )
+  const newest = <T extends Doc<'replies'>>(rows: T[], at: (reply: T) => number) => rows.sort((a, b) => at(b) - at(a))
   return {
     ...(await budgetView(ctx, persona, now)),
     waiting: newest(await of('draft'), (reply) => reply.target.author.followers),

@@ -424,6 +424,9 @@ export default defineSchema({
     target: replyTargetValidator,
     // The pillar a search matched the post on; absent on a mention or a reply.
     pillar: v.optional(v.string()),
+    // The reply experiment that gave it a variant when it was heard, and which; a reply heard in none carries neither.
+    experimentId: v.optional(v.id('experiments')),
+    variantKey: v.optional(v.string()),
     status: replyStatusValidator,
     // The reply as written, then as the operator edited it; empty until the writer writes it, and on a post passed on.
     text: v.string(),
@@ -445,6 +448,7 @@ export default defineSchema({
     mock: v.boolean(),
   })
     .index('by_persona_status', ['personaId', 'status'])
+    .index('by_experiment', ['experimentId'])
     .index('by_persona_target', ['personaId', 'inReplyTo'])
     .index('by_persona_dispatched', ['personaId', 'dispatchedAt'])
     .index('by_status_heard', ['status', 'heardAt']),

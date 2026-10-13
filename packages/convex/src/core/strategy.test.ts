@@ -476,6 +476,9 @@ describe('reviewStrategy', () => {
       await decidedByOperator(ctx, persona, 'length', ['standard', 'shorter'], 20)
       await decidedByOperator(ctx, persona, 'cta', ['follow', 'comment'], 10)
       await decidedByOperator(ctx, persona, 'publish_time', ['usual', 'earlier'], 5)
+      await decidedByOperator(ctx, persona, 'post_kind', ['rotate', 'text'], 4)
+      await decidedByOperator(ctx, persona, 'reply_style', ['tip', 'question'], 3)
+      await decidedByOperator(ctx, persona, 'reply_target', ['reach', 'peers'], 2)
       const review = async () => {
         const outcome = await reviewStrategy(ctx, await reload(ctx, persona._id), Date.now())
         if (!outcome.startedExperimentId) throw new Error('the review started no experiment')
@@ -496,6 +499,39 @@ describe('reviewStrategy', () => {
       await ctx.db.patch(persona._id, { sponsorDial: 0.4 })
       const sponsor = await review()
       expect(sponsor).toMatchObject({ kind: 'sponsor', name: 'Sponsor placement: Early vs After the point' })
+    })
+  })
+
+  it('gives a persona on X alone a post or reply experiment aimed at follows, and none once neither compares anything', async () => {
+    const t = setup()
+    await t.run(async (ctx) => {
+      const persona = await insertPersona(ctx)
+      const xFormat = persona.formats.find((format) => format.platform === 'x')
+      if (!xFormat?.cadence) throw new Error('the fixture persona lost its X cadence')
+      await ctx.db.patch(persona._id, { formats: [xFormat] })
+
+      const outcome = await reviewStrategy(ctx, await reload(ctx, persona._id), Date.now())
+      if (!outcome.startedExperimentId) throw new Error('the review started no experiment')
+      const experiment = await ctx.db.get(outcome.startedExperimentId)
+      expect(experiment).toMatchObject({
+        kind: 'post_kind',
+        metric: 'follows',
+        minExposures: 2000,
+        name: 'Post kind: Text posts vs Rotate',
+      })
+      const [started] = (await journalOf(ctx, persona._id)).filter((entry) => entry.kind === 'experiment_started')
+      expect(started?.reason).toBe(
+        'Post kind was never tested. It aims at follows per view: posts on X carry no link, so follows are the step closest to paying customers they move.'
+      )
+      if (!experiment) throw new Error('experiment vanished')
+      await stopExperiment(ctx, experiment._id, 'operator')
+
+      // No image posts and no replies: nothing on X alone compares anything.
+      await ctx.db.patch(persona._id, { formats: [{ ...xFormat, cadence: { ...xFormat.cadence, kinds: ['text'], repliesPerDay: 0 } }] })
+      const quiet = await reviewStrategy(ctx, await reload(ctx, persona._id), Date.now())
+      expect(quiet.startedExperimentId).toBeUndefined()
+      const note = await ctx.db.get(quiet.goalNoteId)
+      expect(note?.text).toMatch(/Next: nothing new to test this week\.$/)
     })
   })
 
@@ -647,8 +683,8 @@ describe('goal notes', () => {
     })
   })
 
-  it('says the trend in every direction and what comes next on X alone', () => {
-    const standing = { windowDays: 28, valuePerPaid: 29, currency: 'EUR', testing: null, onVideo: true }
+  it('says the trend in every direction and what comes next', () => {
+    const standing = { windowDays: 28, valuePerPaid: 29, currency: 'EUR', testing: null }
     expect(goalNoteText({ ...standing, paid: 0, previousPaid: 0 })).toBe(
       'No paid customers yet in the last 28 days, nor in the 28 days before. Next: nothing new to test this week.'
     )
@@ -658,9 +694,8 @@ describe('goal notes', () => {
     expect(goalNoteText({ ...standing, paid: 1, previousPaid: 1 })).toBe(
       '1 paid customer in the last 28 days, worth 29 EUR, the same as in the 28 days before. Next: nothing new to test this week.'
     )
-    expect(goalNoteText({ ...standing, paid: 3, previousPaid: 0, onVideo: false })).toBe(
-      '3 paid customers in the last 28 days, worth 87 EUR, up from none in the 28 days before. ' +
-        'Next: no experiment, since experiments vary videos and I post only on X.'
+    expect(goalNoteText({ ...standing, paid: 3, previousPaid: 0 })).toBe(
+      '3 paid customers in the last 28 days, worth 87 EUR, up from none in the 28 days before. Next: nothing new to test this week.'
     )
     expect(goalNoteText({ ...standing, paid: 1, previousPaid: 4, testing: 'Hook style: Question vs How to' })).toBe(
       '1 paid customer in the last 28 days, worth 29 EUR, down from 4 (116 EUR) in the 28 days before. Next: testing "Hook style: Question vs How to".'

@@ -144,6 +144,9 @@ export function effectiveStyle(
     cta: effectiveVariant('cta', episode, defaults),
     publish_time: effectiveVariant('publish_time', episode, defaults),
     description_format: effectiveVariant('description_format', episode, defaults),
+    post_kind: effectiveVariant('post_kind', episode, defaults),
+    reply_style: effectiveVariant('reply_style', episode, defaults),
+    reply_target: effectiveVariant('reply_target', episode, defaults),
   }
 }
 

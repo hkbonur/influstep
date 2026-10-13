@@ -3,11 +3,12 @@ import { X_POST_LIMIT, replyProblems } from '@influstep/shared'
 import { internal } from '../_generated/api'
 import type { Doc, Id } from '../_generated/dataModel'
 import { internalAction, internalMutation, internalQuery, type ActionCtx } from '../_generated/server'
+import { episodeEffectiveVariant } from '../core/experiments'
+import { listens } from '../core/formats'
 import { writerMemory, type WriterMemory } from '../core/memory'
 import {
   REPLY_WRITES_PER_RUN,
   dispatchQueuedReplies,
-  listens,
   repliesToMeasure,
   storeHeard,
   storeReplyCounts,
@@ -65,8 +66,8 @@ interface WritingContext {
   sponsorName: string
   directives: string[]
   memory: WriterMemory
-  /** The heard posts to write, oldest first, at most REPLY_WRITES_PER_RUN. */
-  heard: Doc<'replies'>[]
+  /** The heard posts to write, oldest first, at most REPLY_WRITES_PER_RUN, each with the reply style it is written in. */
+  heard: { reply: Doc<'replies'>; style: ReplyBrief['style'] }[]
 }
 
 export const writingContext = internalQuery({
@@ -83,12 +84,18 @@ export const writingContext = internalQuery({
       .query('replies')
       .withIndex('by_persona_status', (q) => q.eq('personaId', persona._id).eq('status', 'heard'))
       .take(REPLY_WRITES_PER_RUN)
+    const styled: WritingContext['heard'] = []
+    for (const reply of heard.sort((a, b) => a.heardAt - b.heardAt)) {
+      // The variant a reply style experiment gave the reply when it was heard, else the style in force.
+      const style = await episodeEffectiveVariant(ctx, 'reply_style', reply, persona)
+      styled.push({ reply, style: { key: style.key, label: style.label, description: style.description } })
+    }
     return {
       persona,
       sponsorName: workspace.sponsorName,
       directives: directives.map((directive) => directive.text),
       memory: await writerMemory(ctx, persona._id, workspace.sponsorName),
-      heard: heard.sort((a, b) => a.heardAt - b.heardAt),
+      heard: styled,
     }
   },
 })
@@ -106,8 +113,8 @@ export const writeReplies = internalAction({
     const context = await ctx.runQuery(internal.internal.replies.writingContext, { personaId })
     const llm = llmProvider()
     const outcome = { drafts: 0, queued: 0, skipped: 0 }
-    for (const reply of context.heard) {
-      const written = await writeOne(llm, briefFor(context, reply))
+    for (const { reply, style } of context.heard) {
+      const written = await writeOne(llm, briefFor(context, reply, style))
       const status = await ctx.runMutation(internal.internal.replies.storeWrittenMutation, { replyId: reply._id, written })
       if (status === 'draft') outcome.drafts += 1
       else if (status === 'queued') outcome.queued += 1
@@ -117,7 +124,7 @@ export const writeReplies = internalAction({
   },
 })
 
-function briefFor(context: WritingContext, reply: Doc<'replies'>): ReplyBrief {
+function briefFor(context: WritingContext, reply: Doc<'replies'>, style: ReplyBrief['style']): ReplyBrief {
   const { persona } = context
   return {
     persona: {
@@ -133,6 +140,7 @@ function briefFor(context: WritingContext, reply: Doc<'replies'>): ReplyBrief {
     pillar: reply.pillar ?? null,
     sponsorName: context.sponsorName,
     operatorAsked: reply.operatorAsked,
+    style,
     memory: context.memory,
     directives: context.directives,
     voice: persona.voice

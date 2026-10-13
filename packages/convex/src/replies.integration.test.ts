@@ -1,4 +1,4 @@
-import { REPLY_REACH_MIN, runnerJobSchema } from '@influstep/shared'
+import { EXPERIMENT_CATALOG, REPLY_PEER_MAX, REPLY_REACH_MIN, runnerJobSchema } from '@influstep/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
@@ -186,5 +186,109 @@ describe('engagement on X', () => {
 
     const report = await t.query(api.private.report.forPersona, { personaId: persona._id })
     expect(report?.engagement).toMatchObject({ sent: 1, measured: 1, impressions: sent?.counts?.impressions, mock: true })
+  })
+
+  it('tests reply styles on the replies it hears, and answers in the winner once it is decided', async () => {
+    const t = setup()
+    const persona = await t.run((ctx) => insertPersona(ctx))
+    await setCadence(t, persona, { repliesPerDay: 20 })
+    const [tip, question] = EXPERIMENT_CATALOG.reply_style
+    if (!tip || !question) throw new Error('the reply style catalog lost a variant')
+    const experimentId = await t.mutation(api.private.experiments.create, {
+      personaId: persona._id,
+      name: 'Reply style: Question back vs Tip',
+      hypothesis: 'A question back brings more follows than a tip.',
+      kind: 'reply_style',
+      metric: 'follows',
+      variants: [tip, question],
+      minExposures: 1_000_000,
+      minConfidence: 0.9,
+    })
+
+    // Every reply worth answering carries a style, the two in turn, and the writer writes in it.
+    await listenNow(t, persona)
+    const heard = await view(t, persona)
+    const styles = heard.waiting.map((reply) => reply.variantKey)
+    expect(heard.waiting.length).toBeGreaterThanOrEqual(2)
+    for (const reply of heard.waiting) expect(reply.experimentId).toBe(experimentId)
+    const count = (key: string) => styles.filter((style) => style === key).length
+    expect(Math.abs(count('tip') - count('question'))).toBeLessThanOrEqual(1)
+    for (const reply of heard.waiting) expect(reply.text.endsWith('?')).toBe(reply.variantKey === 'question')
+    for (const reply of heard.skipped) expect(reply.variantKey).toBeUndefined()
+
+    // The operator posts them all, and the analyst reads what they brought back before it evaluates the test.
+    for (const reply of heard.waiting) {
+      await t.mutation(api.private.replies.post, { replyId: reply._id, text: reply.text })
+      await runnerSends(t)
+    }
+    await t.mutation(api.private.personas.pullMetrics, { personaId: persona._id })
+    await t.finishAllScheduledFunctions(() => {})
+    const [running] = await t.query(api.private.experiments.list, { personaId: persona._id })
+    expect(running?.status).toBe('running')
+    for (const stat of running?.stats ?? []) {
+      expect(stat.episodes).toBe(count(stat.key))
+      expect(stat.exposures).toBeGreaterThan(0)
+    }
+
+    await t.mutation(api.private.experiments.override, { experimentId, winnerKey: 'question', note: 'Questions start conversations.' })
+    const learned = await t.run(async (ctx) => {
+      const reloaded = await ctx.db.get(persona._id)
+      const memories = await ctx.db
+        .query('memories')
+        .withIndex('by_persona_status', (q) => q.eq('personaId', persona._id).eq('status', 'active'))
+        .collect()
+      return { defaults: reloaded?.strategy?.defaults, learnings: memories.filter((memory) => memory.dimension === 'reply_style') }
+    })
+    expect(learned.defaults).toEqual([expect.objectContaining({ kind: 'reply_style', key: 'question', experimentId })])
+    expect(learned.learnings.map((learning) => learning.text)).toEqual([
+      'Reply style: "Question back" over "Tip", chosen by the operator: Questions start conversations.',
+    ])
+
+    // The next sweep carries no variant, and every reply asks a question back.
+    vi.setSystemTime(Date.now() + WINDOW_MS)
+    await listenNow(t, persona)
+    const next = (await view(t, persona)).waiting
+    expect(next.length).toBeGreaterThan(0)
+    for (const reply of next) {
+      expect(reply.variantKey).toBeUndefined()
+      expect(reply.text.endsWith('?')).toBe(true)
+    }
+  })
+
+  it('answers the found posts of smaller accounts while a reply target test gives a sweep the peers', async () => {
+    const t = setup()
+    const persona = await t.run((ctx) => insertPersona(ctx))
+    await setCadence(t, persona, { repliesPerDay: 20 })
+    const [reach, peers] = EXPERIMENT_CATALOG.reply_target
+    if (!reach || !peers) throw new Error('the reply target catalog lost a variant')
+    const experimentId = await t.mutation(api.private.experiments.create, {
+      personaId: persona._id,
+      name: 'Reply target: Peers vs Most reach',
+      hypothesis: 'Peers follow back more often.',
+      kind: 'reply_target',
+      metric: 'follows',
+      variants: [reach, peers],
+      minExposures: 1_000_000,
+      minConfidence: 0.9,
+    })
+    // Sweeps in turn get the variant with the fewest replies, so within a few windows both have found posts.
+    const found = []
+    for (let window = 0; window < 6; window += 1) {
+      await listenNow(t, persona)
+      vi.setSystemTime(Date.now() + WINDOW_MS)
+    }
+    const page = await view(t, persona)
+    for (const reply of [...page.waiting, ...page.skipped]) {
+      if (reply.origin !== 'search' || reply.status === 'skipped') {
+        expect(reply.variantKey).toBeUndefined()
+        continue
+      }
+      expect(reply.experimentId).toBe(experimentId)
+      found.push(reply)
+    }
+    const byPeers = found.filter((reply) => reply.variantKey === 'peers')
+    expect(byPeers.length).toBeGreaterThan(0)
+    expect(found.some((reply) => reply.variantKey === 'reach')).toBe(true)
+    for (const reply of byPeers) expect(reply.target.author.followers).toBeLessThan(REPLY_PEER_MAX)
   })
 })

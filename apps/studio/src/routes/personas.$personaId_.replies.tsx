@@ -1,5 +1,5 @@
 import { api } from '@influstep/convex/_generated/api'
-import type { Doc, Id } from '@influstep/convex/_generated/dataModel'
+import type { Id } from '@influstep/convex/_generated/dataModel'
 import { REPLY_ORIGIN_LABELS, X_POST_LIMIT, repliesLeft, replyProblems, xLength } from '@influstep/shared'
 import { createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
@@ -24,7 +24,7 @@ export const Route = createFileRoute('/personas/$personaId_/replies')({ componen
  */
 type RepliesData = NonNullable<FunctionReturnType<typeof api.private.replies.list>>
 type OnX = Extract<RepliesData, { onX: true }>
-type Reply = Doc<'replies'>
+type Reply = OnX['waiting'][number]
 
 /**
  * A persona's replies on X (DESIGN.md, Replies page): what waits for the
@@ -243,6 +243,8 @@ function TargetPost(props: { reply: Reply }) {
         </span>
         <span>· {REPLY_ORIGIN_LABELS[props.reply.origin]}</span>
         {props.reply.pillar && <span>· {props.reply.pillar}</span>}
+        {/* A reply heard during a reply experiment carries the variant it tests (Experiments page). */}
+        {props.reply.variant && <span>· testing {props.reply.variant.label}</span>}
         <a href={target.url} target="_blank" rel="noreferrer" className="underline decoration-fog hover:text-ink hover:decoration-ink">
           {relativeTime(target.postedAt)}
         </a>

@@ -4,6 +4,7 @@ import {
   LENGTH_SEC_MAX,
   LENGTH_SEC_MIN,
   SPONSOR_SEGMENTS,
+  catalogControl,
   effectiveStyle,
   hookOf,
   lengthProblem,
@@ -187,6 +188,7 @@ describe('the mock reply writer', () => {
       pillar: 'n8n tutorials',
       sponsorName: SPONSOR,
       operatorAsked: false,
+      style: catalogControl('reply_style'),
       memory: { goal: 'Paying Formstep customers', standing: null, rules: ['Never reply to politics.'], facts: [], learnings: [] },
       directives: [],
       voice: null,
@@ -222,5 +224,19 @@ describe('the mock reply writer', () => {
     const answered = await mockLlm.writeReply({ ...sponsored, operatorAsked: true })
     if (answered.kind !== 'reply') throw new Error('the asked post was passed on')
     expect(answered.text).toContain(`${SPONSOR} does that`)
+  })
+
+  it('answers in the reply style it is given', async () => {
+    const write = async (key: string) => {
+      const style = EXPERIMENT_CATALOG.reply_style.find((variant) => variant.key === key)
+      if (!style) throw new Error(`no reply style "${key}"`)
+      const draft = await mockLlm.writeReply(replyBrief({ style, memory: { ...replyBrief().memory, rules: [] } }))
+      if (draft.kind !== 'reply') throw new Error('the post was passed on')
+      expect(replyProblems(draft.text, { sponsorName: SPONSOR, sponsorAllowed: false })).toEqual([])
+      return draft.text
+    }
+    expect(await write('question')).toMatch(/\?$/)
+    expect(await write('tip')).not.toMatch(/\?$/)
+    expect(await write('story')).not.toEqual(await write('tip'))
   })
 })

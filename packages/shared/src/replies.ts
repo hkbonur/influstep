@@ -61,6 +61,9 @@ export const REPLIES_PER_DAY_DEFAULT = 5
 /** A found post needs an author with this many followers: a reply under a post nobody reads brings nobody back. */
 export const REPLY_REACH_MIN = 1000
 
+/** Under the peers reply target, a found post's author has fewer followers than this, where a reply stands out. */
+export const REPLY_PEER_MAX = 10_000
+
 const HOUR_MS = 3_600_000
 
 /** How old a post may be to still get an answer: a found post goes cold within the day, a mention keeps two. */

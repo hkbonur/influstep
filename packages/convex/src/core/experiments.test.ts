@@ -1,4 +1,4 @@
-import { EXPERIMENT_CATALOG } from '@influstep/shared'
+import { EXPERIMENT_CATALOG, type ReplyOrigin, type XCadence } from '@influstep/shared'
 import { describe, expect, it } from 'vitest'
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx } from '../_generated/server'
@@ -148,6 +148,43 @@ describe('startExperiment', () => {
       ).rejects.toThrow('"Emoji first" is no description format; the footer puts either the link or the code first.')
       const experimentId = await startExperiment(ctx, persona, catalogExperiment('description_format', ['link', 'code']))
       expect((await experimentOf(ctx, experimentId)).kind).toBe('description_format')
+    })
+  })
+
+  it('refuses a post or reply test that would compare nothing, a metric a post or reply cannot carry, and a key nothing acts on', async () => {
+    const t = setup()
+    await t.run(async (ctx) => {
+      const persona = await insertPersona(ctx)
+      const withCadence = async (cadence: Partial<XCadence>) => {
+        const formats = persona.formats.map((format) =>
+          format.cadence ? { ...format, cadence: { ...format.cadence, ...cadence } } : format
+        )
+        await ctx.db.patch(persona._id, { formats })
+        const reloaded = await ctx.db.get(persona._id)
+        if (!reloaded) throw new Error('persona vanished')
+        return reloaded
+      }
+      const silent = await withCadence({ repliesPerDay: 0, kinds: ['text', 'thread'] })
+      await expect(startExperiment(ctx, silent, catalogExperiment('reply_style', ['tip', 'question']))).rejects.toThrow(
+        'Ada Automates answers nobody on X, so a reply style test would compare nothing. Give it X and a reply budget above 0 first.'
+      )
+      await expect(startExperiment(ctx, silent, catalogExperiment('post_kind', ['rotate', 'image']))).rejects.toThrow(
+        "Ada Automates's X cadence does not hold both text and image posts, so a post kind test would compare nothing."
+      )
+
+      const ready = await withCadence({ repliesPerDay: 5, kinds: ['text', 'image', 'thread'] })
+      await expect(
+        startExperiment(ctx, ready, { ...catalogExperiment('reply_style', ['tip', 'question']), metric: 'clicks' })
+      ).rejects.toThrow('A reply style test is decided on views or follows: replies on X carry no link and no watch rate.')
+      const target = catalogExperiment('reply_target', ['reach', 'peers'])
+      await expect(
+        startExperiment(ctx, ready, {
+          ...target,
+          variants: target.variants.map((variant) => (variant.isControl ? variant : { ...variant, key: 'famous', label: 'Famous' })),
+        })
+      ).rejects.toThrow('"Famous" is no reply target the listener knows; the keys are reach, peers.')
+      const experimentId = await startExperiment(ctx, ready, catalogExperiment('post_kind', ['rotate', 'image']))
+      expect((await experimentOf(ctx, experimentId)).kind).toBe('post_kind')
     })
   })
 })
@@ -499,6 +536,109 @@ describe('variantStatsFor', () => {
         { key: 'follow', episodes: 0, exposures: 0, successes: 0 },
         { key: 'comment', episodes: 1, exposures: 40, successes: 2 },
       ])
+    })
+  })
+})
+
+/** A reply X took and the analyst read, heard at `heardAt`. */
+async function insertSentReply(
+  ctx: MutationCtx,
+  persona: Doc<'personas'>,
+  fields: {
+    heardAt: number
+    impressions: number
+    follows: number
+    origin?: ReplyOrigin
+    experimentId?: Id<'experiments'>
+    variantKey?: string
+  }
+): Promise<Id<'replies'>> {
+  const externalId = Math.random().toString(36).slice(2)
+  return ctx.db.insert('replies', {
+    personaId: persona._id,
+    origin: fields.origin ?? 'search',
+    inReplyTo: externalId,
+    target: {
+      text: 'A post',
+      url: `https://x.com/dana/status/${externalId}`,
+      postedAt: fields.heardAt,
+      author: { handle: 'dana', name: 'Dana', followers: 3_000 },
+    },
+    ...(fields.experimentId === undefined ? {} : { experimentId: fields.experimentId, variantKey: fields.variantKey }),
+    status: 'sent',
+    text: 'A reply.',
+    operatorAsked: false,
+    heardAt: fields.heardAt,
+    writtenAt: fields.heardAt,
+    dispatchedAt: fields.heardAt,
+    sentAt: fields.heardAt,
+    externalId: `x-${externalId}`,
+    url: `https://x.com/ada/status/x-${externalId}`,
+    counts: { impressions: fields.impressions, likes: 0, replies: 0, profileVisits: 0, follows: fields.follows },
+    measuredAt: fields.heardAt,
+    mock: true,
+  })
+}
+
+describe('a reply experiment', () => {
+  it('counts follows per impression over its sent and measured replies', async () => {
+    const t = setup()
+    await t.run(async (ctx) => {
+      const persona = await insertPersona(ctx)
+      const experimentId = await startExperiment(ctx, persona, catalogExperiment('reply_style', ['tip', 'question']))
+      const now = Date.now()
+      await insertSentReply(ctx, persona, { heardAt: now - DAY, impressions: 1000, follows: 4, experimentId, variantKey: 'tip' })
+      await insertSentReply(ctx, persona, { heardAt: now - DAY, impressions: 500, follows: 6, experimentId, variantKey: 'question' })
+      await insertSentReply(ctx, persona, { heardAt: now - DAY, impressions: 700, follows: 1, experimentId, variantKey: 'question' })
+      // In no experiment: not counted.
+      await insertSentReply(ctx, persona, { heardAt: now - DAY, impressions: 9000, follows: 90 })
+      expect(await variantStatsFor(ctx, await experimentOf(ctx, experimentId))).toEqual([
+        { key: 'tip', episodes: 1, exposures: 1000, successes: 4 },
+        { key: 'question', episodes: 2, exposures: 1200, successes: 7 },
+      ])
+    })
+  })
+
+  it('measures a reply default since its decision by each reply’s own variant or the default, and a target on found posts only', async () => {
+    const t = setup()
+    await t.run(async (ctx) => {
+      const persona = await insertPersona(ctx)
+      const since = Date.now() - 20 * DAY
+      const at = (days: number) => Date.now() - days * DAY
+      const styleId = await startExperiment(ctx, persona, catalogExperiment('reply_style', ['tip', 'question']))
+      await stopExperiment(ctx, styleId, 'operator')
+      const [, peers] = EXPERIMENT_CATALOG.reply_target
+      const [, question] = EXPERIMENT_CATALOG.reply_style
+      if (!peers || !question) throw new Error('the reply catalogs lost a variant')
+      await ctx.db.patch(persona._id, {
+        strategy: {
+          pillarWeights: [],
+          defaults: [
+            { kind: 'reply_style', key: question.key, label: question.label, description: question.description, since },
+            { kind: 'reply_target', key: peers.key, label: peers.label, description: peers.description, since },
+          ],
+        },
+      })
+      const reader = await ctx.db.get(persona._id)
+      if (!reader) throw new Error('persona vanished')
+      await insertSentReply(ctx, reader, { heardAt: at(10), impressions: 1000, follows: 5 })
+      await insertSentReply(ctx, reader, { heardAt: at(9), impressions: 1000, follows: 5, origin: 'mention' })
+      await insertSentReply(ctx, reader, { heardAt: at(8), impressions: 1000, follows: 5, experimentId: styleId, variantKey: 'question' })
+      // Not counted: heard before the default, or its own variant is the tip.
+      await insertSentReply(ctx, reader, { heardAt: at(30), impressions: 1000, follows: 5 })
+      await insertSentReply(ctx, reader, { heardAt: at(7), impressions: 1000, follows: 5, experimentId: styleId, variantKey: 'tip' })
+      expect(await variantStatsSince(ctx, reader, 'reply_style', 'question', since, 'follows')).toEqual({
+        key: 'question',
+        episodes: 3,
+        exposures: 3000,
+        successes: 15,
+        episodeIds: [],
+      })
+      // A mention has no target to pick, so the peers default counts the found posts only.
+      expect(await variantStatsSince(ctx, reader, 'reply_target', 'peers', since, 'follows')).toMatchObject({
+        episodes: 3,
+        exposures: 3000,
+      })
     })
   })
 })

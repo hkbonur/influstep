@@ -3,8 +3,10 @@ import type { Id } from '@influstep/convex/_generated/dataModel'
 import {
   EXPERIMENT_KINDS,
   EXPERIMENT_KIND_LABELS,
-  METRIC_KEYS,
+  EXPERIMENT_SUBJECT,
+  EXPERIMENT_SUBJECT_NOUNS,
   METRIC_LABELS,
+  experimentMetrics,
   type ExperimentKind,
   type MetricKey,
   type StrategyDefault,
@@ -37,7 +39,7 @@ function ExperimentsPage() {
     <>
       <PageHeader
         title="Experiments"
-        lead="One running experiment per persona, picked by its weekly strategy review or set up by you. Every planned episode carries a variant; the analyst decides after each measurement window."
+        lead="One running experiment per persona, picked by its weekly strategy review or set up by you. Every planned video or X post, or every reply the listener keeps, carries a variant of the dimension under test; the analyst decides after each measurement window."
         actions={
           <Button variant="primary" onClick={() => setCreating((value) => !value)}>
             {creating ? 'Close' : 'New experiment'}
@@ -145,7 +147,7 @@ function ExperimentCard(props: { experiment: ExperimentRow }) {
         <thead className="text-xs text-ash">
           <tr className="text-left">
             <th className="py-1 font-medium">Variant</th>
-            <th className="py-1 text-right font-medium">Episodes</th>
+            <th className="py-1 text-right font-medium">{carriersLabel(experiment.kind)}</th>
             <th className="py-1 text-right font-medium">Exposures</th>
             <th className="py-1 text-right font-medium">{METRIC_LABELS[experiment.metric]}</th>
             <th className="py-1 text-right font-medium">Rate</th>
@@ -215,6 +217,12 @@ function ExperimentCard(props: { experiment: ExperimentRow }) {
       )}
     </article>
   )
+}
+
+/** What a variant's count column counts: "Episodes", "Posts" or "Replies". */
+function carriersLabel(kind: ExperimentKind): string {
+  const noun = EXPERIMENT_SUBJECT_NOUNS[EXPERIMENT_SUBJECT[kind]].other
+  return noun.charAt(0).toUpperCase() + noun.slice(1)
 }
 
 /**
@@ -295,8 +303,9 @@ function NewExperimentForm(props: { personas: PersonaOption[]; firstPersonaId: I
         </select>
       </Field>
       <Field label="Metric">
-        <select name="metric" className="field" defaultValue="clicks">
-          {METRIC_KEYS.map((metric) => (
+        {/* Keyed by the dimension: a post or reply test offers fewer metrics, so the pick starts over with it. */}
+        <select key={kind} name="metric" className="field" defaultValue={EXPERIMENT_SUBJECT[kind] === 'video' ? 'clicks' : 'follows'}>
+          {experimentMetrics(kind).map((metric) => (
             <option key={metric} value={metric}>
               {METRIC_LABELS[metric]}
             </option>

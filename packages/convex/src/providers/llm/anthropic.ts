@@ -191,7 +191,8 @@ export const anthropicLlm: LlmProvider = {
             brief.operatorAsked
               ? 'Your operator asked you to answer this post, so answer it: skip is false.'
               : 'Pass on the post (skip true, with a one-sentence reason in your own words) when one of your rules says not to answer it, or when you have nothing worth adding. Otherwise skip is false and the reason is empty.',
-            `The reply adds something of your own: an answer, a tip, a question back. One part of at most ${brief.partLimit} characters; X counts a link as 23, but put no link in it. No hashtags, no call to follow, no self-promotion.`,
+            `Reply style: ${brief.style.description}`,
+            `The reply adds something of your own, in that style. One part of at most ${brief.partLimit} characters; X counts a link as 23, but put no link in it. No hashtags, no call to follow, no self-promotion.`,
             brief.problems.length > 0 ? `Your last draft broke these rules. Fix every one:\n- ${brief.problems.join('\n- ')}` : '',
           ]
             .filter(Boolean)

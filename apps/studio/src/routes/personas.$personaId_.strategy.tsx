@@ -2,6 +2,7 @@ import { api } from '@influstep/convex/_generated/api'
 import type { Doc, Id } from '@influstep/convex/_generated/dataModel'
 import {
   EXPERIMENT_KINDS,
+  EXPERIMENT_SUBJECT,
   EXPERIMENT_KIND_LABELS,
   JOURNAL_KIND_LABELS,
   METRIC_DENOMINATOR,
@@ -201,16 +202,10 @@ function Goal(props: { persona: Doc<'personas'>; goal: StrategyData['goal'] }) {
 function NowTesting(props: { persona: Doc<'personas'>; running: ExperimentRow | null }) {
   const running = props.running
   if (running === null) {
-    // The review starts experiments only for a persona with a video platform: every dimension is a video's.
-    const onVideo = props.persona.formats.some((format) => format.platform !== 'x')
     return (
       <section>
         <SectionHeading>Now testing</SectionHeading>
-        <p className="text-ash">
-          {onVideo
-            ? 'Nothing running. The next review picks one.'
-            : `Nothing running. Experiments vary videos, and ${props.persona.name} posts only on X.`}
-        </p>
+        <p className="text-ash">Nothing running. The next review picks one.</p>
       </section>
     )
   }
@@ -259,21 +254,24 @@ function NowTesting(props: { persona: Doc<'personas'>; running: ExperimentRow | 
 }
 
 /**
- * What every episode does on each dimension unless its experiment varies it:
- * the persona's default from a decided experiment, or the catalog's control,
- * "as before". A default names the day it took over and the learning behind it.
- * Publish time is the exception: a decided test moves the publish hours instead
- * of storing a default, so its row always reads the usual hour and points at
- * the hours.
+ * What every episode, post and reply does on each dimension unless its
+ * experiment varies it: the persona's default from a decided experiment, or
+ * the catalog's control, "as before". A default names the day it took over
+ * and the learning behind it. Publish time is the exception: a decided test
+ * moves the publish hours instead of storing a default, so its row always
+ * reads the usual hour and points at the hours. The post and reply rows show
+ * only for a persona on X.
  */
 function Defaults(props: { persona: Doc<'personas'>; learnings: Learning[]; runningKind: ExperimentRow['kind'] | undefined }) {
   const stored = props.persona.strategy?.defaults
   const style = effectiveStyle({}, stored)
+  const onX = props.persona.formats.some((format) => format.platform === 'x')
+  const kinds = EXPERIMENT_KINDS.filter((kind) => onX || EXPERIMENT_SUBJECT[kind] === 'video')
   return (
     <section>
       <SectionHeading>Defaults</SectionHeading>
       <dl className="divide-y divide-mist border-y border-mist">
-        {EXPERIMENT_KINDS.map((kind) => {
+        {kinds.map((kind) => {
           const testedNow = props.runningKind === kind
           if (kind === 'publish_time') {
             return (

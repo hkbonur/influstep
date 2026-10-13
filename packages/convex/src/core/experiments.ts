@@ -1,16 +1,26 @@
 import {
   EXPERIMENT_KIND_LABELS,
+  EXPERIMENT_SUBJECT,
+  EXPERIMENT_SUBJECT_NOUNS,
   METRIC_DENOMINATOR,
+  METRIC_LABELS,
   METRIC_RATE_LABELS,
   PLATFORM_LABELS,
+  POST_KIND_VARIANT_KEYS,
+  REPLY_TARGET_KEYS,
   confidencePercent,
   effectiveVariant,
+  experimentMetrics,
   isPost,
+  isPostKindVariantKey,
+  isReplyTargetKey,
   variantRate,
   type EffectiveVariant,
   type ExperimentKind,
   type JournalActor,
   type MetricKey,
+  type ReplyCounts,
+  type SponsorSegment,
   type VariantStats,
 } from '@influstep/shared'
 import type { Infer } from 'convex/values'
@@ -21,7 +31,8 @@ import type { journalNumberValidator, strategyDefaultValidator, variantValidator
 import { DESCRIPTION_FORMATS, isDescriptionFormat } from './attribution'
 import { hourText } from './dates'
 import { activeDiscountCodes } from './discounts'
-import { publishHourFor } from './formats'
+import { listens, publishHourFor, xCadence } from './formats'
+import type { PlannerExperiment, PostKindPlan } from './planner'
 import { latestPerPublication } from './report'
 
 /**
@@ -35,23 +46,22 @@ type Variant = Infer<typeof variantValidator>
 type StoredDefault = Infer<typeof strategyDefaultValidator>
 type JournalNumber = Infer<typeof journalNumberValidator>
 
-/** The variant an episode carries, with the dimension its experiment varies, as shared `effectiveVariant` reads it. */
+/** The variant an episode or a reply carries, with the dimension its experiment varies, as shared `effectiveVariant` reads it. */
 export type EpisodeVariant = Variant & { kind: ExperimentKind }
 
+/** What carries a variant: an episode (a video or a post), or a reply on X. */
+type Carrier = { _id: Id<'episodes'> | Id<'replies'>; variantKey?: string }
+
 /**
- * The variant an episode carries; none when the episode is in no experiment.
- * A key its experiment does not have is a bug, never a reason to treat the
- * episode as if it carried no variant.
+ * The variant an episode or a reply carries; none when it is in no
+ * experiment. A key its experiment does not have is a bug, never a reason to
+ * treat it as if it carried no variant.
  */
-export function episodeVariant(
-  episode: Pick<Doc<'episodes'>, '_id' | 'variantKey'>,
-  experiment: Doc<'experiments'> | null
-): EpisodeVariant | undefined {
-  if (episode.variantKey === undefined) return undefined
-  if (!experiment) throw new Error(`episode ${episode._id} carries variant "${episode.variantKey}" but no experiment`)
-  const variant = experiment.variants.find((candidate) => candidate.key === episode.variantKey)
-  if (!variant)
-    throw new Error(`episode ${episode._id} carries variant "${episode.variantKey}", which experiment ${experiment._id} does not have`)
+export function episodeVariant(carrier: Carrier, experiment: Doc<'experiments'> | null): EpisodeVariant | undefined {
+  if (carrier.variantKey === undefined) return undefined
+  if (!experiment) throw new Error(`${carrier._id} carries variant "${carrier.variantKey}" but no experiment`)
+  const variant = experiment.variants.find((candidate) => candidate.key === carrier.variantKey)
+  if (!variant) throw new Error(`${carrier._id} carries variant "${carrier.variantKey}", which experiment ${experiment._id} does not have`)
   return { ...variant, kind: experiment.kind }
 }
 
@@ -74,21 +84,80 @@ export async function plannedVariant(
 }
 
 /**
- * What an episode does on one dimension: shared `effectiveVariant` over the
- * variant its experiment gave it and the persona's defaults in force.
+ * What an episode or a reply does on one dimension: shared `effectiveVariant`
+ * over the variant its experiment gave it and the persona's defaults in
+ * force. A reply places no sponsor, so it has no sponsor segment.
  */
 export async function episodeEffectiveVariant(
   ctx: Reader,
   kind: ExperimentKind,
-  episode: Pick<Doc<'episodes'>, '_id' | 'variantKey' | 'experimentId' | 'sponsorSegment'>,
+  carrier: Carrier & { experimentId?: Id<'experiments'>; sponsorSegment?: SponsorSegment },
   persona: Pick<Doc<'personas'>, 'strategy'>
 ): Promise<EffectiveVariant> {
-  const experiment = episode.experimentId === undefined ? null : await ctx.db.get(episode.experimentId)
+  const experiment = carrier.experimentId === undefined ? null : await ctx.db.get(carrier.experimentId)
   return effectiveVariant(
     kind,
-    { variant: episodeVariant(episode, experiment), sponsorSegment: episode.sponsorSegment },
+    { variant: episodeVariant(carrier, experiment), sponsorSegment: carrier.sponsorSegment },
     persona.strategy?.defaults
   )
+}
+
+/**
+ * The running experiment as the video planner reads it, with the videos each
+ * variant already has; none when no experiment runs or the one that runs
+ * varies posts or replies (shared `EXPERIMENT_SUBJECT`).
+ */
+export function videoPlanExperiment(
+  running: Doc<'experiments'> | null,
+  episodes: readonly Pick<Doc<'episodes'>, 'experimentId' | 'variantKey'>[]
+): PlannerExperiment | undefined {
+  if (!running || EXPERIMENT_SUBJECT[running.kind] !== 'video') return undefined
+  return {
+    id: running._id,
+    kind: running.kind,
+    variantKeys: running.variants.map((variant) => variant.key),
+    assigned: assignedCounts(running, episodes),
+  }
+}
+
+/**
+ * How the planner gives single posts their kind (core/planner.ts
+ * `PostKindPlan`): a running post kind experiment's variants, balanced by the
+ * posts each already has, else the variant in force (shared
+ * `effectiveVariant`: the persona's default, else rotate). `startExperiment`
+ * takes only keys the planner knows, so another one is a bug.
+ */
+export function postKindPlan(
+  persona: Pick<Doc<'personas'>, 'strategy'>,
+  running: Doc<'experiments'> | null,
+  posts: readonly Pick<Doc<'episodes'>, 'experimentId' | 'variantKey'>[]
+): PostKindPlan {
+  const known = (key: string) => {
+    if (!isPostKindVariantKey(key)) throw new Error(`"${key}" is no post kind the planner knows`)
+    return key
+  }
+  if (running?.kind === 'post_kind') {
+    return {
+      mode: 'experiment',
+      id: running._id,
+      variantKeys: running.variants.map((variant) => known(variant.key)),
+      assigned: assignedCounts(running, posts),
+    }
+  }
+  return { mode: 'default', key: known(effectiveVariant('post_kind', {}, persona.strategy?.defaults).key) }
+}
+
+/** How many of the rows carry each of the experiment's variants. */
+function assignedCounts(
+  experiment: Doc<'experiments'>,
+  rows: readonly { experimentId?: Id<'experiments'>; variantKey?: string }[]
+): Record<string, number> {
+  const assigned: Record<string, number> = {}
+  for (const row of rows) {
+    if (row.experimentId !== experiment._id || row.variantKey === undefined) continue
+    assigned[row.variantKey] = (assigned[row.variantKey] ?? 0) + 1
+  }
+  return assigned
 }
 
 /** A variant's label. The key always comes from the experiment's own variants, so a missing one is a bug. */
@@ -155,7 +224,60 @@ async function measure(
   return { stats: [...stats.values()], episodeIds }
 }
 
+/**
+ * A sent reply's successes on the metric: its impressions are its views. A
+ * reply experiment is decided on views or follows only (shared
+ * `experimentMetrics`), so any other metric is a bug.
+ */
+function replySuccesses(metric: MetricKey, counts: ReplyCounts): number {
+  if (metric === 'views') return counts.impressions
+  if (metric === 'follows') return counts.follows
+  throw new Error(`a reply experiment is decided on views or follows, not ${metric}`)
+}
+
+/**
+ * Exposures and successes per variant key over measured replies, by the
+ * metric: views per reply counts one exposure per reply, follows per view
+ * counts its impressions.
+ */
+function replyStats(metric: MetricKey, keys: readonly string[], assigned: readonly { counts: ReplyCounts; key: string }[]): VariantStats[] {
+  const stats = new Map<string, VariantStats>(keys.map((key) => [key, { key, episodes: 0, exposures: 0, successes: 0 }]))
+  for (const { counts, key } of assigned) {
+    const entry = stats.get(key)
+    if (!entry) continue
+    const successes = replySuccesses(metric, counts)
+    entry.episodes += 1
+    entry.exposures += METRIC_DENOMINATOR[metric] === 'episodes' ? 1 : counts.impressions
+    entry.successes += successes
+  }
+  return [...stats.values()]
+}
+
+/** The persona's sent replies the analyst has read numbers for. */
+async function measuredReplies(ctx: Reader, personaId: Id<'personas'>): Promise<(Doc<'replies'> & { counts: ReplyCounts })[]> {
+  const sent = await ctx.db
+    .query('replies')
+    .withIndex('by_persona_status', (q) => q.eq('personaId', personaId).eq('status', 'sent'))
+    .collect()
+  return sent.flatMap((reply) => (reply.counts === undefined ? [] : [{ ...reply, counts: reply.counts }]))
+}
+
+/**
+ * An experiment's stats, by what carries its variants (shared
+ * `EXPERIMENT_SUBJECT`): its published and measured videos or posts, or its
+ * sent replies the analyst has read. A reply is no episode, so a reply
+ * experiment names no episode as evidence.
+ */
 async function experimentMeasure(ctx: Reader, experiment: Doc<'experiments'>) {
+  const keys = experiment.variants.map((variant) => variant.key)
+  if (EXPERIMENT_SUBJECT[experiment.kind] === 'reply') {
+    const replies = await measuredReplies(ctx, experiment.personaId)
+    const assigned = replies.flatMap((reply) => {
+      if (reply.experimentId !== experiment._id || reply.variantKey === undefined) return []
+      return [{ counts: reply.counts, key: reply.variantKey }]
+    })
+    return { stats: replyStats(experiment.metric, keys, assigned), episodeIds: [] }
+  }
   const episodes = await ctx.db
     .query('episodes')
     .withIndex('by_persona', (q) => q.eq('personaId', experiment.personaId))
@@ -164,30 +286,34 @@ async function experimentMeasure(ctx: Reader, experiment: Doc<'experiments'>) {
     if (episode.experimentId !== experiment._id || episode.variantKey === undefined || !counted(episode)) return []
     return [{ episode, key: episode.variantKey }]
   })
-  return measure(
-    ctx,
-    experiment.personaId,
-    experiment.metric,
-    experiment.variants.map((variant) => variant.key),
-    assigned
-  )
+  return measure(ctx, experiment.personaId, experiment.metric, keys, assigned)
 }
 
-/** Exposures and successes per variant, from the experiment's published and measured episodes, by its metric. */
+/** Exposures and successes per variant, from the experiment's published and measured episodes or its sent replies, by its metric. */
 export async function variantStatsFor(ctx: Reader, experiment: Doc<'experiments'>): Promise<VariantStats[]> {
   return (await experimentMeasure(ctx, experiment)).stats
 }
 
 /**
- * How a default has done since it became one: the persona's published and
- * measured videos published after `since` whose effective variant on `kind`
- * (shared `effectiveVariant`) is `key`, by `metric`. An episode in an
+ * How a default has done since it became one: what carries the dimension
+ * (shared `EXPERIMENT_SUBJECT`) after `since` whose effective variant on
+ * `kind` (shared `effectiveVariant`) is `key`, by `metric`. One in an
  * experiment of that dimension counts by its own variant; any other by the
- * default in force. On the sponsor dimension only sponsored videos count.
+ * default in force.
  *
- * No episode records when it was scripted yet, so the window goes by publish
- * time: an episode scripted under the old default and published after the
- * decision can slip in. Slice 9's just-in-time scripts shrink that gap.
+ * Videos: the published and measured ones published after `since`; on the
+ * sponsor dimension only sponsored videos count. No episode records when it
+ * was scripted yet, so the window goes by publish time: an episode scripted
+ * under the old default and published after the decision can slip in. Slice
+ * 9's just-in-time scripts shrink that gap.
+ *
+ * Posts: the published and measured single posts planned after `since`, when
+ * their kind was set; a thread's kind follows its length, so no thread counts.
+ *
+ * Replies: the sent and measured replies heard after `since`, when their
+ * target and style were set; on the reply target dimension only replies to
+ * found posts count, since a mention or a reply under the persona's post has
+ * no target to pick.
  */
 export async function variantStatsSince(
   ctx: Reader,
@@ -197,10 +323,7 @@ export async function variantStatsSince(
   since: number,
   metric: MetricKey
 ): Promise<VariantStats & { episodeIds: Id<'episodes'>[] }> {
-  const episodes = await ctx.db
-    .query('episodes')
-    .withIndex('by_persona', (q) => q.eq('personaId', persona._id))
-    .collect()
+  const subject = EXPERIMENT_SUBJECT[kind]
   const experiments = new Map<Id<'experiments'>, Doc<'experiments'> | null>()
   const cachedExperiment = async (experimentId: Id<'experiments'>) => {
     const known = experiments.get(experimentId)
@@ -209,15 +332,38 @@ export async function variantStatsSince(
     experiments.set(experimentId, loaded)
     return loaded
   }
+  if (subject === 'reply') {
+    const assigned: { counts: ReplyCounts; key: string }[] = []
+    for (const reply of await measuredReplies(ctx, persona._id)) {
+      if (reply.heardAt <= since) continue
+      if (kind === 'reply_target' && reply.origin !== 'search') continue
+      const experiment = reply.experimentId === undefined ? null : await cachedExperiment(reply.experimentId)
+      const effective = effectiveVariant(kind, { variant: episodeVariant(reply, experiment) }, persona.strategy?.defaults)
+      if (effective.key === key) assigned.push({ counts: reply.counts, key })
+    }
+    const [only] = replyStats(metric, [key], assigned)
+    if (!only) throw new Error(`no stats for ${kind} "${key}"`)
+    return { ...only, episodeIds: [] }
+  }
+  const episodes = await ctx.db
+    .query('episodes')
+    .withIndex('by_persona', (q) => q.eq('personaId', persona._id))
+    .collect()
   const assigned: { episode: Doc<'episodes'>; key: string }[] = []
   for (const episode of episodes) {
-    if (isPost(episode.kind) || !counted(episode)) continue
+    if (!counted(episode)) continue
+    if (subject === 'post') {
+      if (episode.kind === 'video' || episode.kind === 'thread') continue
+      if (episode._creationTime <= since) continue
+    } else {
+      if (isPost(episode.kind)) continue
+      if (episode.publishedAt === undefined || episode.publishedAt <= since) continue
+    }
     // An unsponsored video places no sponsor. Shared `effectiveVariant` gives it
     // the control, but a sponsor decision compared sponsored videos only (the
     // planner gives sponsor variants to sponsored slots), so it says nothing
     // about the default.
     if (kind === 'sponsor' && episode.sponsorSegment === 'none') continue
-    if (episode.publishedAt === undefined || episode.publishedAt <= since) continue
     const experiment = episode.experimentId === undefined ? null : await cachedExperiment(episode.experimentId)
     const effective = effectiveVariant(
       kind,
@@ -350,6 +496,27 @@ export async function startExperiment(
     if (!Number.isInteger(variant.hourOffset) || Math.abs(variant.hourOffset) > 23)
       throw refusal(`"${variant.label}" moves the hour by a whole number of hours, at most 23.`)
   }
+  const metrics = experimentMetrics(input.kind)
+  if (!metrics.includes(input.metric)) {
+    const nouns = EXPERIMENT_SUBJECT_NOUNS[EXPERIMENT_SUBJECT[input.kind]].other
+    throw refusal(
+      `A ${EXPERIMENT_KIND_LABELS[input.kind].toLowerCase()} test is decided on ${metrics.map((metric) => METRIC_LABELS[metric].toLowerCase()).join(' or ')}: ${nouns} on X carry no link and no watch rate.`
+    )
+  }
+  // The planner and the listener act on these keys (core/planner.ts, core/replies.ts); one they do not know would
+  // plan or hear nothing different.
+  if (input.kind === 'post_kind') {
+    for (const variant of input.variants) {
+      if (isPostKindVariantKey(variant.key)) continue
+      throw refusal(`"${variant.label}" is no post kind the planner knows; the keys are ${POST_KIND_VARIANT_KEYS.join(', ')}.`)
+    }
+  }
+  if (input.kind === 'reply_target') {
+    for (const variant of input.variants) {
+      if (isReplyTargetKey(variant.key)) continue
+      throw refusal(`"${variant.label}" is no reply target the listener knows; the keys are ${REPLY_TARGET_KEYS.join(', ')}.`)
+    }
+  }
   // The footer knows two orders (core/attribution.ts `descriptionFooter`); a key it does not know would reach
   // every description of the experiment's episodes.
   if (input.kind === 'description_format') {
@@ -398,34 +565,38 @@ export async function startExperiment(
 }
 
 /**
- * Publish time and description format compare nothing for some personas, so
- * an experiment on them is refused there, for the operator and the review
- * alike (core/strategy.ts leaves the kind out by the same rule). Publish time
- * moves only video platforms' hours; a description format orders a code and a
- * link, which an X post never prints.
+ * Why a dimension compares nothing for the persona now, or null when it
+ * applies: the one rule for the operator's experiment (a refusal) and the
+ * strategy review (which leaves the kind out). Publish time moves only video
+ * platforms' hours, and a description format orders a code and a link, which
+ * an X post never prints, so both need a video platform, and the format needs
+ * a code in force. A post kind test needs an X cadence with both text and
+ * image posts, and a reply test a persona that answers on X at all.
  */
-async function assertDimensionApplies(ctx: Reader, persona: Doc<'personas'>, kind: ExperimentKind): Promise<void> {
-  if (kind !== 'publish_time' && kind !== 'description_format') return
-  if (!persona.formats.some((format) => format.platform !== 'x')) {
-    throw refusal(
-      `${persona.name} publishes only on X, which keeps its own hours and prints no footer, so a ${EXPERIMENT_KIND_LABELS[kind].toLowerCase()} test would compare nothing.`
-    )
+export async function dimensionProblem(ctx: Reader, persona: Doc<'personas'>, kind: ExperimentKind): Promise<string | null> {
+  const test = `a ${EXPERIMENT_KIND_LABELS[kind].toLowerCase()} test would compare nothing`
+  const subject = EXPERIMENT_SUBJECT[kind]
+  if (subject === 'post') {
+    const cadence = xCadence(persona)
+    if (cadence === null) return `${persona.name} does not post on X, so ${test}.`
+    if (cadence.kinds.includes('text') && cadence.kinds.includes('image')) return null
+    return `${persona.name}'s X cadence does not hold both text and image posts, so ${test}. Tick both in the persona's settings first.`
   }
-  if (kind !== 'description_format') return
-  const codes = await activeDiscountCodes(ctx, persona._id)
-  if (codes.length === 0)
-    throw refusal(`${persona.name} has no discount code in force, so a description format test would compare nothing.`)
+  if (subject === 'reply') {
+    if (listens(persona)) return null
+    return `${persona.name} answers nobody on X, so ${test}. Give it X and a reply budget above 0 first.`
+  }
+  if (kind !== 'publish_time' && kind !== 'description_format') return null
+  if (!persona.formats.some((format) => format.platform !== 'x'))
+    return `${persona.name} publishes only on X, which keeps its own hours and prints no footer, so ${test}.`
+  if (kind !== 'description_format') return null
+  if ((await activeDiscountCodes(ctx, persona._id)).length === 0) return `${persona.name} has no discount code in force, so ${test}.`
+  return null
 }
 
-/**
- * Whether a dimension applies to the persona now, the same rule as
- * `assertDimensionApplies` without the refusal, for the strategy review.
- */
-export async function dimensionApplies(ctx: Reader, persona: Doc<'personas'>, kind: ExperimentKind): Promise<boolean> {
-  if (kind !== 'publish_time' && kind !== 'description_format') return true
-  if (!persona.formats.some((format) => format.platform !== 'x')) return false
-  if (kind !== 'description_format') return true
-  return (await activeDiscountCodes(ctx, persona._id)).length > 0
+async function assertDimensionApplies(ctx: Reader, persona: Doc<'personas'>, kind: ExperimentKind): Promise<void> {
+  const problem = await dimensionProblem(ctx, persona, kind)
+  if (problem !== null) throw refusal(problem)
 }
 
 /**

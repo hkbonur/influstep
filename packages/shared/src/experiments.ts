@@ -1,13 +1,23 @@
 import { LENGTH_SEC_MIN } from './formats'
-import type { MetricKey } from './metrics'
+import { METRIC_KEYS, type MetricKey } from './metrics'
 import type { StrategyDefault } from './strategy'
 
 /**
- * The dimensions an experiment can vary (docs/plan.md, v0.2 items 8 and 9),
- * each with its catalog of variants below. The X post dimensions (intent,
- * length, reply style) join in slice 11.
+ * The dimensions an experiment can vary (docs/plan.md, v0.2 items 8 and 9,
+ * and slice 11), each with its catalog of variants below.
  */
-export const EXPERIMENT_KINDS = ['hook', 'concept', 'sponsor', 'length', 'cta', 'publish_time', 'description_format'] as const
+export const EXPERIMENT_KINDS = [
+  'hook',
+  'concept',
+  'sponsor',
+  'length',
+  'cta',
+  'publish_time',
+  'description_format',
+  'post_kind',
+  'reply_style',
+  'reply_target',
+] as const
 export type ExperimentKind = (typeof EXPERIMENT_KINDS)[number]
 
 export const EXPERIMENT_KIND_LABELS: Record<ExperimentKind, string> = {
@@ -18,6 +28,48 @@ export const EXPERIMENT_KIND_LABELS: Record<ExperimentKind, string> = {
   cta: 'Call to action',
   publish_time: 'Publish time',
   description_format: 'Description format',
+  post_kind: 'Post kind',
+  reply_style: 'Reply style',
+  reply_target: 'Reply target',
+}
+
+/**
+ * What carries an experiment's variant and is measured for it: a video
+ * episode, a single post on X (a text or an image post; a thread's kind
+ * follows its length), or a reply on X. One experiment runs at a time per
+ * persona, so while a post or reply experiment runs the videos carry none.
+ */
+export const EXPERIMENT_SUBJECTS = ['video', 'post', 'reply'] as const
+export type ExperimentSubject = (typeof EXPERIMENT_SUBJECTS)[number]
+
+export const EXPERIMENT_SUBJECT: Record<ExperimentKind, ExperimentSubject> = {
+  hook: 'video',
+  concept: 'video',
+  sponsor: 'video',
+  length: 'video',
+  cta: 'video',
+  publish_time: 'video',
+  description_format: 'video',
+  post_kind: 'post',
+  reply_style: 'reply',
+  reply_target: 'reply',
+}
+
+/** What a variant is counted over, as the Experiments table and the report name it. */
+export const EXPERIMENT_SUBJECT_NOUNS: Record<ExperimentSubject, { one: string; other: string }> = {
+  video: { one: 'episode', other: 'episodes' },
+  post: { one: 'post', other: 'posts' },
+  reply: { one: 'reply', other: 'replies' },
+}
+
+/**
+ * The metrics an experiment of a subject can be decided on. A post or a
+ * reply on X carries no link, so it has no clicks and no conversions behind
+ * one, and no watch rate; a reply's views are its impressions.
+ */
+export function experimentMetrics(kind: ExperimentKind): readonly MetricKey[] {
+  if (EXPERIMENT_SUBJECT[kind] === 'video') return METRIC_KEYS
+  return ['views', 'follows']
 }
 
 /**
@@ -129,6 +181,72 @@ export const EXPERIMENT_CATALOG: Record<ExperimentKind, readonly CatalogVariant[
       isControl: false,
     },
   ],
+  // The planner reads the key (core/planner.ts): rotate through the cadence's single kinds, or one kind for every single post.
+  post_kind: [
+    { key: 'rotate', label: 'Rotate', description: "Rotate single posts through the cadence's kinds.", isControl: true },
+    { key: 'text', label: 'Text posts', description: 'Write every single post as a text post.', isControl: false },
+    { key: 'image', label: 'Image posts', description: 'Make every single post an image post with a card.', isControl: false },
+  ],
+  reply_style: [
+    { key: 'tip', label: 'Tip', description: 'Answer with one concrete tip from my own work.', isControl: true },
+    {
+      key: 'question',
+      label: 'Question back',
+      description: 'Answer with a short question back that keeps the conversation going.',
+      isControl: false,
+    },
+    { key: 'story', label: 'Story', description: 'Answer with what happened when I hit the same thing.', isControl: false },
+  ],
+  // The listener reads the key (core/replies.ts): the found posts with the most reach first, or authors under REPLY_PEER_MAX (replies.ts).
+  reply_target: [
+    {
+      key: 'reach',
+      label: 'Most reach',
+      description: 'Answer the found posts whose authors have the most followers first.',
+      isControl: true,
+    },
+    {
+      key: 'peers',
+      label: 'Peers',
+      description: 'Answer found posts from accounts under 10,000 followers, where a reply stands out.',
+      isControl: false,
+    },
+  ],
+}
+
+/** The post kind variants the planner knows; a post kind experiment takes only these keys. */
+export const POST_KIND_VARIANT_KEYS = ['rotate', 'text', 'image'] as const
+export type PostKindVariantKey = (typeof POST_KIND_VARIANT_KEYS)[number]
+
+export function isPostKindVariantKey(key: string): key is PostKindVariantKey {
+  return POST_KIND_VARIANT_KEYS.some((entry) => entry === key)
+}
+
+/** The reply targets the listener knows; a reply target experiment takes only these keys. */
+export const REPLY_TARGET_KEYS = ['reach', 'peers'] as const
+export type ReplyTargetKey = (typeof REPLY_TARGET_KEYS)[number]
+
+export function isReplyTargetKey(key: string): key is ReplyTargetKey {
+  return REPLY_TARGET_KEYS.some((entry) => entry === key)
+}
+
+/**
+ * The variant with the fewest assigned so far, the first listed on a tie: how
+ * the planner and the listener keep an experiment's variants balanced. An
+ * experiment has at least two variants, so none is a bug.
+ */
+export function leastAssigned<K extends string>(keys: readonly K[], assigned: Readonly<Record<string, number>>): K {
+  let best: K | undefined
+  let bestCount = Number.POSITIVE_INFINITY
+  for (const key of keys) {
+    const count = assigned[key] ?? 0
+    if (count < bestCount) {
+      best = key
+      bestCount = count
+    }
+  }
+  if (best === undefined) throw new Error('an experiment without variants has none to assign')
+  return best
 }
 
 /** The catalog's control of a dimension: its first variant. */
@@ -140,7 +258,7 @@ export function catalogControl(kind: ExperimentKind): CatalogVariant {
 
 export interface VariantStats {
   key: string
-  /** Episodes measured under this variant. */
+  /** Episodes, posts or replies measured under this variant (EXPERIMENT_SUBJECT). */
   episodes: number
   /** Denominator of the metric: views for click rate, clicks for signup rate. */
   exposures: number

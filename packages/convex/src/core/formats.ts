@@ -37,6 +37,26 @@ export function formatFor(persona: FormatOwner, platform: Platform): PlatformFor
   return format
 }
 
+/** The persona's X post cadence, or null without X. An X format always carries one (`assertFormats`), so a missing one is a bug. */
+export function xCadence(persona: FormatOwner): XCadence | null {
+  const format = persona.formats.find((candidate) => candidate.platform === 'x')
+  if (!format) return null
+  if (!format.cadence) throw new Error('the persona has an X format without a post cadence')
+  return format.cadence
+}
+
+/** The persona's daily reply budget on X (docs/plan.md, slice 11): its X cadence's, and none without X. */
+export function replyBudget(persona: FormatOwner): number {
+  const cadence = xCadence(persona)
+  if (cadence === null) return 0
+  return cadence.repliesPerDay
+}
+
+/** Whether the persona listens on X at all: it has X and a reply budget above zero. */
+export function listens(persona: FormatOwner): boolean {
+  return replyBudget(persona) > 0
+}
+
 /** The persona's formats for these platforms, in PLATFORMS order. */
 export function formatsFor(persona: FormatOwner, platforms: Platform[]): PlatformFormat[] {
   return PLATFORMS.filter((platform) => platforms.includes(platform)).map((platform) => formatFor(persona, platform))

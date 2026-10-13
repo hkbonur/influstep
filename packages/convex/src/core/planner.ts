@@ -1,6 +1,7 @@
 import {
   DEFAULT_LENGTH_MIX,
   allocatePillars,
+  leastAssigned,
   pickLengths,
   pillarWeights,
   postSlotHours,
@@ -10,6 +11,7 @@ import {
   type PlatformFormat,
   type PostIntent,
   type PostKind,
+  type PostKindVariantKey,
   type PostLength,
   type SponsorSegment,
   type XCadence,
@@ -121,7 +123,7 @@ export function planWeek(args: {
 
     // Only a sponsored episode places a sponsor, so a sponsor experiment tests only those.
     const takesVariant = args.experiment !== undefined && (args.experiment.kind !== 'sponsor' || sponsorSegment !== 'none')
-    const variantKey = args.experiment && takesVariant ? pickVariant(args.experiment.variantKeys, assigned) : undefined
+    const variantKey = args.experiment && takesVariant ? leastAssigned(args.experiment.variantKeys, assigned) : undefined
     if (variantKey) assigned[variantKey] = (assigned[variantKey] ?? 0) + 1
 
     return {
@@ -136,17 +138,34 @@ export function planWeek(args: {
   })
 }
 
-/** What a post slot sets out to do, how long it runs, and the kind of post that length takes. */
+/**
+ * What a post slot sets out to do, how long it runs, and the kind of post
+ * that length takes; a single post in a post kind experiment carries its
+ * variant.
+ */
 export interface PostShape {
   intent: PostIntent
   length: PostLength
   kind: PostKind
+  experimentId?: string
+  variantKey?: string
 }
 
 /** One post slot of the plan: a day, its hour on X, what it is about, and its shape. */
 export interface PlannedPost extends Omit<PlannedEpisode, 'experimentId' | 'variantKey'>, PostShape {
   hour: number
 }
+
+/**
+ * How the week's single posts get their kind (the post kind dimension): the
+ * variant in force for every one of them (the persona's default, else the
+ * catalog's control, rotate), or, while a post kind experiment runs, its
+ * variants per post, balanced by the posts each already has. A thread's kind
+ * follows its length, so a thread carries no variant.
+ */
+export type PostKindPlan =
+  | { mode: 'default'; key: PostKindVariantKey }
+  | { mode: 'experiment'; id: string; variantKeys: PostKindVariantKey[]; assigned: Record<string, number> }
 
 /**
  * The post slots of a persona with an X format: every day of the week at the
@@ -172,6 +191,7 @@ export function planPostSlots(args: {
   episodeCount: number
   /** Signals no video took. */
   signals: PlannerSignal[]
+  postKinds: PostKindPlan
   now: number
 }): PlannedPost[] {
   const cadence = args.format.cadence
@@ -226,6 +246,7 @@ export function planPostSlots(args: {
     count: slots.length,
     postsSoFar: args.posts.length,
     singlesSoFar: args.posts.filter((post) => post.kind !== 'thread').length,
+    postKinds: args.postKinds,
   })
   return slots.map((slot, index) => {
     const shape = shapes[index]
@@ -240,9 +261,12 @@ export function planPostSlots(args: {
  * carry on from the posts the persona already has, across days and weeks.
  * Lengths come from the length mix (shared `pickLengths`). The kind follows
  * the length: a long slot is a thread when the cadence has threads and a full
- * post when it does not, and one-liners and full posts rotate through the
- * cadence's other kinds. A cadence of threads alone cannot honor a short or
- * full post, so every slot there is a thread.
+ * post when it does not, and one-liners and full posts take the kind the post
+ * kind plan gives them: the next of the cadence's other kinds under rotate, or
+ * the one kind a variant names. The cadence is the operator's, so a kind it
+ * lacks is never planned: under such a variant the post rotates. A cadence of
+ * threads alone cannot honor a short or full post, so every slot there is a
+ * thread.
  */
 function shapePostSlots(args: {
   cadence: XCadence
@@ -252,20 +276,28 @@ function shapePostSlots(args: {
   postsSoFar: number
   /** The persona's live text and image posts, for the kind rotation. */
   singlesSoFar: number
+  postKinds: PostKindPlan
 }): PostShape[] {
   const { intents, kinds } = args.cadence
   if (intents.length === 0) throw new Error('an X cadence without post intents cannot plan posts')
   const singles = kinds.filter((kind) => kind !== 'thread')
   const threads = kinds.includes('thread')
+  const plan = args.postKinds
+  const assigned = plan.mode === 'experiment' ? { ...plan.assigned } : {}
   let single = args.singlesSoFar
   return pickLengths(args.lengthMix, args.count).map((picked, index): PostShape => {
     const intent = intents[(args.postsSoFar + index) % intents.length]
     if (intent === undefined) throw new Error('intent rotation out of range')
     if (singles.length === 0 || (picked === 'long' && threads)) return { intent, length: 'long', kind: 'thread' }
-    const kind = singles[single % singles.length]
-    if (kind === undefined) throw new Error('kind rotation out of range')
+    const rotated = singles[single % singles.length]
+    if (rotated === undefined) throw new Error('kind rotation out of range')
     single += 1
-    return { intent, length: picked === 'long' ? 'medium' : picked, kind }
+    const length = picked === 'long' ? 'medium' : picked
+    const kindOf = (key: PostKindVariantKey): PostKind => (key === 'rotate' || !singles.includes(key) ? rotated : key)
+    if (plan.mode === 'default') return { intent, length, kind: kindOf(plan.key) }
+    const variantKey = leastAssigned(plan.variantKeys, assigned)
+    assigned[variantKey] = (assigned[variantKey] ?? 0) + 1
+    return { intent, length, kind: kindOf(variantKey), experimentId: plan.id, variantKey }
   })
 }
 
@@ -290,17 +322,4 @@ function pillarFor(signal: PlannerSignal, pillars: string[]): string {
     lowerTopics.some((topic) => pillar.toLowerCase().includes(topic) || topic.includes(pillar.toLowerCase()))
   )
   return match ?? pillars[0] ?? ''
-}
-
-function pickVariant(keys: string[], assigned: Record<string, number>): string | undefined {
-  let best: string | undefined
-  let bestCount = Number.POSITIVE_INFINITY
-  for (const key of keys) {
-    const count = assigned[key] ?? 0
-    if (count < bestCount) {
-      best = key
-      bestCount = count
-    }
-  }
-  return best
 }

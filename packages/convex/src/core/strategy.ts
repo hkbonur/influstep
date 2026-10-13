@@ -2,6 +2,8 @@ import {
   AUTO_MIN_CONFIDENCE,
   EXPERIMENT_KINDS,
   EXPERIMENT_KIND_LABELS,
+  EXPERIMENT_SUBJECT,
+  EXPERIMENT_SUBJECT_NOUNS,
   GOAL_MIN_SUCCESSES,
   METRIC_DENOMINATOR,
   METRIC_MIN_EXPOSURES,
@@ -28,7 +30,7 @@ import {
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import { dayKey, hourAt, hourText } from './dates'
-import { dimensionApplies, grouped, rateNumber, rateText, startExperiment, variantStatsSince } from './experiments'
+import { dimensionProblem, grouped, rateNumber, rateText, startExperiment, variantStatsSince } from './experiments'
 import { activeEntries, supersedeOthers } from './memory'
 import { latestPerPublication } from './report'
 import { workspaceOf } from './workspace'
@@ -441,10 +443,13 @@ function startReason(args: {
 }): string {
   const { next, metric } = args
   const dimension = EXPERIMENT_KIND_LABELS[next.kind]
+  const subject = EXPERIMENT_SUBJECT[next.kind]
   const goal =
-    args.window[metric] >= GOAL_MIN_SUCCESSES
-      ? `It aims at ${METRIC_RATE_LABELS[metric]}: ${grouped(args.window[metric])} ${GOAL_NOUNS[metric]} in the last ${GOAL_WINDOW_DAYS} days, the step closest to paying customers with at least ${GOAL_MIN_SUCCESSES}.`
-      : `It aims at ${METRIC_RATE_LABELS[metric]}: no step closer to paying customers had ${GOAL_MIN_SUCCESSES} successes in the last ${GOAL_WINDOW_DAYS} days.`
+    subject !== 'video'
+      ? `It aims at ${METRIC_RATE_LABELS[metric]}: ${EXPERIMENT_SUBJECT_NOUNS[subject].other} on X carry no link, so follows are the step closest to paying customers they move.`
+      : args.window[metric] >= GOAL_MIN_SUCCESSES
+        ? `It aims at ${METRIC_RATE_LABELS[metric]}: ${grouped(args.window[metric])} ${GOAL_NOUNS[metric]} in the last ${GOAL_WINDOW_DAYS} days, the step closest to paying customers with at least ${GOAL_MIN_SUCCESSES}.`
+        : `It aims at ${METRIC_RATE_LABELS[metric]}: no step closer to paying customers had ${GOAL_MIN_SUCCESSES} successes in the last ${GOAL_WINDOW_DAYS} days.`
   if (args.contradiction) {
     const { source, winnerRate, runnerUpRate, since } = args.contradiction
     return (
@@ -467,11 +472,16 @@ function startReason(args: {
 }
 
 /**
- * The next experiment step: only when none is running and the persona has a
- * video platform (posts carry no variant). Every dimension applies, except
- * the sponsor placement before the persona carries a sponsor (a zero dial,
- * or still within the ramp), and the description format without a discount
- * code in force (core experiments `dimensionApplies`).
+ * The next experiment step: only when none is running. Every dimension
+ * applies, except a video dimension for a persona that posts only on X, the
+ * sponsor placement before the persona carries a sponsor (a zero dial, or
+ * still within the ramp), and any dimension core experiments
+ * `dimensionProblem` says would compare nothing: the description format
+ * without a discount code in force, the post kind without both text and image
+ * posts, and the reply dimensions for a persona that answers nobody. A video
+ * experiment aims at the goal metric of the window (shared `pickGoalMetric`);
+ * a post or reply experiment at follows, the only step toward the goal a post
+ * or a reply on X can move.
  */
 async function startNextExperiment(
   ctx: MutationCtx,
@@ -484,17 +494,17 @@ async function startNextExperiment(
   now: number
 ): Promise<{ experimentId: Id<'experiments'>; change: Change } | null> {
   if (experiments.some((experiment) => experiment.status === 'running')) return null
-  if (!persona.formats.some((format) => format.platform !== 'x')) return null
+  const onVideo = persona.formats.some((format) => format.platform !== 'x')
   const live = episodes.filter((episode) => episode.status !== 'killed').length
   const sponsors = persona.sponsorDial > 0 && live >= persona.sponsorRampEpisodes
   const kinds: ExperimentKind[] = []
   for (const kind of EXPERIMENT_KINDS) {
+    if (EXPERIMENT_SUBJECT[kind] === 'video' && !onVideo) continue
     if (kind === 'sponsor' && !sponsors) continue
-    if (!(await dimensionApplies(ctx, persona, kind))) continue
+    if ((await dimensionProblem(ctx, persona, kind)) !== null) continue
     kinds.push(kind)
   }
   const window = await goalWindow(ctx, persona, conversions, now)
-  const metric = pickGoalMetric(window)
   const history = historyOf(experiments)
   const next = pickNextExperiment({
     kinds,
@@ -504,6 +514,7 @@ async function startNextExperiment(
     now,
   })
   if (!next) return null
+  const metric: GoalMetric = EXPERIMENT_SUBJECT[next.kind] === 'video' ? pickGoalMetric(window) : 'follows'
   const retest = next.retestOf === undefined ? undefined : experiments.find((experiment) => experiment._id === next.retestOf)
   if (next.retestOf !== undefined && !retest)
     throw new Error(`the re-test points at experiment ${next.retestOf}, which the persona does not have`)
@@ -541,8 +552,6 @@ export interface GoalStanding {
   currency: string
   /** The experiment that runs after the review, or null. */
   testing: string | null
-  /** Whether the persona has a video platform; experiments vary videos only. */
-  onVideo: boolean
 }
 
 /**
@@ -566,12 +575,7 @@ export function goalNoteText(standing: GoalStanding): string {
         : previousPaid === 0
           ? `${customers(paid)} ${span}, worth ${money(paid)}, up from none ${before}.`
           : `${customers(paid)} ${span}, worth ${money(paid)}, ${paid > previousPaid ? 'up' : 'down'} from ${grouped(previousPaid)} (${money(previousPaid)}) ${before}.`
-  const next =
-    standing.testing !== null
-      ? `Next: testing "${standing.testing}".`
-      : standing.onVideo
-        ? 'Next: nothing new to test this week.'
-        : 'Next: no experiment, since experiments vary videos and I post only on X.'
+  const next = standing.testing !== null ? `Next: testing "${standing.testing}".` : 'Next: nothing new to test this week.'
   return `${now} ${next}`
 }
 
@@ -600,7 +604,6 @@ async function writeGoalNote(
     valuePerPaid: workspace.valuePerPaid,
     currency: workspace.currency,
     testing: running === null ? null : running.name,
-    onVideo: persona.formats.some((format) => format.platform !== 'x'),
   })
   const episodeIds = [...new Set(current.flatMap((conversion) => (conversion.episodeId === undefined ? [] : [conversion.episodeId])))]
   const noteId = await ctx.db.insert('memories', {

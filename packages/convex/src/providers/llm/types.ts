@@ -170,6 +170,12 @@ export interface ReplyBrief {
    * when the post asks.
    */
   operatorAsked: boolean
+  /**
+   * How the reply answers (the reply style dimension): the variant a reply
+   * style experiment gave it, else the persona's default, else the catalog's
+   * control, a tip. The description reads after "From now on I".
+   */
+  style: { key: string; label: string; description: string }
   memory: WriterMemory
   directives: string[]
   voice: PostBrief['voice']

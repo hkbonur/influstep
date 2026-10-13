@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   EXPERIMENT_CATALOG,
   EXPERIMENT_KINDS,
+  EXPERIMENT_SUBJECT,
   GOAL_METRICS,
+  POST_KIND_VARIANT_KEYS,
+  REPLY_TARGET_KEYS,
   SCRIPT_KINDS,
   METRIC_DENOMINATOR,
   METRIC_MIN_EXPOSURES,
@@ -12,6 +15,8 @@ import {
   contradictionMinExposures,
   contradicts,
   decideExperiment,
+  experimentMetrics,
+  leastAssigned,
   pickGoalMetric,
   pickNextExperiment,
   pillarWeights,
@@ -63,8 +68,9 @@ describe('the experiment catalog', () => {
   it('lists every dimension with its control first, unique keys, a length factor only on length and an hour offset only on publish time', () => {
     for (const kind of EXPERIMENT_KINDS) {
       const variants = EXPERIMENT_CATALOG[kind]
-      // A description format is the link first or the code first; every other dimension has at least three arms.
-      expect(variants.length, kind).toBeGreaterThanOrEqual(kind === 'description_format' ? 2 : 3)
+      // A description format is the link first or the code first, and a reply target the most reach or peers; every other
+      // dimension has at least three arms.
+      expect(variants.length, kind).toBeGreaterThanOrEqual(kind === 'description_format' || kind === 'reply_target' ? 2 : 3)
       expect(
         variants.map((variant) => variant.isControl),
         kind
@@ -77,11 +83,35 @@ describe('the experiment catalog', () => {
         expect(variant.hourOffset !== undefined, `${kind}/${variant.key}`).toBe(kind === 'publish_time')
       }
     }
-    expect(EXPERIMENT_KINDS).toEqual(['hook', 'concept', 'sponsor', 'length', 'cta', 'publish_time', 'description_format'])
+    expect(EXPERIMENT_KINDS).toEqual([
+      'hook',
+      'concept',
+      'sponsor',
+      'length',
+      'cta',
+      'publish_time',
+      'description_format',
+      'post_kind',
+      'reply_style',
+      'reply_target',
+    ])
     expect(SCRIPT_KINDS).toEqual(['hook', 'concept', 'sponsor', 'length', 'cta'])
     expect(EXPERIMENT_CATALOG.hook.map((variant) => variant.key)).toEqual(['howto', 'question', 'wrong', 'number', 'result'])
     expect(EXPERIMENT_CATALOG.length.map((variant) => variant.lengthFactor)).toEqual([1, 0.7, 1.3])
     expect(catalogControl('cta').key).toBe('follow')
+  })
+
+  it('keeps the post kind and reply target keys to the ones the planner and the listener know', () => {
+    expect(EXPERIMENT_CATALOG.post_kind.map((variant) => variant.key)).toEqual([...POST_KIND_VARIANT_KEYS])
+    expect(EXPERIMENT_CATALOG.reply_target.map((variant) => variant.key)).toEqual([...REPLY_TARGET_KEYS])
+    expect(catalogControl('reply_style').key).toBe('tip')
+  })
+
+  it('decides a post or a reply experiment on views or follows only, since neither carries a link', () => {
+    expect(experimentMetrics('hook')).toEqual(['views', 'watch_rate', 'follows', 'clicks', 'signups', 'paid'])
+    expect(experimentMetrics('post_kind')).toEqual(['views', 'follows'])
+    expect(experimentMetrics('reply_style')).toEqual(['views', 'follows'])
+    expect(EXPERIMENT_KINDS.filter((kind) => EXPERIMENT_SUBJECT[kind] === 'reply')).toEqual(['reply_style', 'reply_target'])
   })
 
   it('moves the publish hour by three either way, with the usual hour as the control', () => {
@@ -448,6 +478,15 @@ describe('bestPublishHour', () => {
       ])
     ).toBeNull()
     expect(bestPublishHour(16, [])).toBeNull()
+  })
+})
+
+describe('leastAssigned', () => {
+  it('picks the variant with the fewest so far, the first listed on a tie, and refuses none', () => {
+    expect(leastAssigned(['tip', 'question'], {})).toBe('tip')
+    expect(leastAssigned(['tip', 'question'], { tip: 3, question: 2 })).toBe('question')
+    expect(leastAssigned(['reach', 'peers'], { reach: 1, peers: 1 })).toBe('reach')
+    expect(() => leastAssigned([], {})).toThrow('an experiment without variants has none to assign')
   })
 })
 

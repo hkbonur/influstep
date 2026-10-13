@@ -143,7 +143,7 @@ _Avoid_: category, theme, niche (that is the whole persona's field), series.
 ## Experiments
 
 **Experiment**:
-A question a persona tests across its episodes ("Do 'I was wrong about…' hooks beat 'How to…' hooks on click rate?"): a hypothesis, a metric, two or more variants on one dimension, and a decision rule. A persona runs one at a time, picked by its strategy review from the experiment catalog or set up by the operator. Episodes are assigned a variant at planning time; the analyst compares variants after each measurement window.
+A question a persona tests across its videos, its X posts, or its replies ("Do 'I was wrong about…' hooks beat 'How to…' hooks on click rate?"): a hypothesis, a metric, two or more variants on one dimension, and a decision rule. A persona runs one at a time, picked by its strategy review from the experiment catalog or set up by the operator. Videos and X posts are assigned a variant at planning time, replies when the listener keeps them; the analyst compares variants after each measurement window. X posts and replies carry no link, so a test on them is decided on views or follows.
 _Avoid_: A/B test (fine in conversation), split test, campaign, trial.
 
 **Variant**:
@@ -169,7 +169,7 @@ The analyst's weekly look at one persona (Monday morning, before the week is pla
 _Avoid_: audit, retro, optimization, analysis (fine casually).
 
 **Dimension**:
-One thing about an episode that an experiment varies: hook style, concept angle, sponsor placement, episode length, call to action, publish time, or description format. Each has its variants in the experiment catalog and one default per persona. Sponsor placement applies only to sponsored episodes. The writer scripts the first five; the last two never reach the script.
+One thing that an experiment varies. For videos: hook style, concept angle, sponsor placement, episode length, call to action, publish time, or description format. For X posts: post kind. For replies: reply style and reply target. Each has its variants in the experiment catalog and one default per persona. Sponsor placement applies only to sponsored episodes. The writer scripts the first five video dimensions; publish time and description format never reach the script. The strategy review tests a dimension only where it can compare something: the X dimensions only for a persona on X, the video ones only for a persona with a video platform.
 _Avoid_: axis, factor, lever, kind (its name in code only, `experiment.kind`).
 
 **Publish time** (dimension):
@@ -180,6 +180,18 @@ _Avoid_: posting time, schedule (that is the publish time of one publication), s
 The order of the lines a video's description carries under the persona's own text: the tracked link first and the discount code under it, or the code and its offer first. The disclosure stays the first line either way, and nothing changes on X. It applies only to a persona with a discount code in force and a platform besides X.
 _Avoid_: description style, footer order (fine casually), layout.
 
+**Post kind** (dimension):
+What each single X post of the week is: rotated through the kinds the X cadence holds (the control), always a text post, or always an image post with a card. Threads keep their slots and carry no variant. It applies only to a persona whose X cadence holds both text and image posts.
+_Avoid_: post format, post type.
+
+**Reply style** (dimension):
+How a reply adds something of the persona's own: one concrete tip (the control), a short question back, or what happened when it hit the same thing. The listener gives each reply it keeps the next variant in turn, and the writer follows it.
+_Avoid_: reply tone (tone belongs to the bible and the voice), reply template.
+
+**Reply target** (dimension):
+Which posts found by search the listener answers: the ones whose authors have the most followers first (the control), or only **peers**, authors under 10,000 followers, where a reply stands out. One sweep follows one target, so the found posts of a sweep share its variant; mentions and replies under the persona's posts carry none.
+_Avoid_: audience, segment, niche.
+
 **Experiment catalog**:
 The variants a persona can test on each dimension, each with the instruction the writer follows ("Open with the question the viewer has"). The first variant of each dimension is its control, what personas did before. The strategy review picks experiments from it, the dimension the persona knows least about first; the operator's new experiment form fills in from it.
 _Avoid_: library, menu, templates, playbook.
@@ -189,7 +201,7 @@ What a persona does on one dimension when no experiment varies it: the winning v
 _Avoid_: preference, setting, baseline (that is the control), winner (fine in copy; it is the decision's word).
 
 **Goal metric**:
-The metric the strategy review gives a new experiment: the one closest to paying Formstep customers that has enough data, down the ladder paid, signups, clicks, follows. Follows stand in for views at the bottom because a decision compares two rates: views per episode is not a rate, follows per view is.
+The metric the strategy review gives a new experiment: the one closest to paying Formstep customers that has enough data, down the ladder paid, signups, clicks, follows. Follows stand in for views at the bottom because a decision compares two rates: views per episode is not a rate, follows per view is. A test on X posts or replies always aims at follows, since they carry no link.
 _Avoid_: KPI, north star, objective, target.
 
 **Journal**:
@@ -236,7 +248,7 @@ A post on X the persona writes under someone else's post: the post it answers an
 _Avoid_: comment (that is a viewer's words under an episode, a signal), engagement (that is the whole practice), interaction, response.
 
 **Listener**:
-The researcher's sweep of X every three hours for posts worth answering: mentions of the persona and replies under its posts for two days, and posts in its pillars found by search for twelve hours, from authors with at least 1,000 followers, at most three per sweep. A post the persona already answered or passed on is never heard twice, and a post naming the sponsor is kept as skipped until the operator asks for a reply.
+The researcher's sweep of X every three hours for posts worth answering: mentions of the persona and replies under its posts for two days, and posts in its pillars found by search for twelve hours, from authors with at least 1,000 followers, at most three per sweep, chosen by the persona's reply target. A post the persona already answered or passed on is never heard twice, and a post naming the sponsor is kept as skipped until the operator asks for a reply.
 _Avoid_: monitor, scraper, crawler, social listening.
 
 **Engaged first**:

@@ -56,7 +56,9 @@ import {
   applyExperimentDecision,
   episodeEffectiveVariant,
   episodeVariant,
+  postKindPlan,
   variantStatsFor,
+  videoPlanExperiment,
   type EpisodeVariant,
 } from '../core/experiments'
 import { placeAssets } from '../core/assets'
@@ -308,16 +310,10 @@ export const planWeekMutation = internalMutation({
     )
       .map((signal) => ({ id: signal._id, title: signal.title, score: signalFreshness(signal, now), topics: signal.topics }))
       .filter((signal) => !isCold(signal.score))
-    const experiment = await ctx.db
+    const running = await ctx.db
       .query('experiments')
       .withIndex('by_persona_status', (q) => q.eq('personaId', persona._id).eq('status', 'running'))
       .first()
-    const assigned: Record<string, number> = {}
-    if (experiment) {
-      for (const episode of live)
-        if (episode.experimentId === experiment._id && episode.variantKey)
-          assigned[episode.variantKey] = (assigned[episode.variantKey] ?? 0) + 1
-    }
     // "Planned in the last PILLAR_HISTORY_DAYS days" is read by the day an episode is planned for, from that
     // many days before today on, as the post slots read it (core planPostSlots), so the videos already planned
     // for this week and the next count too: the allocation then tops up the pillars the recent weeks gave less
@@ -339,9 +335,7 @@ export const planWeekMutation = internalMutation({
       pillarWeights: pillarWeights(persona.pillars, persona.strategy?.pillarWeights),
       priorCounts,
       signals,
-      experiment: experiment
-        ? { id: experiment._id, kind: experiment.kind, variantKeys: experiment.variants.map((variant) => variant.key), assigned }
-        : undefined,
+      experiment: videoPlanExperiment(running, live),
       takenDays,
     })
     for (const planned of plan) {
@@ -361,13 +355,15 @@ export const planWeekMutation = internalMutation({
     if (!xFormat) return { planned: plan.length }
     if (!xFormat.cadence) throw new Error('an X format without a post cadence cannot plan posts')
     const usedSignals = new Set(plan.map((planned) => planned.signalId))
+    const livePosts = live.filter((episode) => isPost(episode.kind))
     const posts = planPostSlots({
       weekStart: args.weekStart,
       persona,
       format: xFormat,
-      posts: live.filter((episode) => isPost(episode.kind)),
+      posts: livePosts,
       episodeCount: live.length + plan.length,
       signals: signals.filter((signal) => !usedSignals.has(signal.id)),
+      postKinds: postKindPlan(persona, running, livePosts),
       now,
     })
     for (const post of posts) {
@@ -378,6 +374,8 @@ export const planWeekMutation = internalMutation({
         pillar: post.pillar,
         sponsorSegment: post.sponsorSegment,
         signalIds: post.signalId ? [post.signalId as Id<'signals'>] : [],
+        experimentId: post.experimentId ? (post.experimentId as Id<'experiments'>) : undefined,
+        variantKey: post.variantKey,
         kind: post.kind,
         publishHour: post.hour,
         intent: post.intent,
