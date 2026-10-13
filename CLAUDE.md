@@ -37,6 +37,16 @@ pnpm --filter @influstep/convex codegen   # regenerate src/_generated after an A
 - The studio app's `tsc:check` runs `gen:routes` first; `src/routeTree.gen.ts` is generated and gitignored.
 - Providers run in mock mode unless `PROVIDERS_MODE=real` is set on the Convex deployment and the runner. Real adapters need their keys; a missing key is an error, never a fallback to mock (ADR 0002).
 
+### Local backend notes
+
+- **Schema change with old rows.** From `packages/convex`, run `npx convex run internal/seed:reset` while the old code is still pushed, then `pnpm backend:push` from the root, then `npx convex run internal/seed:run`. The root has no `seed:reset`. `pnpm seed:fresh` wipes the demo data too. Persona and episode ids change on every reset.
+- **The backend bundles `packages/shared`.** After editing shared, run `pnpm backend:push` again. After a schema change, restart the studio: a running Vite can serve a stale shared module.
+- **Docker down.** `open -a OrbStack`, wait for `docker info`, then `pnpm backend:up`.
+- **One runner only.** The root `pnpm dev` also starts a runner. Two runners with the same name double-run jobs, so check `ps` for a second `tsx watch src/main.ts` before a smoke test.
+- **Crons by hand.** `npx convex run internal/schedule:writeDueScripts` writes tomorrow's scripts (and runs the last check); `npx convex run internal/schedule:morningSweep` writes each persona's brief and problem log. Read tables with `npx convex data <table> --order desc --limit N --format jsonl`.
+- **Refusals.** An error the operator should read is thrown with `refusal()` from `packages/convex/src/lib/errors.ts`, and the studio shows it through `errorMessage` in `apps/studio/src/lib/errors.ts`. A plain `Error` reaches the screen as raw "[CONVEX M(...)] Server Error" text.
+- **Where the build stands.** `docs/plan.md` "Progress" lists the slices done, the open questions for the operator and the slice 15 backlog. Update it with every slice.
+
 ## Branches
 
 One branch, `main`. Commit there. No release flow yet: deploying is `pnpm --filter @influstep/app deploy` (wrangler) plus `pnpm --filter @influstep/convex deploy` once a cloud deployment exists. Do it only when asked.

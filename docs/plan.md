@@ -61,6 +61,50 @@ Written 2026-10-10 after the operator's second brief. The product in one sentenc
 14. **Home dashboard.** The calendar stays the plan for the week; above it a short overview answers the operator's three questions in one glance: what waits on me (checklist and approvals), what the personas changed on their own this week (journal), and what it earned (value per persona for the window, with the attribution caveat). One screen, no widget grid.
 15. **Polish.** An impeccable pass (critique, then polish) over every screen against DESIGN.md, then the cleanup skill over the changed files. Smoke test in Chrome at desktop and phone width.
 
+### Progress
+
+Updated 2026-10-13. Slices 1 to 9 are built and committed on `main`; the next one is slice 10. The operator paused here and builds slices 10 to 15 in the main session, without multi-agent workflow runs.
+
+| Slice | State | Commits |
+| ----- | ----- | ------- |
+| 1 Value per episode | done | fc85656 |
+| 2 Platform specialists | done | 44dcf84 |
+| 3 Personas in the sidebar | done | b93111b |
+| 4 X, where a persona also writes | done | 5729255, da96f13 |
+| 5 Take over an X account | done | d61be22, 9bedafc |
+| 6 Preview before publish | done | 89ff7c6 |
+| 7 Chat that changes the plan | done | f6cb87b, b9b5da0 |
+| 8 Strategy review | done | 480dbfb, fc5d0ad |
+| 9 Fresh research, like a real creator | done | 2814bf2 |
+| 10 to 15 | to build | |
+
+How a slice is built: write a short brief of the data, agent and studio changes; build; run `pnpm quality:fix`, `pnpm quality:check`, `pnpm test` and `pnpm knip`; reset, push and seed the local backend (see CLAUDE.md); smoke test every new screen and action in Chrome; commit with explicit paths.
+
+#### Open questions for the operator
+
+- Overriding an experiment that is already decided is refused today, and the "Decide myself" form shows only while the experiment runs. Should the operator be able to change a decision later?
+- Slice 9 made "link first" the control of the description format experiment, so a description now puts the tracked link before the code by default (it was code first). Confirm, or make "code first" the control.
+
+#### Slice 15 backlog
+
+Small issues found while building slices 1 to 9, kept for the polish pass. Slice 15 also runs the operator's request from 2026-10-13: go through every screen and the overall dashboard with `/impeccable this dashboard feels crowded and the important numbers are hard to find. Improve the hierarchy while keeping existing features.`, for better UX and UI, and checks every screen at phone width (not verified yet).
+
+- Runner: stamp a per-process instance id on a job at claim and check it in heartbeat, complete and fail, so a quiet but alive process and the runner that reclaimed its job cannot both finish it.
+- X voice: real-mode `learnVoice` can store a language tag that the operator's own Save refuses. A threads-only cadence makes every slot a thread.
+- Clicking a disabled Save drops focus to the page body (seen on Save beats). `Button` with `busy` also sets `disabled`, so a save likely blurs too.
+- The calendar summary reads "2 needs approval".
+- The episode card's status dot has no text for screen readers.
+- Mock writer text reads badly: "How to <topic>", "How to ask hn: ...", "I was wrong about send the quote".
+- `retryJob` on the jobs list re-runs the old publish payload. Retry still shows on jobs of killed episodes and on publish jobs and only refuses on click.
+- The sidebar says "Runner offline" while the providers query loads.
+- The chat's ambiguity reply lists every match in one long line. The replace reply quotes the bare concept (`with "Make"`).
+- Strategy: pillar percents can sum to 99. Experiments card actions wrap under the description on long text but sit to the right on short text. The Rate cell is empty at 0 exposures. A learning says "chosen by the operator" while the journal says "by you".
+- The persona header buttons (Poll signals, Plan this week, Pull metrics, Report) call mutations with no busy state and no refusal line.
+- Slice 9 smoke: the experiment form keeps a refusal on screen after the dimension changes. The brief's "Whole brief" toggle sits between its third and fourth line, and the brief's open problems repeat the Problem log under it. A `concept_swapped` journal entry lists the new concept twice in its evidence (as the episode and as the signal). Dismiss shows on used signals.
+- `poll_comments` keeps the first 120 characters of a comment as its title, so a longer question loses its "?" and never counts toward the problem log.
+- `private.episodes.rewrite` throws a plain Error on an idea; the studio hides the button, but it should be a `refusal()`.
+- Remove the leftover `evaluate_experiments` job kind: `pull_metrics` evaluates experiments now.
+
 ### Autonomy loop
 
 What runs on its own, per unpaused persona:
