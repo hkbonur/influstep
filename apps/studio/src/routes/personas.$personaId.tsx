@@ -5,6 +5,7 @@ import {
   EPISODE_KIND_LABELS,
   formatLength,
   isPost,
+  type MemoryKind,
   type PersonaColor,
   type PlatformFormat,
   type Voice,
@@ -36,7 +37,7 @@ import {
 } from '@/components/ui'
 import { cn } from '@/lib/cn'
 import { errorMessage } from '@/lib/errors'
-import { formatDate, formatDateTime, formatDay, formatHour, languageName, relativeTime } from '@/lib/format'
+import { formatDate, formatDateTime, formatDay, formatHour, languageName, plural, relativeTime } from '@/lib/format'
 import { ideaLine } from '@/lib/ideas'
 import { PROBLEMS_SHOWN, briefTime, splitBrief } from '@/lib/research'
 import { useNow } from '@/lib/use-now'
@@ -266,6 +267,8 @@ function PersonaPage() {
 
           <ResearchSummary personaId={personaId} />
 
+          <MemorySummary personaId={personaId} />
+
           <section>
             <Eyebrow className="mb-3">Recent jobs</Eyebrow>
             <ul className="space-y-1 font-mono text-[11px]">
@@ -306,6 +309,42 @@ function StrategySummary(props: { persona: Doc<'personas'> }) {
         <span className="block text-ash">{reviewedAt === undefined ? 'Not reviewed yet' : `Reviewed ${formatDate(reviewedAt)}`}</span>
       </Link>
     </section>
+  )
+}
+
+/**
+ * Two lines under the research: how many rules, facts and learnings the
+ * persona holds and when it last kept something, linking the Memory page,
+ * where every entry is with its evidence (DESIGN.md, Persona page).
+ */
+function MemorySummary(props: { personaId: Id<'personas'> }) {
+  const memory = useQuery(api.private.memory.list, { personaId: props.personaId })
+  return (
+    <section>
+      <Eyebrow className="mb-3">Memory</Eyebrow>
+      <Link to="/personas/$personaId/memory" params={{ personaId: props.personaId }} className="group block space-y-0.5 text-xs">
+        {memory === undefined && <Skeleton className="h-4 w-40" />}
+        {memory === null && <span className="block text-ash">This persona does not exist.</span>}
+        {memory !== undefined && memory !== null && <MemoryLines entries={memory.entries} />}
+      </Link>
+    </section>
+  )
+}
+
+function MemoryLines(props: { entries: NonNullable<FunctionReturnType<typeof api.private.memory.list>>['entries'] }) {
+  const active = props.entries.filter((entry) => entry.status === 'active')
+  const count = (kind: MemoryKind, one: string, other: string) => {
+    const n = active.filter((entry) => entry.kind === kind).length
+    return n === 0 ? [] : [`${n} ${plural(n, one, other)}`]
+  }
+  const counts = [...count('rule', 'rule', 'rules'), ...count('fact', 'fact', 'facts'), ...count('learning', 'learning', 'learnings')]
+  // Newest first from the backend.
+  const [newest] = props.entries
+  return (
+    <>
+      <span className="block group-hover:underline">{counts.length === 0 ? 'No rules, facts or learnings yet' : counts.join(', ')}</span>
+      <span className="block text-ash">{newest === undefined ? 'Nothing kept yet' : `Last kept ${formatDate(newest.createdAt)}`}</span>
+    </>
   )
 }
 

@@ -26,6 +26,7 @@ import { enqueueJob } from '../jobs/queue'
 import { addDays, dayKey, hourAt, weekStart } from './dates'
 import { INVALID_CODE, codeGivenText, giveDiscountCode } from './discounts'
 import { createIdea, killEpisode, rescheduleEpisode, scriptBeingWritten } from './episodes'
+import { rememberFromOperator } from './memory'
 
 /**
  * The persona's chat as a way to change things (docs/plan.md, slice 7). An
@@ -115,6 +116,35 @@ export async function applyChatIntent(
       return storeReply(ctx, persona, await askForTask(ctx, persona, messageId, intent))
     case 'give_code':
       return giveCode(ctx, persona, intent)
+    case 'remember':
+      return storeReply(ctx, persona, await remember(ctx, persona, messageId, intent))
+  }
+}
+
+/**
+ * A fact or a rule the operator asked the persona to remember goes into its
+ * memory with the message as its evidence, and the reply says it in the
+ * persona's words. Words already remembered are not stored twice.
+ */
+async function remember(
+  ctx: MutationCtx,
+  persona: Doc<'personas'>,
+  messageId: Id<'messages'>,
+  intent: Extract<ChatIntent, { kind: 'remember' }>
+): Promise<ChatOutcome> {
+  const outcome = await rememberFromOperator(ctx, persona, { kind: intent.memory, text: intent.text, messageId, now: Date.now() })
+  switch (outcome.status) {
+    case 'invalid':
+      return { text: `I could not keep that. ${outcome.problem}` }
+    case 'known':
+      return { text: `I already remember that: "${outcome.text}"` }
+    case 'stored':
+      return {
+        text:
+          intent.memory === 'rule'
+            ? `I will keep this rule: "${outcome.text}" I read my rules before every script and post.`
+            : `I will remember that: "${outcome.text}" I read what I know before every script and post.`,
+      }
   }
 }
 

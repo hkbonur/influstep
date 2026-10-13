@@ -16,6 +16,7 @@ import {
   pillarWeights,
   shiftPillarWeights,
   variantRate,
+  workspaceGoal,
   type CatalogVariant,
   type ExperimentHistoryRow,
   type ExperimentKind,
@@ -28,6 +29,7 @@ import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import { dayKey, hourAt, hourText } from './dates'
 import { dimensionApplies, grouped, rateNumber, rateText, startExperiment, variantStatsSince } from './experiments'
+import { activeEntries, supersedeOthers } from './memory'
 import { latestPerPublication } from './report'
 import { workspaceOf } from './workspace'
 
@@ -52,11 +54,39 @@ const GOAL_WINDOW_DAYS = 28
 const DECISION_MEMORY_DAYS = 180
 /** The newest journal entries the strategy page shows. */
 const JOURNAL_PAGE = 200
+/** Paid conversions of this many days, against the same span before it, say where a persona stands against the goal. */
+const STANDING_WINDOW_DAYS = 28
 
 export interface ReviewOutcome {
   /** Changes made, one journal entry each. */
   changes: number
   startedExperimentId?: Id<'experiments'>
+  /** The goal note this review left (every review leaves one). */
+  goalNoteId: Id<'memories'>
+}
+
+/**
+ * A change the review made, as a learning in the persona's memory: what the
+ * numbers showed and what the persona does since. `key` names the subject; a
+ * newer learning on it supersedes the older one, so the writer reads only
+ * what the persona believes now.
+ */
+async function writeLearning(
+  ctx: MutationCtx,
+  persona: Doc<'personas'>,
+  args: { text: string; key: string; episodeIds: Id<'episodes'>[]; now: number }
+): Promise<void> {
+  const learningId = await ctx.db.insert('memories', {
+    personaId: persona._id,
+    kind: 'learning',
+    text: args.text,
+    actor: 'analyst',
+    evidence: { episodeIds: [...new Set(args.episodeIds)], signalIds: [] },
+    key: args.key,
+    status: 'active',
+    createdAt: args.now,
+  })
+  await supersedeOthers(ctx, { _id: learningId, personaId: persona._id, kind: 'learning' }, (older) => older.key === args.key)
 }
 
 /** One change of the review: the journal entry is written; the phrase goes into the one chat message. */
@@ -176,6 +206,7 @@ async function reviewPillars(
   const onClicks =
     `Over the last ${PILLAR_WINDOW_DAYS} days "${up}" and "${down}" made the same value per measured video, ` +
     `and "${up}" got ${rateText('clicks', clickRate(upScore))} clicks per view against ${rateText('clicks', clickRate(downScore))}.`
+  const reason = upScore.score === downScore.score ? onClicks : onValue
   await ctx.db.insert('journal', {
     personaId: persona._id,
     kind: 'pillar_weights',
@@ -183,7 +214,7 @@ async function reviewPillars(
     text:
       `"${up}" gets ${percent(weightOf(shift.weights, up))}% of the evergreen plan, up from ${percent(weightOf(before, up))}%, ` +
       `and "${down}" ${percent(weightOf(shift.weights, down))}%, down from ${percent(weightOf(before, down))}%.`,
-    reason: upScore.score === downScore.score ? onClicks : onValue,
+    reason,
     evidence: {
       episodeIds: [...upScore.episodeIds, ...downScore.episodeIds],
       signalIds: [],
@@ -197,6 +228,14 @@ async function reviewPillars(
       ],
     },
     createdAt: now,
+  })
+  await writeLearning(ctx, persona, {
+    text:
+      `${reason} So "${up}" gets ${percent(weightOf(shift.weights, up))}% of the evergreen plan ` +
+      `and "${down}" ${percent(weightOf(shift.weights, down))}%.`,
+    key: 'pillars',
+    episodeIds: [...upScore.episodeIds, ...downScore.episodeIds],
+    now,
   })
   return {
     strategy: { ...strategy, pillarWeights: shift.weights },
@@ -274,6 +313,15 @@ async function reviewPublishHours(ctx: MutationCtx, persona: Doc<'personas'>, ep
         ],
       },
       createdAt: now,
+    })
+    await writeLearning(ctx, persona, {
+      text:
+        `On ${label}, videos published at ${hourText(best)} had a median of ${grouped(bestRow.medianViews)} views over the last ` +
+        `${HOUR_WINDOW_DAYS} days, against ${grouped(currentRow.medianViews)} at ${hourText(format.publishHour)}, ` +
+        `so ${label} videos go out at ${hourText(best)} now.`,
+      key: `publish_hour:${format.platform}`,
+      episodeIds: [...bestGroup.episodeIds, ...currentGroup.episodeIds],
+      now,
     })
     changes.push({ phrase: `moved ${label} to ${hourText(best)}` })
   }
@@ -484,14 +532,102 @@ async function startNextExperiment(
   return { experimentId, change: { phrase } }
 }
 
+/** Where a persona stands against the goal: paid conversions of two spans, what one is worth, and what it tries next. */
+export interface GoalStanding {
+  windowDays: number
+  paid: number
+  previousPaid: number
+  valuePerPaid: number
+  currency: string
+  /** The experiment that runs after the review, or null. */
+  testing: string | null
+  /** Whether the persona has a video platform; experiments vary videos only. */
+  onVideo: boolean
+}
+
+/**
+ * The goal note's words: paid customers this span with their value, the
+ * trend against the span before, and what the persona tries next. The goal
+ * itself (shared `workspaceGoal`) is said beside it, never in it.
+ */
+export function goalNoteText(standing: GoalStanding): string {
+  const { windowDays, paid, previousPaid } = standing
+  const money = (count: number) => `${grouped(count * standing.valuePerPaid)} ${standing.currency}`
+  const customers = (count: number) => `${grouped(count)} paid ${count === 1 ? 'customer' : 'customers'}`
+  const span = `in the last ${windowDays} days`
+  const before = `in the ${windowDays} days before`
+  const now =
+    paid === 0
+      ? previousPaid === 0
+        ? `No paid customers yet ${span}, nor ${before}.`
+        : `No paid customers ${span}, down from ${grouped(previousPaid)} (${money(previousPaid)}) ${before}.`
+      : paid === previousPaid
+        ? `${customers(paid)} ${span}, worth ${money(paid)}, the same as ${before}.`
+        : previousPaid === 0
+          ? `${customers(paid)} ${span}, worth ${money(paid)}, up from none ${before}.`
+          : `${customers(paid)} ${span}, worth ${money(paid)}, ${paid > previousPaid ? 'up' : 'down'} from ${grouped(previousPaid)} (${money(previousPaid)}) ${before}.`
+  const next =
+    standing.testing !== null
+      ? `Next: testing "${standing.testing}".`
+      : standing.onVideo
+        ? 'Next: nothing new to test this week.'
+        : 'Next: no experiment, since experiments vary videos and I post only on X.'
+  return `${now} ${next}`
+}
+
+/**
+ * The goal note every review leaves, changes or not: where the persona stands
+ * against the workspace's goal (paid conversions by link or by code, this
+ * span against the one before, at the workspace's value per paid) and the
+ * experiment it runs next. It supersedes the note of the review before.
+ */
+async function writeGoalNote(
+  ctx: MutationCtx,
+  persona: Doc<'personas'>,
+  conversions: Doc<'conversions'>[],
+  running: Doc<'experiments'> | null,
+  now: number
+): Promise<Id<'memories'>> {
+  const workspace = await workspaceOf(ctx, persona)
+  const since = now - STANDING_WINDOW_DAYS * DAY_MS
+  const paid = conversions.filter((conversion) => conversion.kind === 'paid' && conversion.at < now)
+  const current = paid.filter((conversion) => conversion.at >= since)
+  const previous = paid.filter((conversion) => conversion.at >= since - STANDING_WINDOW_DAYS * DAY_MS && conversion.at < since)
+  const text = goalNoteText({
+    windowDays: STANDING_WINDOW_DAYS,
+    paid: current.length,
+    previousPaid: previous.length,
+    valuePerPaid: workspace.valuePerPaid,
+    currency: workspace.currency,
+    testing: running === null ? null : running.name,
+    onVideo: persona.formats.some((format) => format.platform !== 'x'),
+  })
+  const episodeIds = [...new Set(current.flatMap((conversion) => (conversion.episodeId === undefined ? [] : [conversion.episodeId])))]
+  const noteId = await ctx.db.insert('memories', {
+    personaId: persona._id,
+    kind: 'goal_note',
+    text,
+    actor: 'analyst',
+    evidence: { ...(running === null ? {} : { experimentId: running._id }), episodeIds, signalIds: [] },
+    status: 'active',
+    createdAt: now,
+  })
+  await supersedeOthers(ctx, { _id: noteId, personaId: persona._id, kind: 'goal_note' }, () => true)
+  return noteId
+}
+
 /**
  * The weekly review, in order: pillar weights, publish hours, contradicted
  * defaults, the next experiment. The publish hours stay while a publish time
  * experiment runs: moving the hour under it would change what its variants
  * are offsets from. Each change writes its journal entry; the
  * review then stamps `strategy.reviewedAt` and, when anything changed, posts
- * one chat message naming the changes. Nothing changed: no message and no
- * journal entry, only the stamp.
+ * one chat message naming the changes. Every change that moves the plan
+ * (pillar weights, a publish hour) also leaves a learning, which supersedes
+ * the persona's older learning on the same subject; a started experiment is a
+ * question, not a learning, and the goal note names it as what comes next.
+ * Nothing changed: no message and no journal entry, only the stamp and the
+ * goal note, which every review leaves.
  */
 export async function reviewStrategy(ctx: MutationCtx, persona: Doc<'personas'>, now: number): Promise<ReviewOutcome> {
   const episodes = await ctx.db
@@ -521,6 +657,9 @@ export async function reviewStrategy(ctx: MutationCtx, persona: Doc<'personas'>,
   const started = await startNextExperiment(ctx, persona, strategy, episodes, experiments, conversions, contradictions, now)
   if (started) changes.push(started.change)
 
+  const running = started ? await ctx.db.get(started.experimentId) : experiments.find((experiment) => experiment.status === 'running')
+  const goalNoteId = await writeGoalNote(ctx, persona, conversions, running ?? null, now)
+
   await ctx.db.patch(persona._id, { strategy: { ...strategy, reviewedAt: now } })
   if (changes.length > 0) {
     await ctx.db.insert('messages', {
@@ -530,20 +669,21 @@ export async function reviewStrategy(ctx: MutationCtx, persona: Doc<'personas'>,
       createdAt: now,
     })
   }
-  return { changes: changes.length, ...(started ? { startedExperimentId: started.experimentId } : {}) }
+  return { changes: changes.length, goalNoteId, ...(started ? { startedExperimentId: started.experimentId } : {}) }
 }
 
 /**
- * What the strategy page reads: the persona's learnings, active and
- * superseded, the newest journal entries with the titles of the signals they
- * name, and its newest strategy review job,
- * read by its own index: the hourly signal polls and the daily pulls bury a
- * weekly review among the persona's newest jobs within days.
+ * What the strategy page reads: the workspace's goal with the persona's
+ * newest goal note, its learnings, active and superseded, the newest journal
+ * entries with the titles of the signals they name, and its newest strategy
+ * review job, read by its own index: the hourly signal polls and the daily
+ * pulls bury a weekly review among the persona's newest jobs within days.
  */
 export async function strategyView(
   ctx: Reader,
   persona: Doc<'personas'>
 ): Promise<{
+  goal: { text: string; note: Doc<'memories'> | null }
   learnings: Doc<'memories'>[]
   journal: Doc<'journal'>[]
   signals: Pick<Doc<'signals'>, '_id' | 'title'>[]
@@ -571,5 +711,13 @@ export async function strategyView(
     const signal = await ctx.db.get(signalId)
     if (signal) signals.push({ _id: signal._id, title: signal.title })
   }
-  return { learnings: memories.filter((memory) => memory.kind === 'learning'), journal, signals, reviewJob }
+  const workspace = await workspaceOf(ctx, persona)
+  const [note] = await activeEntries(ctx, persona._id, 'goal_note')
+  return {
+    goal: { text: workspaceGoal(workspace.sponsorName), note: note ?? null },
+    learnings: memories.filter((memory) => memory.kind === 'learning'),
+    journal,
+    signals,
+    reviewJob,
+  }
 }

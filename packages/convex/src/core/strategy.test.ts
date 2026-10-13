@@ -6,7 +6,7 @@ import { TIMEZONE, insertEpisode, insertMeasuredVideo, insertPersona } from '../
 import { setup } from '../../test/setup'
 import { addDays, dayKey, instantAt } from './dates'
 import { applyExperimentDecision, startExperiment, stopExperiment } from './experiments'
-import { reviewStrategy } from './strategy'
+import { goalNoteText, reviewStrategy } from './strategy'
 
 const DAY = 24 * 60 * 60 * 1000
 
@@ -21,6 +21,14 @@ async function journalOf(ctx: MutationCtx, personaId: Id<'personas'>): Promise<D
     .query('journal')
     .withIndex('by_persona_time', (q) => q.eq('personaId', personaId))
     .collect()
+}
+
+async function memoriesOf(ctx: MutationCtx, personaId: Id<'personas'>, kind: Doc<'memories'>['kind']): Promise<Doc<'memories'>[]> {
+  const rows = await ctx.db
+    .query('memories')
+    .withIndex('by_persona_kind_status', (q) => q.eq('personaId', personaId).eq('kind', kind))
+    .collect()
+  return rows.sort((a, b) => a.createdAt - b.createdAt)
 }
 
 async function messagesOf(ctx: MutationCtx, personaId: Id<'personas'>): Promise<string[]> {
@@ -130,7 +138,7 @@ describe('reviewStrategy', () => {
 
       const outcome = await reviewStrategy(ctx, persona, now)
 
-      expect(outcome).toEqual({ changes: 1 })
+      expect(outcome).toEqual({ changes: 1, goalNoteId: expect.any(String) })
       const after = await reload(ctx, persona._id)
       expect(after.strategy?.pillarWeights).toEqual([
         { pillar: 'n8n tutorials', weight: expect.closeTo(0.4) },
@@ -153,6 +161,18 @@ describe('reviewStrategy', () => {
         { label: '"Automation fails" weight (%)', value: 60 },
         { label: '"n8n tutorials" weight (%)', value: 40 },
       ])
+      const [learning, ...others] = await memoriesOf(ctx, persona._id, 'learning')
+      expect(others).toEqual([])
+      expect(learning).toMatchObject({
+        actor: 'analyst',
+        key: 'pillars',
+        status: 'active',
+        text:
+          'Over the last 28 days "Automation fails" made 58 EUR per measured video over 2 videos, and "n8n tutorials" 29 EUR over 2. ' +
+          'So "Automation fails" gets 60% of the evergreen plan and "n8n tutorials" 40%.',
+        createdAt: now,
+      })
+      expect(learning?.evidence.episodeIds).toHaveLength(4)
       expect(await messagesOf(ctx, persona._id)).toEqual([
         'I reviewed my strategy: I gave "Automation fails" more of the plan and "n8n tutorials" less. The Strategy page has the reasons.',
       ])
@@ -175,10 +195,22 @@ describe('reviewStrategy', () => {
       }
       // Not measured yet: it says nothing about its hour.
       await insertMeasuredVideo(ctx, persona, { publishedAt: at(1, 16), views: 50_000, clicks: 10, status: 'published' })
+      for (const key of ['publish_hour:youtube', 'pillars']) {
+        await ctx.db.insert('memories', {
+          personaId: persona._id,
+          kind: 'learning',
+          text: `An older learning on ${key}.`,
+          actor: 'analyst',
+          evidence: { episodeIds: [], signalIds: [] },
+          key,
+          status: 'active',
+          createdAt: now - 7 * DAY,
+        })
+      }
 
       const outcome = await reviewStrategy(ctx, persona, now)
 
-      expect(outcome).toEqual({ changes: 1 })
+      expect(outcome).toEqual({ changes: 1, goalNoteId: expect.any(String) })
       const after = await reload(ctx, persona._id)
       expect(after.formats.map((format) => [format.platform, format.publishHour])).toEqual([
         ['youtube', 18],
@@ -199,6 +231,21 @@ describe('reviewStrategy', () => {
         { label: 'Videos at 18:00', value: 3 },
         { label: 'Videos at 16:00', value: 3 },
       ])
+      const learnings = await memoriesOf(ctx, persona._id, 'learning')
+      const learning = learnings.find((candidate) => candidate.createdAt === now)
+      expect(learning).toMatchObject({
+        actor: 'analyst',
+        key: 'publish_hour:youtube',
+        status: 'active',
+        text: 'On YouTube, videos published at 18:00 had a median of 1,500 views over the last 56 days, against 1,000 at 16:00, so YouTube videos go out at 18:00 now.',
+      })
+      expect(learning?.evidence.episodeIds).toHaveLength(6)
+      // The older learning on the same subject stands down for it; one on another subject stays.
+      expect(learnings.find((candidate) => candidate.key === 'publish_hour:youtube' && candidate._id !== learning?._id)).toMatchObject({
+        status: 'superseded',
+        supersededBy: learning?._id,
+      })
+      expect(learnings.find((candidate) => candidate.key === 'pillars')?.status).toBe('active')
       expect(await messagesOf(ctx, persona._id)).toEqual([
         'I reviewed my strategy: I moved YouTube to 18:00. The Strategy page has the reasons.',
       ])
@@ -231,7 +278,7 @@ describe('reviewStrategy', () => {
         await insertMeasuredVideo(ctx, persona, { publishedAt: at(6 + index, 18), views, clicks: 10 })
       }
 
-      expect(await reviewStrategy(ctx, persona, now)).toEqual({ changes: 0 })
+      expect(await reviewStrategy(ctx, persona, now)).toEqual({ changes: 0, goalNoteId: expect.any(String) })
       expect((await reload(ctx, persona._id)).formats).toEqual(persona.formats)
       expect((await journalOf(ctx, persona._id)).filter((entry) => entry.kind === 'publish_hour')).toEqual([])
     })
@@ -311,10 +358,11 @@ describe('reviewStrategy', () => {
 
       const outcome = await reviewStrategy(ctx, persona, now)
 
-      expect(outcome).toEqual({ changes: 0 })
+      expect(outcome).toEqual({ changes: 0, goalNoteId: expect.any(String) })
       expect((await reload(ctx, persona._id)).strategy).toEqual({ pillarWeights: [], defaults: [], reviewedAt: now })
       expect(await journalOf(ctx, persona._id)).toEqual(before)
       expect(await messagesOf(ctx, persona._id)).toEqual([])
+      expect(await memoriesOf(ctx, persona._id, 'learning')).toEqual([])
     })
   })
 
@@ -558,5 +606,64 @@ describe('reviewStrategy', () => {
       if (!second.startedExperimentId) throw new Error('the review started no experiment')
       expect(await ctx.db.get(second.startedExperimentId)).toMatchObject({ kind: 'cta', retestOf: experimentId })
     })
+  })
+})
+
+describe('goal notes', () => {
+  it('leaves one every review, naming paid customers against the span before and what runs next, and retires the one before', async () => {
+    const t = setup()
+    await t.run(async (ctx) => {
+      const persona = await insertPersona(ctx)
+      const experimentId = await holdExperiments(ctx, persona)
+      const now = Date.now()
+      const episode = await insertEpisode(ctx, persona, { status: 'measured', plannedFor: dayKey(now - 3 * DAY, TIMEZONE) })
+      for (const [index, daysAgo] of [3, 10, 40].entries()) {
+        await ctx.db.insert('conversions', {
+          personaId: persona._id,
+          episodeId: episode._id,
+          kind: 'paid',
+          via: 'utm',
+          distinctId: `buyer-${index}`,
+          at: now - daysAgo * DAY,
+          mock: true,
+        })
+      }
+
+      const first = await reviewStrategy(ctx, persona, now - DAY)
+      const second = await reviewStrategy(ctx, await reload(ctx, persona._id), now)
+
+      const notes = await memoriesOf(ctx, persona._id, 'goal_note')
+      expect(notes.map((note) => [note._id, note.status])).toEqual([
+        [first.goalNoteId, 'superseded'],
+        [second.goalNoteId, 'active'],
+      ])
+      expect(notes[0]?.supersededBy).toBe(second.goalNoteId)
+      expect(notes[1]).toMatchObject({
+        actor: 'analyst',
+        text: '2 paid customers in the last 28 days, worth 58 EUR, up from 1 (29 EUR) in the 28 days before. Next: testing "Concept angle: Story vs Tutorial".',
+        evidence: { experimentId, episodeIds: [episode._id], signalIds: [] },
+        createdAt: now,
+      })
+    })
+  })
+
+  it('says the trend in every direction and what comes next on X alone', () => {
+    const standing = { windowDays: 28, valuePerPaid: 29, currency: 'EUR', testing: null, onVideo: true }
+    expect(goalNoteText({ ...standing, paid: 0, previousPaid: 0 })).toBe(
+      'No paid customers yet in the last 28 days, nor in the 28 days before. Next: nothing new to test this week.'
+    )
+    expect(goalNoteText({ ...standing, paid: 0, previousPaid: 2 })).toBe(
+      'No paid customers in the last 28 days, down from 2 (58 EUR) in the 28 days before. Next: nothing new to test this week.'
+    )
+    expect(goalNoteText({ ...standing, paid: 1, previousPaid: 1 })).toBe(
+      '1 paid customer in the last 28 days, worth 29 EUR, the same as in the 28 days before. Next: nothing new to test this week.'
+    )
+    expect(goalNoteText({ ...standing, paid: 3, previousPaid: 0, onVideo: false })).toBe(
+      '3 paid customers in the last 28 days, worth 87 EUR, up from none in the 28 days before. ' +
+        'Next: no experiment, since experiments vary videos and I post only on X.'
+    )
+    expect(goalNoteText({ ...standing, paid: 1, previousPaid: 4, testing: 'Hook style: Question vs How to' })).toBe(
+      '1 paid customer in the last 28 days, worth 29 EUR, down from 4 (116 EUR) in the 28 days before. Next: testing "Hook style: Question vs How to".'
+    )
   })
 })

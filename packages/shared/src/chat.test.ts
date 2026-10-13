@@ -171,6 +171,39 @@ describe('parseChatIntent', () => {
     expect(parseChatIntent(`use code ${'A'.repeat(25)}, 20% off`).kind).not.toBe('give_code')
   })
 
+  it('reads something to remember as a fact, or as a rule when it says what to do', () => {
+    expect(parseChatIntent("Remember that viewers hate the word 'guys'.")).toEqual({
+      kind: 'remember',
+      memory: 'fact',
+      text: "viewers hate the word 'guys'",
+    })
+    expect(parseChatIntent('remember to always show the URL bar')).toEqual({
+      kind: 'remember',
+      memory: 'rule',
+      text: 'always show the URL bar',
+    })
+    expect(parseChatIntent('Remember: never open with a question about pricing')).toEqual({
+      kind: 'remember',
+      memory: 'rule',
+      text: 'never open with a question about pricing',
+    })
+    expect(parseChatIntent('please keep in mind that most of my viewers run n8n on their own server')).toEqual({
+      kind: 'remember',
+      memory: 'fact',
+      text: 'most of my viewers run n8n on their own server',
+    })
+    expect(parseChatIntent('note that Make raised its prices in March, thanks')).toEqual({
+      kind: 'remember',
+      memory: 'fact',
+      text: 'Make raised its prices in March',
+    })
+  })
+
+  it('reads a bare "remember" or a question about remembering as no memory', () => {
+    expect(parseChatIntent('remember')).toEqual({ kind: 'conversation' })
+    expect(parseChatIntent('do you remember the webhook video?').kind).not.toBe('remember')
+  })
+
   it('reads a directive when no other rule matches', () => {
     expect(parseChatIntent('focus on n8n error handling for two weeks')).toEqual({
       kind: 'directive',
@@ -193,6 +226,7 @@ describe('parseChatIntent', () => {
       'research brief on Make vs n8n',
       'use code ADA20 for the next video',
       'focus on n8n error handling for two weeks',
+      "remember that viewers hate the word 'guys'",
       'hello',
     ]) {
       expect(chatIntentSchema.parse(parseChatIntent(text))).toEqual(parseChatIntent(text))

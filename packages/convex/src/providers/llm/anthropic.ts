@@ -20,6 +20,7 @@ import {
   type ChatIntent,
   type Habit,
 } from '@influstep/shared'
+import type { WriterMemory } from '../../core/memory'
 import { requireEnv } from '../../lib/env'
 import {
   POST_LENGTH_TARGETS,
@@ -92,7 +93,7 @@ export const anthropicLlm: LlmProvider = {
             deliveryInstruction(brief),
             `Concept: ${brief.concept}`,
             `Pillar: ${brief.pillar}`,
-            learningsInstruction(brief),
+            memoryInstruction(brief.memory),
             defaultsInstruction(brief),
             variantInstruction(brief),
             sponsorInstruction(brief),
@@ -130,6 +131,7 @@ export const anthropicLlm: LlmProvider = {
             voiceInstruction(brief),
             examplesInstruction(brief.examples),
             `Persona bible:\n${brief.persona.bible}`,
+            memoryInstruction(brief.memory),
             brief.directives.length > 0 ? `Standing directives from the operator:\n- ${brief.directives.join('\n- ')}` : '',
             `Concept: ${brief.concept}`,
             `Pillar: ${brief.pillar}`,
@@ -269,6 +271,7 @@ const INTERPRET_SYSTEM = [
   '- move: move one planned episode to another day of its week. to is that weekday.',
   '- drop: drop one planned episode.',
   '- task: a report one agent writes. research_brief is research on a subject; comment_digest is what people say in the comments; analytics_summary is how the persona is doing in numbers. topic only when the message names a subject.',
+  '- remember: something the operator wants the persona to keep knowing ("remember that viewers hate the word guys", "keep in mind most viewers self-host"). memory is rule when it says what to always or never do, else fact; text is what to remember in the operator\'s words, without "remember that". A standing instruction for the next scripts without "remember" is a directive.',
   '- give_code: a discount code for the descriptions. code is the code as written; offer is what it gives ("20% off Pro for 3 months"), or null when the message does not say; target only when the message ties the code to an episode.',
   `Targets: when the message names an episode of the plan, set target.episodeId to that row's id and nothing else. "The next video" is next: true. When nothing in the plan fits, give the weekday and a keyword as the message says them, so the persona can say it found no such episode. Weekdays are ${WEEKDAYS.join(', ')}.`,
   'Read the earlier chat for what a short follow-up refers to ("the second one", "yes, that one").',
@@ -377,10 +380,23 @@ function problemsInstruction(research: WriterResearch): string {
   return `Problems I met (your own problem log, newest first; answer one only where it fits the concept):\n- ${research.problems.join('\n- ')}`
 }
 
-/** What the persona's own experiments showed, newest first; nothing until one decides. */
-function learningsInstruction(brief: ScriptBrief): string {
-  if (brief.learnings.length === 0) return ''
-  return `What you have learned from your own experiments, newest first:\n- ${brief.learnings.join('\n- ')}`
+/**
+ * The persona's memory (core/memory.ts `writerMemory`): the goal and where it
+ * stands, the operator's rules, which the draft never breaks, the facts it
+ * knows, and what its own experiments and reviews showed. Each part is left
+ * out while it is empty.
+ */
+function memoryInstruction(memory: WriterMemory): string {
+  return [
+    `The goal you work toward: ${memory.goal}.${memory.standing === null ? '' : ` Where you stand: ${memory.standing}`}`,
+    memory.rules.length > 0 ? `Rules you keep, from your memory; never break one:\n- ${memory.rules.join('\n- ')}` : '',
+    memory.facts.length > 0 ? `What you know about your audience and your niche:\n- ${memory.facts.join('\n- ')}` : '',
+    memory.learnings.length > 0
+      ? `What you have learned from your own experiments and reviews, newest first:\n- ${memory.learnings.join('\n- ')}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n')
 }
 
 /** The dimensions where the persona no longer does what it did at the start (shared `styleLines`); nothing while every one is the control. */
@@ -390,7 +406,7 @@ function defaultsInstruction(brief: ScriptBrief): string {
 }
 
 /**
- * The experiment variant the episode carries. It comes after the learnings
+ * The experiment variant the episode carries. It comes after the memory
  * and the defaults and wins over them for its dimension, so the experiment
  * measures what it set out to measure.
  */

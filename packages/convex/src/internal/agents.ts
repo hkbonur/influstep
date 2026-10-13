@@ -396,7 +396,7 @@ export const planWeekMutation = internalMutation({
  * The video path: one script for every platform the episode goes to. The
  * writer gets the resolved delivery, the length scaled by the episode-length
  * variant in force, and the hook convention of each platform, in PLATFORMS
- * order. It also gets the persona's learnings and the style in force on every
+ * order. It also gets the persona's memory and the style in force on every
  * dimension (shared `effectiveStyle`), so a decided experiment changes the
  * next script. The beats are the script, held to the shared rules
  * (`scriptProblems`, `lengthProblem`) and the description to what a
@@ -411,7 +411,7 @@ export const writeScript = internalAction({
     const context: EpisodeContext = await ctx.runQuery(internal.internal.data.getEpisodeContext, { episodeId })
     const kind = context.episode.kind
     if (isPost(kind)) return writePost(ctx, context, kind)
-    const { episode, persona, workspace, directives, signals, experiment, learnings, research } = context
+    const { episode, persona, workspace, directives, signals, experiment, memory, research } = context
     const variant = episodeVariant(episode, experiment)
     const style = effectiveStyle({ variant, sponsorSegment: episode.sponsorSegment }, persona.strategy?.defaults)
     const formats = formatsFor(persona, episode.platforms)
@@ -431,7 +431,7 @@ export const writeScript = internalAction({
       sponsorName: workspace.sponsorName,
       sponsorUrl: workspace.sponsorUrl,
       variant: scriptVariantOf(variant),
-      learnings,
+      memory,
       style,
       styleLines: styleLines(style, variant?.kind),
       directives: directives.map((directive) => directive.text),
@@ -571,7 +571,7 @@ export const storeScript = internalMutation({
  * second miss fails the episode with them.
  */
 async function writePost(ctx: ActionCtx, context: EpisodeContext, kind: PostKind): Promise<WriterResult> {
-  const { episode, persona, workspace, directives, signals, examples, research } = context
+  const { episode, persona, workspace, directives, signals, examples, memory, research } = context
   // A post planned before intents and lengths existed has neither and is written to its kind alone.
   const length = episode.length ?? null
   const brief: PostBrief = {
@@ -588,6 +588,7 @@ async function writePost(ctx: ActionCtx, context: EpisodeContext, kind: PostKind
     pillar: episode.pillar ?? persona.pillars[0] ?? '',
     sponsorSegment: episode.sponsorSegment,
     sponsorName: workspace.sponsorName,
+    memory,
     directives: directives.map((directive) => directive.text),
     signals: signals.map((signal) => ({ title: signal.title, summary: signal.summary, url: signal.url })),
     research,

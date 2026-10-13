@@ -58,19 +58,10 @@ export const JOURNAL_KIND_LABELS: Record<JournalKind, string> = {
 /**
  * Who made a change: the persona's analyst on its own, its researcher (a
  * last check that swapped a cold concept), or the operator. Also who set an
- * experiment up.
+ * experiment up, and who wrote a memory entry.
  */
 export const JOURNAL_ACTORS = ['analyst', 'researcher', 'operator'] as const
 export type JournalActor = (typeof JOURNAL_ACTORS)[number]
-
-/**
- * What a memory entry is: a learning from a decided experiment, the morning's
- * research brief, or a problem the persona met (a question repeated under its
- * videos, a tool that broke in a recording). Slice 10 adds fact, rule and goal
- * note.
- */
-export const MEMORY_KINDS = ['learning', 'brief', 'problem'] as const
-export type MemoryKind = (typeof MEMORY_KINDS)[number]
 
 /** How long a morning brief stays the one the writer reads: a day, plus slack for the cron. */
 export const BRIEF_TTL_MS = 26 * 3_600_000
@@ -83,10 +74,6 @@ export const PROBLEM_REPEAT_MIN = 3
 
 /** How far back the problem log reads comments. */
 export const PROBLEM_WINDOW_DAYS = 14
-
-/** A superseded memory stays, so the persona can show why it once believed it. */
-export const MEMORY_STATUSES = ['active', 'superseded'] as const
-export type MemoryStatus = (typeof MEMORY_STATUSES)[number]
 
 /** What an episode does on one dimension, and whether that is what the persona did before it tested anything. */
 export interface EffectiveVariant {

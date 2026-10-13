@@ -1,4 +1,11 @@
-import { STRATEGY_REVIEW_SLOT, WEEKDAYS } from '@influstep/shared'
+import { STRATEGY_REVIEW_SLOT, WEEKDAYS, type JournalActor } from '@influstep/shared'
+
+/** Who made a journal entry or wrote a memory entry, as its meta line says it. */
+export const ACTOR_WORDS: Record<JournalActor, string> = {
+  analyst: 'by the analyst',
+  researcher: 'by the researcher',
+  operator: 'by you',
+}
 
 /**
  * The review's day as Date#getUTCDay counts it, Sunday first. WEEKDAYS starts

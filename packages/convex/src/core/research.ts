@@ -15,6 +15,7 @@ import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import { providersMode } from '../lib/env'
 import { PRESENTER_TOOL } from '../providers/llm'
+import { activeEntries } from './memory'
 import { signalConcept } from './planner'
 import { workspaceOf } from './workspace'
 
@@ -53,18 +54,9 @@ async function liveSignals(ctx: Reader, personaId: Id<'personas'>): Promise<Doc<
   return signals.filter((signal) => signal.status !== 'dismissed')
 }
 
-/** The persona's active memories of one kind, newest first. */
-async function activeMemories(ctx: Reader, personaId: Id<'personas'>, kind: Doc<'memories'>['kind']): Promise<Doc<'memories'>[]> {
-  const rows = await ctx.db
-    .query('memories')
-    .withIndex('by_persona_kind_status', (q) => q.eq('personaId', personaId).eq('kind', kind).eq('status', 'active'))
-    .collect()
-  return rows.sort((a, b) => b.createdAt - a.createdAt)
-}
-
-/** The persona's open problems, newest first. A problem stays open until something resolves it (slice 10). */
+/** The persona's open problems, newest first. A problem stays open until the operator marks it resolved (core/memory.ts). */
 export async function activeProblems(ctx: Reader, personaId: Id<'personas'>): Promise<Doc<'memories'>[]> {
-  return activeMemories(ctx, personaId, 'problem')
+  return activeEntries(ctx, personaId, 'problem')
 }
 
 /**
@@ -73,7 +65,7 @@ export async function activeProblems(ctx: Reader, personaId: Id<'personas'>): Pr
  * hand the writer yesterday's news as today's.
  */
 export async function activeBrief(ctx: Reader, personaId: Id<'personas'>, now: number): Promise<Doc<'memories'> | null> {
-  for (const brief of await activeMemories(ctx, personaId, 'brief')) {
+  for (const brief of await activeEntries(ctx, personaId, 'brief')) {
     if (brief.expiresAt === undefined) throw new Error(`brief ${brief._id} has no expiry`)
     if (brief.expiresAt > now) return brief
   }
@@ -86,7 +78,7 @@ export async function activeBrief(ctx: Reader, personaId: Id<'personas'>, now: n
  * when a brief runs out. The writer reads `activeBrief` instead.
  */
 export async function latestBrief(ctx: Reader, personaId: Id<'personas'>): Promise<(Doc<'memories'> & { expiresAt: number }) | null> {
-  const [brief] = await activeMemories(ctx, personaId, 'brief')
+  const [brief] = await activeEntries(ctx, personaId, 'brief')
   if (brief === undefined) return null
   const expiresAt = brief.expiresAt
   if (expiresAt === undefined) throw new Error(`brief ${brief._id} has no expiry`)
@@ -147,6 +139,7 @@ export async function writeDailyBrief(ctx: MutationCtx, persona: Pick<Doc<'perso
     personaId: persona._id,
     kind: 'brief',
     text: lines.join('\n'),
+    actor: 'researcher',
     evidence: { episodeIds: [], signalIds: top.map((entry) => entry.signal._id) },
     expiresAt: now + BRIEF_TTL_MS,
     status: 'active',
@@ -196,12 +189,15 @@ function union<T>(a: readonly T[], b: readonly T[]): T[] {
 /**
  * The question side of the problem log: the comment signals of the last
  * PROBLEM_WINDOW_DAYS that ask something, grouped by what they ask (shared
- * `groupQuestions`, oldest first so a group reads as first asked). A group of
+ * `groupQuestions`, oldest first so a group reads as first asked). A comment
+ * a resolved problem rests on is left out, so resolving a problem holds until
+ * the question is asked again PROBLEM_REPEAT_MIN times. A group of
  * PROBLEM_REPEAT_MIN or more is a problem: one already open under the same
  * key, or holding one of the group's comments, takes the new comments into
- * its evidence, else a new problem and its candidate signal are written. Comment signals record no episode (the
- * publisher's comment poll stores the publication's url, not its episode),
- * so the evidence names no episodes. Returns the problems it wrote.
+ * its evidence, else a new problem and its candidate signal are written.
+ * Comment signals record no episode (the publisher's comment poll stores the
+ * publication's url, not its episode), so the evidence names no episodes.
+ * Returns the problems it wrote.
  */
 export async function logRepeatedQuestions(
   ctx: MutationCtx,
@@ -209,9 +205,15 @@ export async function logRepeatedQuestions(
   now: number
 ): Promise<Id<'memories'>[]> {
   const since = now - PROBLEM_WINDOW_DAYS * DAY_MS
+  // A comment a resolved problem rests on was answered once; it does not count toward the same problem again.
+  const resolved = await ctx.db
+    .query('memories')
+    .withIndex('by_persona_kind_status', (q) => q.eq('personaId', persona._id).eq('kind', 'problem').eq('status', 'retired'))
+    .collect()
+  const answered = new Set(resolved.flatMap((problem) => problem.evidence.signalIds))
   const questions = (await liveSignals(ctx, persona._id))
     .filter((signal) => {
-      if (signal.source !== 'comments' || postedAt(signal) < since) return false
+      if (signal.source !== 'comments' || postedAt(signal) < since || answered.has(signal._id)) return false
       // Only the comment's own words say whether it asks something. The slice brief reads "title or summary", but a
       // comment signal's summary is the line the comment poll writes ('<n> likes under "<publication title>"'),
       // so a "?" in the video's title would count every comment under it as a question, "Great video!" too.
@@ -248,6 +250,7 @@ export async function logRepeatedQuestions(
       personaId: persona._id,
       kind: 'problem',
       text,
+      actor: 'researcher',
       evidence: { episodeIds: [], signalIds },
       key,
       status: 'active',
@@ -309,6 +312,7 @@ export async function logRecordingProblem(
     personaId: persona._id,
     kind: 'problem',
     text,
+    actor: 'researcher',
     evidence: { episodeIds: [episode._id], signalIds: [] },
     key,
     status: 'active',

@@ -21,6 +21,7 @@ import {
   type VoiceStats,
   type Weekday,
 } from '@influstep/shared'
+import type { WriterMemory } from '../../core/memory'
 import type { Funnel } from '../../core/report'
 
 /**
@@ -47,8 +48,8 @@ export interface ScriptBrief {
   sponsorUrl: string
   /** The experiment variant this episode carries, with the dimension its experiment varies, when that dimension is one the writer scripts. */
   variant?: { kind: ScriptKind; key: string; description: string }
-  /** The persona's active learnings, newest first: what its own experiments showed. */
-  learnings: string[]
+  /** What the persona knows (core/memory.ts `writerMemory`): its goal and standing, the operator's rules and facts, its learnings. */
+  memory: WriterMemory
   /**
    * What the episode does on every dimension (shared `effectiveStyle`): its
    * own variant where its experiment varies the dimension, else the persona's
@@ -103,6 +104,7 @@ export interface PostBrief {
   pillar: string
   sponsorSegment: SponsorSegment
   sponsorName: string
+  memory: WriterMemory
   directives: string[]
   signals: ScriptBrief['signals']
   research: WriterResearch

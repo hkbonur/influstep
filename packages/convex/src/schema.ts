@@ -353,29 +353,37 @@ export default defineSchema({
     createdAt: v.number(),
   }).index('by_persona_time', ['personaId', 'createdAt']),
 
-  // What a persona knows, all of which the writer reads: learnings from decided experiments, the morning's
-  // research brief, and the problems it met (core/research.ts). A newer learning on the same dimension, or the
-  // next morning's brief, supersedes the older one, which stays so the page can show what changed.
+  // What a persona knows (shared memory.ts): learnings from decided experiments and from the strategy review's
+  // changes, the morning's research brief, the problems it met, the operator's facts and rules, and the goal note
+  // each review leaves. A newer entry on the same subject supersedes the older one, and the operator can retire a
+  // fact, a rule or a problem; either way the row stays, so the memory page can show what changed.
   memories: defineTable({
     personaId: v.id('personas'),
     kind: memoryKindValidator,
     text: v.string(),
+    // Who wrote it: the analyst (learnings, goal notes), the researcher (briefs, problems) or the operator (facts,
+    // rules, and the learning of an experiment they decided themselves).
+    actor: actorValidator,
     dimension: v.optional(experimentKindValidator),
     evidence: v.object({
       experimentId: v.optional(v.id('experiments')),
       episodeIds: v.array(v.id('episodes')),
       // The signals a brief names or a problem was logged from; empty on a learning.
       signalIds: v.array(v.id('signals')),
+      // The operator's chat message a fact or a rule was told in; absent on one added on the memory page.
+      messageId: v.optional(v.id('messages')),
     }),
-    // A learning's 0..1: the decision's confidence, or 1 for the operator's own verdict. A brief and a problem
-    // have none.
+    // A learning's 0..1: the decision's confidence, or 1 for the operator's own verdict. Every other entry has none.
     confidence: v.optional(v.number()),
     // A brief's: the writer never reads it after this.
     expiresAt: v.optional(v.number()),
-    // A problem's dedup key: `question:<tokens>` or `tool:<tool lowercased>`.
+    // What a newer entry of the same kind replaces it by. A problem's dedup key: `question:<tokens>` or
+    // `tool:<tool lowercased>`. A review learning's subject: `pillars` or `publish_hour:<platform>`.
     key: v.optional(v.string()),
     status: memoryStatusValidator,
     supersededBy: v.optional(v.id('memories')),
+    // When the operator retired it.
+    retiredAt: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index('by_persona_status', ['personaId', 'status'])

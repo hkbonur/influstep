@@ -10,7 +10,6 @@ import {
   catalogControl,
   effectiveStyle,
   pillarWeights,
-  type JournalActor,
 } from '@influstep/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
@@ -20,7 +19,7 @@ import { JobState, PlatformGlyphs } from '@/components/status'
 import { Button, ErrorLine, LinkButton, Mono, PageHeader, Skeleton, Spinner } from '@/components/ui'
 import { errorMessage } from '@/lib/errors'
 import { formatCount, formatDate, formatDateTime, formatHour, formatNumber, formatPercent } from '@/lib/format'
-import { nextReviewAt } from '@/lib/strategy'
+import { ACTOR_WORDS, nextReviewAt } from '@/lib/strategy'
 import { useNow } from '@/lib/use-now'
 
 // `$personaId_`: the same /personas/:id/strategy address, outside the persona page's route, like the voice page. The
@@ -33,7 +32,8 @@ export const Route = createFileRoute('/personas/$personaId_/strategy')({ compone
  *   titles name the journal's evidence.
  * - private.experiments.list for the persona: the running experiment with its per-variant stats and createdBy, and
  *   the names of the experiments a learning or a journal entry points at. The Experiments page shows the same rows.
- * - private.strategy.get: `learnings` (the persona's memories rows, active and superseded) and `journal` (its
+ * - private.strategy.get: `goal`, the workspace's goal with the persona's goal note in force (null before the first
+ *   review), `learnings` (the persona's learning rows in memory, active and superseded) and `journal` (its
  *   journal rows), which the page orders itself, newest first, `reviewJob`, the persona's newest review_strategy
  *   job (null before the first), for Review now, and `signals`, the id and title of each signal a journal entry
  *   names as evidence (a swapped concept's two signals), so the entry can name them.
@@ -46,19 +46,12 @@ type Learning = StrategyData['learnings'][number]
 type JournalEntry = StrategyData['journal'][number]
 type ExperimentRow = FunctionReturnType<typeof api.private.experiments.list>[number]
 
-/** Who made a journal entry, as its meta line says it. */
-const ACTOR_WORDS: Record<JournalActor, string> = {
-  analyst: 'by the analyst',
-  researcher: 'by the researcher',
-  operator: 'by you',
-}
-
 /** The names of the persona's experiments by id, for the links of its learnings and its journal. */
 type ExperimentNames = Map<Id<'experiments'>, string>
 
 /**
- * A persona's strategy (DESIGN.md, Strategy page): what it tests now and what
- * it does by default, then the pillar weights and publish hours the planner
+ * A persona's strategy (DESIGN.md, Strategy page): the goal and where the
+ * persona stands against it, what it tests now and what it does by default, then the pillar weights and publish hours the planner
  * follows, then what it learned and the journal of every change, with the
  * reasons. One column, read top to bottom.
  */
@@ -79,11 +72,12 @@ function StrategyPage() {
     <div className="max-w-[48rem]">
       <StrategyHeader persona={persona} reviewJob={strategy.reviewJob} />
       <div className="space-y-10">
+        <Goal persona={persona} goal={strategy.goal} />
         <NowTesting persona={persona} running={running === undefined ? null : running} />
         <Defaults persona={persona} learnings={strategy.learnings} runningKind={running?.kind} />
         <Pillars persona={persona} />
         <PublishHours persona={persona} />
-        <Learnings learnings={strategy.learnings} names={names} />
+        <Learnings persona={persona} learnings={strategy.learnings} names={names} />
         <Journal entries={strategy.journal} episodes={data.episodes} signals={strategy.signals} names={names} />
       </div>
     </div>
@@ -174,6 +168,29 @@ function StrategyHeader(props: { persona: Doc<'personas'>; reviewJob: Doc<'jobs'
 
 function SectionHeading(props: { children: React.ReactNode }) {
   return <h2 className="eyebrow mb-3">{props.children}</h2>
+}
+
+/**
+ * The one goal every persona works toward, and the goal note the last review
+ * left: paid customers this span against the one before, and what comes next.
+ */
+function Goal(props: { persona: Doc<'personas'>; goal: StrategyData['goal'] }) {
+  const note = props.goal.note
+  return (
+    <section>
+      <SectionHeading>Goal</SectionHeading>
+      <h3 className="font-semibold">{props.goal.text}</h3>
+      {note === null && <p className="mt-0.5 text-ash">No standing yet. Every review says where {props.persona.name} stands.</p>}
+      {note !== null && (
+        <>
+          <p className="mt-0.5">{note.text}</p>
+          <p className="mt-0.5 text-[11px] text-ash">
+            {formatDate(note.createdAt)} · {ACTOR_WORDS[note.actor]}
+          </p>
+        </>
+      )}
+    </section>
+  )
 }
 
 /**
@@ -363,19 +380,22 @@ function PublishHours(props: { persona: Doc<'personas'> }) {
 }
 
 /**
- * What the persona learned from its decided experiments, which the writer
- * reads before every script. A newer learning on the same dimension supersedes
- * an older one, which stays under Earlier, so the persona can show why it
- * changed its mind.
+ * What the persona learned from its decided experiments and from the changes
+ * its reviews made, which the writer reads before every script. A newer
+ * learning on the same subject supersedes an older one, which stays under
+ * Earlier, so the persona can show why it changed its mind. The rest of its
+ * memory is on the Memory page.
  */
-function Learnings(props: { learnings: Learning[]; names: ExperimentNames }) {
+function Learnings(props: { persona: Doc<'personas'>; learnings: Learning[]; names: ExperimentNames }) {
   const newestFirst = [...props.learnings].sort((a, b) => b.createdAt - a.createdAt)
   const active = newestFirst.filter((learning) => learning.status === 'active')
   const earlier = newestFirst.filter((learning) => learning.status === 'superseded')
   return (
     <section>
       <SectionHeading>Learnings</SectionHeading>
-      {active.length === 0 && <p className="text-ash">Nothing learned yet. Each decided experiment leaves one.</p>}
+      {active.length === 0 && (
+        <p className="text-ash">Nothing learned yet. Each decided experiment and each change a review makes leaves one.</p>
+      )}
       {active.length > 0 && (
         <ul className="space-y-3">
           {active.map((learning) => (
@@ -395,6 +415,17 @@ function Learnings(props: { learnings: Learning[]; names: ExperimentNames }) {
           </ul>
         </details>
       )}
+      <p className="mt-3 text-xs text-ash">
+        The rules and facts you gave {props.persona.name}, and its goal notes and problems, are on the{' '}
+        <Link
+          to="/personas/$personaId/memory"
+          params={{ personaId: props.persona._id }}
+          className="underline decoration-fog hover:text-ink hover:decoration-ink"
+        >
+          Memory page
+        </Link>
+        .
+      </p>
     </section>
   )
 }

@@ -617,6 +617,7 @@ export async function applyExperimentDecision(
     personaId: persona._id,
     kind: 'learning',
     text,
+    actor,
     dimension: experiment.kind,
     evidence: { experimentId: experiment._id, episodeIds, signalIds: [] },
     confidence,

@@ -296,6 +296,51 @@ describe('chat gives a code', () => {
   })
 })
 
+describe('chat remembers', () => {
+  async function memoriesOf(t: Harness, persona: Doc<'personas'>): Promise<Doc<'memories'>[]> {
+    return t.run((ctx) =>
+      ctx.db
+        .query('memories')
+        .withIndex('by_persona_status', (q) => q.eq('personaId', persona._id))
+        .collect()
+    )
+  }
+
+  it('keeps a fact with the message as its evidence, its quotes intact, and says so once', async () => {
+    const t = setup()
+    const { persona } = await plan(t)
+
+    await say(t, persona, "remember that viewers hate the word 'guys'")
+
+    const [fact, ...others] = await memoriesOf(t, persona)
+    expect(others).toEqual([])
+    const ask = (await t.run((ctx) => ctx.db.query('messages').collect())).find((message) => message.author === 'operator')
+    expect(fact).toMatchObject({
+      kind: 'fact',
+      text: "Viewers hate the word 'guys'",
+      actor: 'operator',
+      evidence: { episodeIds: [], signalIds: [], messageId: ask?._id },
+      status: 'active',
+    })
+    const reply = await onlyReply(t, persona)
+    expect(reply.text).toBe(`I will remember that: "Viewers hate the word 'guys'" I read what I know before every script and post.`)
+  })
+
+  it('keeps a rule, and says it already knows the same words told again', async () => {
+    const t = setup()
+    const { persona } = await plan(t)
+
+    await say(t, persona, 'Remember to always show the URL bar, please')
+    expect((await onlyReply(t, persona)).text).toBe(
+      'I will keep this rule: "Always show the URL bar." I read my rules before every script and post.'
+    )
+    await say(t, persona, 'note that always show the url bar.')
+
+    expect((await onlyReply(t, persona)).text).toBe('I already remember that: "Always show the URL bar."')
+    expect((await memoriesOf(t, persona)).map((entry) => [entry.kind, entry.text])).toEqual([['rule', 'Always show the URL bar.']])
+  })
+})
+
 describe('chat tasks', () => {
   it('queues a research brief with the researcher, which answers in the chat', async () => {
     const t = setup()

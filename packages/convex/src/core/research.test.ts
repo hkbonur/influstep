@@ -33,6 +33,7 @@ async function insertProblem(ctx: MutationCtx, persona: Doc<'personas'>, text: s
     personaId: persona._id,
     kind: 'problem',
     text,
+    actor: 'researcher',
     evidence: { episodeIds: [], signalIds: [] },
     key: `tool:${text}`,
     status: 'active',

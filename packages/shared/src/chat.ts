@@ -2,14 +2,15 @@ import { z } from 'zod'
 import { readsAsDirective } from './checklist'
 import type { EpisodeKind } from './episode-kinds'
 import type { JobKind } from './jobs'
+import { OPERATOR_MEMORY_KINDS } from './memory'
 import { normalizeDiscountCode } from './metrics'
 
 /**
- * What an operator's chat message asks for (docs/plan.md, slice 7). Every
- * message is read once into one intent: a change to the plan, a task for an
- * agent, a code to hand out, a directive, or plain conversation. The mock
- * reads it with `parseChatIntent`; the real provider returns the same shape
- * through `chatIntentSchema`.
+ * What an operator's chat message asks for (docs/plan.md, slices 7 and 10).
+ * Every message is read once into one intent: a change to the plan, a task
+ * for an agent, a code to hand out, something to remember, a directive, or
+ * plain conversation. The mock reads it with `parseChatIntent`; the real
+ * provider returns the same shape through `chatIntentSchema`.
  */
 
 export const WEEKDAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const
@@ -72,7 +73,7 @@ export const episodeTargetSchema = z.object({
 })
 export type EpisodeTarget = z.infer<typeof episodeTargetSchema>
 
-export const CHAT_INTENT_KINDS = ['conversation', 'directive', 'replace', 'move', 'drop', 'task', 'give_code'] as const
+export const CHAT_INTENT_KINDS = ['conversation', 'directive', 'replace', 'move', 'drop', 'task', 'give_code', 'remember'] as const
 export type ChatIntentKind = (typeof CHAT_INTENT_KINDS)[number]
 
 /**
@@ -89,6 +90,7 @@ export const chatIntentSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('drop'), target: episodeTargetSchema }),
   z.object({ kind: z.literal('task'), task: z.enum(CHAT_TASKS), topic: z.string().optional() }),
   z.object({ kind: z.literal('give_code'), code: z.string(), offer: z.string().nullable(), target: episodeTargetSchema.optional() }),
+  z.object({ kind: z.literal('remember'), memory: z.enum(OPERATOR_MEMORY_KINDS), text: z.string() }),
 ])
 export type ChatIntent = z.infer<typeof chatIntentSchema>
 
@@ -146,6 +148,13 @@ const CODE_FIRST_FOR_NEXT = new RegExp(`^[\\s,]*for\\s+${NEXT_VIDEO}\\s*[,:;(]`,
 const CODE_FIRST_FOR_WEEKDAY = new RegExp(`^[\\s,]*for\\s+(?:the\\s+)?${WEEKDAY}${POSSESSIVE}(?:\\s+${NOUN})?\\s*[,:;(]`, 'i')
 const CODE_FIRST_FOR_KEYWORD = new RegExp(`^[\\s,]*for\\s+the\\s+([^,:;(]+?)\\s+${NOUN}\\s*[,:;(]`, 'i')
 const OFFER_OPENING = /^(?:[\s,:;(=-]+|(?:for|gives?|giving|which gives|that gives|it gives)\s+)+/i
+
+/** "remember that viewers hate the word 'guys'", "keep in mind: ...", "note that ...", "remember to always ...". */
+const REMEMBER = /^(?:remember|keep in mind|note|don't forget|do not forget)(?:\s*[:,-]\s*|\s+)(?:that\s+)?(.+)$/i
+/** "remember to ...": what follows is something to do, so a rule. */
+const REMEMBER_TO = /^to\s+(.+)$/i
+/** A remembered sentence that tells the persona what to do or not to do is a rule; anything else is a fact. */
+const RULE_OPENING = /^(?:always|never|don't|do not|dont|avoid|only|stop|keep|use|say|show|open|end|mention)\b/i
 
 const RESEARCH_BRIEF = /\bresearch brief\b(?:\s+(?:on|about|for)\s+(.+))?/i
 const RESEARCH_ON = /^(?:do\s+(?:some\s+)?|give me\s+(?:some\s+)?)?research\s+(?:on|about)\s+(.+)$/i
@@ -232,6 +241,23 @@ function codeTarget(rest: string): { target: EpisodeTarget | null; rest: string 
   return { target: null, rest }
 }
 
+/**
+ * "Remember that viewers hate the word 'guys'": a fact. "Remember to always
+ * show the URL bar", "remember: never open with a question": a rule. The
+ * words are kept as the operator wrote them, without the "remember that"
+ * and a closing period, quotes and all: `clean` would cut the closing quote
+ * of "hate the word 'guys'".
+ */
+function parseRemember(text: string): ChatIntent | null {
+  const match = REMEMBER.exec(text.replace(POLITE_OPENING, '').replace(POLITE_ENDING, ''))
+  if (!match?.[1]) return null
+  const rest = match[1].trim().replace(/\.+$/, '').trim()
+  const todo = REMEMBER_TO.exec(rest)
+  if (todo?.[1]) return { kind: 'remember', memory: 'rule', text: todo[1] }
+  if (rest === '') return null
+  return { kind: 'remember', memory: RULE_OPENING.test(rest) ? 'rule' : 'fact', text: rest }
+}
+
 function parseTask(text: string): ChatIntent | null {
   const brief = RESEARCH_BRIEF.exec(text) ?? RESEARCH_ON.exec(text)
   if (brief) {
@@ -266,8 +292,9 @@ function parsePlanChange(text: string): ChatIntent | null {
 
 /**
  * Reads a message the way the mock provider does. The rules, first match
- * wins: a code to use, a task named in so many words, a change to the plan,
- * a directive (shared `readsAsDirective`), then a task named by a bare word
+ * wins: something to remember, a code to use, a task named in so many
+ * words, a change to the plan, a directive (shared `readsAsDirective`), then
+ * a task named by a bare word
  * ("comments", "analytics", "summary"), which comes after directives so
  * "stop replying to comments" stays a directive. Everything else is
  * conversation. Weekdays are named, never "today" or "tomorrow". Politeness
@@ -276,7 +303,7 @@ function parsePlanChange(text: string): ChatIntent | null {
 export function parseChatIntent(text: string): ChatIntent {
   const original = text.trim().replace(/\s+/g, ' ')
   const request = clean(clean(original.replace(POLITE_OPENING, '')).replace(POLITE_ENDING, ''))
-  const matched = parseGiveCode(request) ?? parseTask(request) ?? parsePlanChange(request)
+  const matched = parseRemember(original) ?? parseGiveCode(request) ?? parseTask(request) ?? parsePlanChange(request)
   if (matched) return matched
   if (readsAsDirective(original)) return { kind: 'directive', text: original }
   if (COMMENTS_WORD.test(request)) return { kind: 'task', task: 'comment_digest' }

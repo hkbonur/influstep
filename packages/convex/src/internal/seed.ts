@@ -37,6 +37,7 @@ import { addDays, dayKey, instantAt, weekStart } from '../core/dates'
 import { createIdea, createPostPublication, createTrackedLink, shotsFromDraft } from '../core/episodes'
 import { analystDecisionNote, applyExperimentDecision, startExperiment, variantStatsFor } from '../core/experiments'
 import { earliestPublishAt, formatFor, formatsFor, platformsOf, publishHourFor } from '../core/formats'
+import { rememberFromOperator } from '../core/memory'
 import { signalConcept } from '../core/planner'
 import { logRepeatedQuestions, writeDailyBrief } from '../core/research'
 import { reviewStrategy } from '../core/strategy'
@@ -52,8 +53,10 @@ import { PRESENTER_TOOL } from '../providers/llm'
  * account Ada took over with its history and learned voice, and a month of
  * history so the report shows a funnel on first open. Ada also has a
  * strategy: a call to action her analyst tested and decided in September, the
- * learning and default it left, and a review a week ago. Max has none, so his
- * first review starts an experiment. `pnpm seed` runs this; it is idempotent
+ * learning and default it left, and a review a week ago with the learning and
+ * the goal note it wrote. Her memory also holds a fact the operator told her in
+ * the chat and a rule added on the memory page. Max has none, so his first
+ * review starts an experiment. `pnpm seed` runs this; it is idempotent
  * by workspace name.
  */
 
@@ -554,6 +557,34 @@ export const write = internalMutation({
       text: 'Noted. From now on: "focus on n8n error handling for two weeks". The next scripts follow it.',
       createdAt: now - 3 * 86_400_000 + 5_000,
     })
+
+    // What the operator told Ada to keep: a fact from the chat, with the message as its evidence, and a
+    // rule added on the memory page. The writer reads both before every script and post.
+    const toldAt = now - 2 * 86_400_000
+    const tellId = await ctx.db.insert('messages', {
+      personaId: adaId,
+      author: 'operator',
+      text: "Remember that viewers hate the word 'guys'",
+      createdAt: toldAt,
+    })
+    const told = await rememberFromOperator(
+      ctx,
+      { _id: adaId },
+      { kind: 'fact', text: "viewers hate the word 'guys'", messageId: tellId, now: toldAt }
+    )
+    if (told.status !== 'stored') throw new Error(`the seeded fact was not stored: ${told.status}`)
+    await ctx.db.insert('messages', {
+      personaId: adaId,
+      author: 'persona',
+      text: `I will remember that: "${told.text}" I read what I know before every script and post.`,
+      createdAt: toldAt + 3_000,
+    })
+    const ruled = await rememberFromOperator(
+      ctx,
+      { _id: adaId },
+      { kind: 'rule', text: "never show a customer's real email address on screen", now: toldAt + 3_600_000 }
+    )
+    if (ruled.status !== 'stored') throw new Error(`the seeded rule was not stored: ${ruled.status}`)
 
     // Signals the researcher would have found, each with when it was found and, where its source says
     // so, when it was posted (Google Trends does not), so freshness reads like a real feed. Ada's three

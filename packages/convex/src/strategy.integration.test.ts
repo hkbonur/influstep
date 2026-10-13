@@ -36,7 +36,7 @@ describe('the strategy loop', () => {
     )
     if (!experiment) throw new Error('the review started no experiment')
     expect(experiment).toMatchObject({ name: 'Hook style: Question vs How to', metric: 'follows', createdBy: 'analyst' })
-    expect(job?.result).toEqual({ changes: 1, startedExperimentId: experiment._id })
+    expect(job?.result).toEqual({ changes: 1, goalNoteId: expect.any(String), startedExperimentId: experiment._id })
 
     // Two videos of each variant, measured: the question opens get four times the follows per view.
     await t.run(async (ctx) => {
@@ -81,13 +81,13 @@ describe('the strategy loop', () => {
       })
     })
     const context = await t.query(internal.internal.data.getEpisodeContext, { episodeId })
-    expect(context.learnings).toEqual([learning])
+    expect(context.memory.learnings).toEqual([learning])
     // Written the morning before it goes out.
     await t.finishAllScheduledFunctions(() => {})
     expect(briefs).toEqual([])
     await writeScriptsDueBefore(t, personaId, plannedFor)
     const [brief] = briefs
-    expect(brief?.learnings).toEqual([learning])
+    expect(brief?.memory.learnings).toEqual([learning])
     expect(brief?.styleLines).toEqual(['Hook style: Open with the question the viewer has.'])
     const episode = await t.run((ctx) => ctx.db.get(episodeId))
     expect(episode?.status).toBe('scripted')
@@ -135,9 +135,13 @@ describe('the seeded strategy', () => {
         ada,
         max,
         journalKinds: journal.map((entry) => entry.kind),
-        learnings: adaMemories.filter((memory) => memory.kind === 'learning').map((memory) => memory.text),
-        // The morning's research sits beside the learnings: a brief and the one repeated question.
-        research: adaMemories
+        learnings: adaMemories
+          .filter((memory) => memory.kind === 'learning')
+          .map((memory) => memory.text)
+          .sort(),
+        // Beside the learnings: the review's goal note, the operator's fact and rule, and the morning's
+        // research (a brief and the one repeated question).
+        others: adaMemories
           .filter((memory) => memory.kind !== 'learning')
           .map((memory) => memory.kind)
           .sort(),
@@ -148,8 +152,11 @@ describe('the seeded strategy', () => {
     expect(seeded.ada.strategy?.reviewedAt).toEqual(expect.any(Number))
     expect(seeded.ada.strategy?.pillarWeights.length).toBe(seeded.ada.pillars.length)
     expect(seeded.journalKinds).toEqual(expect.arrayContaining(['experiment_started', 'experiment_decided', 'pillar_weights']))
-    expect(seeded.learnings).toEqual([expect.stringMatching(/^Call to action: "Comment" beat "Follow" on clicks per view/)])
-    expect(seeded.research).toEqual(['brief', 'problem'])
+    expect(seeded.learnings).toEqual([
+      expect.stringMatching(/^Call to action: "Comment" beat "Follow" on clicks per view/),
+      expect.stringMatching(/^Over the last 28 days .* So ".*" gets \d+% of the evergreen plan/),
+    ])
+    expect(seeded.others).toEqual(['brief', 'fact', 'goal_note', 'problem', 'rule'])
     expect(seeded.max.strategy).toBeUndefined()
     expect(seeded.maxMemories).toBe(0)
   })

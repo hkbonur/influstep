@@ -129,7 +129,7 @@ The researcher's short daily note per persona, written by the morning sweep afte
 _Avoid_: digest (that is the publisher's comment digest), research brief (that is the chat task), report, summary.
 
 **Problem log**:
-The problems a persona met itself, as memory entries: a question viewers keep asking under its videos (three or more comments in two weeks asking the same thing), or a tool that broke while it was recorded (never the sponsor, never the presenter). Each **problem** is logged once and gathers its evidence as it repeats, becomes a signal with a high score so the planner and the last check can pick it, and is read by the writer.
+The problems a persona met itself, as memory entries: a question viewers keep asking under its videos (three or more comments in two weeks asking the same thing), or a tool that broke while it was recorded (never the sponsor, never the presenter). Each **problem** is logged once and gathers its evidence as it repeats, becomes a signal with a high score so the planner and the last check can pick it, and is read by the writer. A problem stays open until the operator marks it **resolved** on the Memory page; its comments then never count toward it again, so the same question asked three more times opens a new one.
 _Avoid_: issue, bug, ticket, complaint, FAQ.
 
 **Last check**:
@@ -197,11 +197,27 @@ A persona's dated record of every change to its strategy, and of every concept a
 _Avoid_: log (that is the jobs), history (that is the X account's imported posts), changelog, audit trail.
 
 **Memory**:
-What a persona keeps knowing from one episode to the next: short entries, each with a kind, the evidence it rests on, and a status (active or superseded). Three kinds today: a learning (with its decision's confidence), the morning brief (with its expiry), and a problem. An entry that later data contradicts, or a newer brief, supersedes it; it is never deleted, so the persona can show why it changed its mind. Facts, rules and goal notes follow (docs/plan.md, v0.2 item 10).
+What a persona keeps knowing from one episode to the next: short entries, each with a kind, who wrote it (the operator, the analyst or the researcher), the evidence it rests on (episodes, an experiment, signals, or the operator's chat message), and a status (active, superseded or retired). Six kinds: a fact and a rule from the operator, a learning and a goal note from the analyst, the morning brief and a problem from the researcher. A newer entry on the same subject supersedes the older one; the operator retires a fact or a rule they take back ("forget") and a problem they resolved. Nothing is deleted, so the persona can show why it believes something. The writer reads the goal note, the rules, the facts, the learnings, the brief and the open problems before every script and post. The Memory page shows every entry with its evidence.
 _Avoid_: notes, knowledge base, context (that is what one agent run reads).
 
+**Fact**:
+Something true the operator tells a persona to keep ("viewers hate the word 'guys'"), in the chat ("remember that …") or on the Memory page. The writer reads it before every script and post until the operator forgets it.
+_Avoid_: note, info, knowledge.
+
+**Rule**:
+Something the writer must always or never do, from the operator ("never show a customer's real email address on screen"), in the chat ("remember to …", "remember: always …") or on the Memory page. A directive steers what the persona makes for a while and is withdrawn when it is done; a rule is a lasting constraint on how every script and post is written, kept until the operator forgets it. The writer never breaks one.
+_Avoid_: constraint, guideline, policy, directive (that is a focus for a while).
+
+**Goal**:
+The one thing every persona works toward: paying Formstep customers. It is the workspace's, named from its sponsor; the strategy review aims experiments at it through the goal metric, and every review writes a goal note against it.
+_Avoid_: objective, target, north star, KPI.
+
+**Goal note**:
+The memory entry every strategy review leaves: the persona's paid customers in the last 28 days with what they are worth, the trend against the 28 days before, and what it tries next (the experiment that runs after the review). The newest supersedes the one before it; the writer reads it, and the strategy page shows it under the goal.
+_Avoid_: status report, scorecard, progress note.
+
 **Learning**:
-The memory entry a decision leaves: on which dimension which variant beat which, on which metric, by how much and how surely, or the operator's reason when they decided. The writer reads the persona's active learnings before every script. A newer learning on the same dimension supersedes the older one.
+The memory entry a decision or a review's change leaves. From a decision: on which dimension which variant beat which, on which metric, by how much and how surely, or the operator's reason when they decided. From a review: what the numbers showed and what the persona does since (the pillar weights, a platform's publish hour). The writer reads the persona's active learnings before every script and post. A newer learning on the same subject (a dimension, the pillars, one platform's hour) supersedes the older one.
 _Avoid_: insight, lesson, finding, takeaway.
 
 ## Attribution
@@ -216,7 +232,7 @@ _Avoid_: landing page, profile page, hub.
 
 **Conversion**:
 A Formstep event tied to a persona by UTM: a signup, a first published form, or a paid subscription. Conversions reach Influstep from PostHog.
-_Avoid_: sale, lead, goal (that is PostHog's word).
+_Avoid_: sale, lead, goal (that is the workspace's goal, paying customers; PostHog's goals are conversions).
 
 **Report**:
 The one page per persona that answers "is this persona working?": followers, views, clicks, signups, and paid over time, the funnel from view to paid, and the open experiments. Kept to one screen; detail lives in the episode list.

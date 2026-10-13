@@ -4,6 +4,7 @@ import type { Doc, Id } from '../_generated/dataModel'
 import { internalMutation, internalQuery, type MutationCtx } from '../_generated/server'
 import { internal } from '../_generated/api'
 import { deleteHistoryPage as deleteHistoryPageRule, examplePostsOf } from '../core/account'
+import { writerMemory, type WriterMemory } from '../core/memory'
 import { transition, type PipelineEvent } from '../core/pipeline'
 import { researchFor } from '../core/research'
 import { workspaceOf } from '../core/workspace'
@@ -40,8 +41,8 @@ export interface EpisodeContext {
   experiment: Doc<'experiments'> | null
   /** The account posts the operator or the analyst marked as examples of the voice, most engaging first; only read for a post. */
   examples: Doc<'accountPosts'>[]
-  /** The persona's active learnings, newest first, at most WRITER_LEARNINGS_MAX, for the writer's prompt. */
-  learnings: string[]
+  /** What the writer reads of the persona's memory (core/memory.ts `writerMemory`). */
+  memory: WriterMemory
   /**
    * What the researcher found (core/research.ts): the morning brief while it
    * has not expired, else null, and the open problems' texts, newest first, at
@@ -49,9 +50,6 @@ export interface EpisodeContext {
    */
   research: { brief: string | null; problems: string[] }
 }
-
-/** How many learnings the writer reads, so its prompt stays short; one active learning per dimension keeps it well under. */
-const WRITER_LEARNINGS_MAX = 10
 
 export const getEpisodeContext = internalQuery({
   args: { episodeId: v.id('episodes') },
@@ -71,18 +69,9 @@ export const getEpisodeContext = internalQuery({
     const experiment = episode.experimentId ? await ctx.db.get(episode.experimentId) : null
     // setExample caps the marks at VOICE_EXAMPLES_MAX; the cap holds here too, so the writer's prompt stays short.
     const examples = isPost(episode.kind) ? (await examplePostsOf(ctx, persona._id)).slice(0, VOICE_EXAMPLES_MAX) : []
-    const learnings = (
-      await ctx.db
-        .query('memories')
-        .withIndex('by_persona_status', (q) => q.eq('personaId', persona._id).eq('status', 'active'))
-        .collect()
-    )
-      .filter((memory) => memory.kind === 'learning')
-      .sort((a, b) => b.createdAt - a.createdAt)
-      .slice(0, WRITER_LEARNINGS_MAX)
-      .map((memory) => memory.text)
+    const memory = await writerMemory(ctx, persona._id, workspace.sponsorName)
     const research = await researchFor(ctx, persona._id, Date.now())
-    return { episode, persona, workspace, directives, signals, experiment, examples, learnings, research }
+    return { episode, persona, workspace, directives, signals, experiment, examples, memory, research }
   },
 })
 

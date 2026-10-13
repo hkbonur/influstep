@@ -20,6 +20,7 @@ import {
   MEMORY_KINDS,
   MEMORY_STATUSES,
   METRIC_KEYS,
+  OPERATOR_MEMORY_KINDS,
   PERSONA_COLORS,
   PLATFORMS,
   POST_INTENTS,
@@ -69,6 +70,7 @@ export const journalKindValidator = literals(JOURNAL_KINDS)
 export const actorValidator = literals(JOURNAL_ACTORS)
 export const memoryKindValidator = literals(MEMORY_KINDS)
 export const memoryStatusValidator = literals(MEMORY_STATUSES)
+export const operatorMemoryKindValidator = literals(OPERATOR_MEMORY_KINDS)
 
 /** X's post cadence (shared `XCadence`). Ranges, and each kind and intent once, are checked by core/formats.ts. */
 export const xCadenceValidator = v.object({
