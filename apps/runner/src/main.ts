@@ -38,7 +38,10 @@ async function handle(job: NonNullable<Awaited<ReturnType<typeof backend.claim>>
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     log(`job ${job.id}: failed: ${message}`)
-    await backend.fail(job.id, message)
+    // The backend refuses a job that went back to the queue or that another process finished; the loop goes on.
+    await backend
+      .fail(job.id, message)
+      .catch((error: unknown) => log(`job ${job.id}: fail refused: ${error instanceof Error ? error.message : String(error)}`))
   } finally {
     currentJobId = null
   }
