@@ -1,13 +1,21 @@
 import { api } from '@influstep/convex/_generated/api'
 import type { Doc, Id } from '@influstep/convex/_generated/dataModel'
-import { DELIVERY_LABELS, EPISODE_KIND_LABELS, formatLength, isPost, type PersonaColor, type PlatformFormat } from '@influstep/shared'
+import {
+  DELIVERY_LABELS,
+  EPISODE_KIND_LABELS,
+  formatLength,
+  isPost,
+  type PersonaColor,
+  type PlatformFormat,
+  type Voice,
+} from '@influstep/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
 import React from 'react'
 import { FormatFields } from '@/components/format-fields'
 import { PersonaColorSwatches, PersonaMascot, personaAvatarState } from '@/components/persona-avatar'
 import { PersonaChat } from '@/components/persona-chat'
-import { PlatformGlyphs, PostKindIcon, SponsorPill, StatusPill } from '@/components/status'
+import { JobDot, PlatformGlyphs, PostKindIcon, SponsorPill, StatusPill } from '@/components/status'
 import {
   Button,
   ErrorLine,
@@ -26,7 +34,7 @@ import {
 } from '@/components/ui'
 import { cn } from '@/lib/cn'
 import { errorMessage } from '@/lib/errors'
-import { formatDateTime, formatDay, formatHour, relativeTime } from '@/lib/format'
+import { formatDateTime, formatDay, formatHour, languageName, relativeTime } from '@/lib/format'
 
 export const Route = createFileRoute('/personas/$personaId')({ component: PersonaPage })
 
@@ -185,6 +193,16 @@ function PersonaPage() {
                   </React.Fragment>
                 ))}
               </dd>
+              {persona.formats.some((format) => format.platform === 'x') && (
+                <>
+                  <dt className="text-ash">Voice</dt>
+                  <dd>
+                    <Link to="/personas/$personaId/voice" params={{ personaId }} className="hover:underline">
+                      {persona.voice ? voiceSummary(persona.voice) : 'Not learned yet'}
+                    </Link>
+                  </dd>
+                </>
+              )}
               <dt className="text-ash">Sponsor dial</dt>
               <dd className="tabular">
                 {Math.round(persona.sponsorDial * 100)}% after {persona.sponsorRampEpisodes} episodes
@@ -240,15 +258,7 @@ function PersonaPage() {
             <ul className="space-y-1 font-mono text-[11px]">
               {data.jobs.map((job) => (
                 <li key={job._id} className="flex items-center gap-2">
-                  <span
-                    aria-hidden
-                    className={cn('size-1.5 shrink-0 rounded-full', {
-                      'bg-field-green': job.status === 'done',
-                      'bg-signal-red': job.status === 'failed',
-                      'bg-note-blue': job.status === 'running',
-                      'bg-fog': job.status === 'queued',
-                    })}
-                  />
+                  <JobDot status={job.status} />
                   <span className="text-graphite">{job.kind}</span>
                   <span className="text-ash">{job.role}</span>
                   <span className="ml-auto text-ash">{relativeTime(job.finishedAt ?? job.startedAt ?? job.createdAt)}</span>
@@ -260,6 +270,14 @@ function PersonaPage() {
       </div>
     </>
   )
+}
+
+/** The voice row: how many posts the analyst read and the language it writes in. */
+function voiceSummary(voice: Voice): string {
+  const name = languageName(voice.language)
+  // A tag the browser cannot name still says which language it is, so it shows as written.
+  const language = name === null ? voice.language : name
+  return `Learned from ${voice.sampleSize} posts, ${language}`
 }
 
 function ChecklistRow(props: {

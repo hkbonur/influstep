@@ -1,6 +1,6 @@
 # Influstep
 
-The ubiquitous language of Influstep — Influstep runs AI personas that publish short videos on social platforms so that people who follow them discover Formstep. An operator sets up a persona, the persona's agents research what the audience talks about, write and record episodes on the operator's computer, publish them on schedule, and report whether followers turned into Formstep users. Each persona runs experiments so the operator learns which concepts earn attention and conversions.
+The ubiquitous language of Influstep. Influstep runs AI personas that publish short videos on social platforms so that people who follow them discover Formstep. An operator sets up a persona, the persona's agents research what the audience talks about, write and record episodes on the operator's computer, publish them on schedule, and report whether followers turned into Formstep users. Each persona runs experiments so the operator learns which concepts earn attention and conversions.
 
 This file is a glossary only: it defines what each term _is_, not how it is implemented. When several words exist for one concept, the canonical word is the heading and the rejected ones are listed under _Avoid_.
 
@@ -21,7 +21,7 @@ _Avoid_: client, advertiser, brand (that is the persona's look).
 ## Personas
 
 **Persona**:
-One AI influencer profile: a name, a handle, a voice, a niche, a tone, the platforms it posts to, and a **sponsor dial** that says how often episodes carry the sponsor. A persona owns its episodes, experiments, signals, checklist, and directives. It is the unit the operator compares in reports.
+One AI influencer profile: a name, a handle, a spoken voice (and on X a writing voice), a niche, a tone, the platforms it posts to, and a **sponsor dial** that says how often episodes carry the sponsor. A persona owns its episodes, experiments, signals, checklist, and directives. It is the unit the operator compares in reports.
 _Avoid_: influencer (fine in conversation; in code and copy a persona is the profile, the agents do the work), bot, avatar (that is only the rendered face), character, creator.
 
 **Agent**:
@@ -32,9 +32,13 @@ _Avoid_: bot, worker (that is the runner process), assistant, sub-agent.
 An instruction the operator gives a persona in its chat ("focus on n8n error handling for two weeks", "stop mentioning pricing"). Directives are stored, dated, and read by every agent run that follows. A directive stays in force until the operator withdraws it.
 _Avoid_: prompt, instruction (fine casually), note, feedback.
 
-**Voice**:
-The persona's text-to-speech voice (an ElevenLabs voice id in production, a mock voice locally), used for every voiced episode so the persona sounds the same across platforms.
+**Voice** (spoken):
+The persona's text-to-speech voice, set as "Voice id" in the persona's settings (`voiceId` in code: an ElevenLabs voice id in production, a mock voice locally), used for every voiced episode so the persona sounds the same across platforms.
 _Avoid_: narrator, TTS (fine as the mechanism).
+
+**Voice** (on X):
+How an X persona writes, learned by the analyst from the account's imported history: the language, a summary and traits the LLM writes, the length mix and the emoji and hashtag habits counted from the account's own posts, and the example posts the writer imitates. The operator edits the language, summary and traits on the persona's voice page. Every X post is written in it; until it is learned the writer posts in English in the bible's tone. In code it is `persona.voice`; the spoken voice is always `voiceId`.
+_Avoid_: style, tone (that is the persona's tone, which every platform shares), writing style.
 
 **Sponsor dial**:
 The share of a persona's episodes that carry the sponsor, as a number from 0 to 1. The planner spreads sponsored episodes across the week and keeps the first episodes of a new persona unsponsored so the profile earns followers first.

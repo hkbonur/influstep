@@ -3,6 +3,7 @@ import { readsAsDirective } from '@influstep/shared'
 import { internal } from '../_generated/api'
 import type { Doc } from '../_generated/dataModel'
 import { mutation, query } from '../_generated/server'
+import { accountSummary } from '../core/account'
 import { dayKey, weekStart } from '../core/dates'
 import {
   activeDiscountCodes,
@@ -123,6 +124,9 @@ export const get = query({
     }))
     return {
       persona,
+      // The voice of the X account the persona took over, and how much of its history is imported (docs/plan.md, slice 5).
+      voice: persona.voice ?? null,
+      account: await accountSummary(ctx, persona._id),
       sponsorName: workspace.sponsorName,
       appUrl: workspace.appUrl,
       currency: workspace.currency,

@@ -1,3 +1,4 @@
+import { X_PROVIDER_KEY } from '@influstep/shared'
 import type { Doc } from '../_generated/dataModel'
 import type { MutationCtx } from '../_generated/server'
 
@@ -11,9 +12,6 @@ import type { MutationCtx } from '../_generated/server'
 
 /** X's help page for the automated account label: the operator turns it on by hand in the account's settings. */
 export const X_AUTOMATED_LABEL_URL = 'https://help.x.com/en/using-x/automated-account-labels'
-
-/** The provider key the X publisher reads once the adapter exists. */
-export const X_PROVIDER_KEY = 'X_OAUTH'
 
 /**
  * The two X items for a persona that gained X, each opened once per persona:

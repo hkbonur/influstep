@@ -1,9 +1,20 @@
-import { DEFAULT_FORMATS, platformsOpen, runnerJobSchema } from '@influstep/shared'
+import {
+  DEFAULT_FORMATS,
+  VOICE_EXAMPLES_MAX,
+  parsePastedPosts,
+  parseXArchive,
+  platformsOpen,
+  runnerJobSchema,
+  type ImportedPost,
+  type PostIntent,
+  type PostLength,
+} from '@influstep/shared'
 import type { FunctionReturnType } from 'convex/server'
 import { describe, expect, it } from 'vitest'
 import { api, internal } from './_generated/api'
-import type { Id } from './_generated/dataModel'
+import type { Doc, Id } from './_generated/dataModel'
 import { addDays, dayKey, instantAt, weekStart } from './core/dates'
+import { createIdea } from './core/episodes'
 import { setup } from '../test/setup'
 
 const TIMEZONE = 'Europe/Oslo'
@@ -804,6 +815,8 @@ describe('posts on X', () => {
     await expect(create([{ ...x, cadence: { ...cadence, kinds: ['text', 'thread', 'text'] } }])).rejects.toThrow(
       'X: Text post is picked twice.'
     )
+    await expect(create([{ ...x, cadence: { ...cadence, intents: [] } }])).rejects.toThrow('X: pick at least one post intent.')
+    await expect(create([{ ...x, cadence: { ...cadence, intents: ['ask', 'teach', 'ask'] } }])).rejects.toThrow('X: each post intent once.')
     const settings = settingsOf(ada)
     await expect(
       t.mutation(api.private.personas.update, {
@@ -877,6 +890,238 @@ describe('posts on X', () => {
   })
 })
 
+/**
+ * Taking over an X account: the history the operator imports, the voice the
+ * analyst learns from it and the operator edits, and the intent and length
+ * every post carries. The agents (the timeline import, learning the voice,
+ * the writer in that voice) have their own tests.
+ */
+describe('taking over an X account', () => {
+  it('imports an archive and a paste once each, and refuses a persona without X', async () => {
+    const t = setup()
+    await t.action(internal.internal.seed.run, {})
+    const max = (await t.query(api.private.personas.list, {})).find((persona) => persona.handle === 'max.builds.agents')
+    if (!max) throw new Error('seed has no Max')
+    const archive = parseXArchive(JSON.stringify(archiveOf(3, 1)))
+    await expect(t.mutation(api.private.account.importPosts, { personaId: max._id, source: 'archive', posts: archive })).rejects.toThrow(
+      'Taking over an account needs an X format.'
+    )
+    await expect(t.mutation(api.private.account.importFromX, { personaId: max._id })).rejects.toThrow(
+      'Taking over an account needs an X format.'
+    )
+
+    const personaId = await t.mutation(api.private.personas.create, { ...newPersona, formats: [{ platform: 'x', ...DEFAULT_FORMATS.x }] })
+    const importPosts = (source: 'archive' | 'paste', posts: ImportedPost[]) =>
+      t.mutation(api.private.account.importPosts, { personaId, source, posts })
+    expect(await importPosts('archive', archive)).toEqual({ added: 4, skipped: 0 })
+    // The same archive again adds nothing: posts are matched by their X id.
+    expect(await importPosts('archive', archive)).toEqual({ added: 0, skipped: 4 })
+    // A paste matches by a hash of the text, so a post pasted twice, in one batch or two, is stored once.
+    const pasted = parsePastedPosts('Pasted one.\n---\nPasted two.\n---\nPasted one.')
+    expect(await importPosts('paste', pasted)).toEqual({ added: 2, skipped: 1 })
+    expect(await importPosts('paste', parsePastedPosts('Pasted two.'))).toEqual({ added: 0, skipped: 1 })
+
+    const history = await t.query(api.private.account.history, { personaId, limit: 2 })
+    expect(history.totals).toEqual({ count: 6, originals: 5, replies: 1, bySource: { archive: 4, paste: 2, api: 0, mock: 0 } })
+    expect(history.posts.length).toBe(2)
+    expect(history.posts[0]?.postedAt).toBeGreaterThanOrEqual(history.posts[1]?.postedAt ?? Number.POSITIVE_INFINITY)
+    // X could not tell the language of a pasted post, so the row has none.
+    const stored = await t.run((ctx) =>
+      ctx.db
+        .query('accountPosts')
+        .withIndex('by_persona_posted', (q) => q.eq('personaId', personaId))
+        .collect()
+    )
+    expect(stored.filter((post) => post.source === 'paste').map((post) => post.lang)).toEqual([undefined, undefined])
+    expect(stored.filter((post) => post.source === 'archive').map((post) => post.lang)).toEqual(['en', 'en', 'en', 'en'])
+    expect(stored.some((post) => post.example)).toBe(false)
+    // The self-thread is one row, root first.
+    expect(stored.find((post) => post.externalId === '100')?.parts).toEqual(['Original 1.', 'The second part of the first thread.'])
+
+    const tooMany = Array.from({ length: 501 }, (_, index) => ({ ...pasted[0]!, externalId: `bulk-${index}` }))
+    await expect(importPosts('paste', tooMany)).rejects.toThrow('Import at most 500 posts at a time.')
+
+    // Import from X is the researcher's job; the mutation only queues it.
+    const jobId = await t.mutation(api.private.account.importFromX, { personaId })
+    const job = await t.run((ctx) => ctx.db.get(jobId))
+    expect(job).toMatchObject({ kind: 'import_x_history', role: 'researcher', runsOn: 'backend', personaId, payload: { personaId } })
+  })
+
+  it('learns a voice only from enough originals, and says how many there are', async () => {
+    const t = setup()
+    await t.action(internal.internal.seed.run, {})
+    const personaId = await t.mutation(api.private.personas.create, { ...newPersona, formats: [{ platform: 'x', ...DEFAULT_FORMATS.x }] })
+    // Three originals and two replies: replies are not the account's own voice, so there are three.
+    await t.mutation(api.private.account.importPosts, {
+      personaId,
+      source: 'archive',
+      posts: parseXArchive(JSON.stringify(archiveOf(3, 2))),
+    })
+    await expect(t.mutation(api.private.account.learnVoice, { personaId })).rejects.toThrow('Import at least 10 posts first; there are 3.')
+
+    await t.mutation(api.private.account.importPosts, {
+      personaId,
+      source: 'paste',
+      posts: parsePastedPosts(Array.from({ length: 7 }, (_, index) => `Pasted post ${index + 1}.`).join('\n---\n')),
+    })
+    const jobId = await t.mutation(api.private.account.learnVoice, { personaId })
+    const job = await t.run((ctx) => ctx.db.get(jobId))
+    expect(job).toMatchObject({ kind: 'learn_voice', role: 'analyst', runsOn: 'backend', personaId, payload: { personaId } })
+  })
+
+  it('shows the seeded voice and lets the operator edit its words, never its counts', async () => {
+    const t = setup()
+    await t.action(internal.internal.seed.run, {})
+    const ada = await seededAda(t)
+    const page = await t.query(api.private.personas.get, { personaId: ada._id })
+    if (!page?.voice) throw new Error('the seed has no voice for Ada')
+    expect(page.account).toEqual({ posts: 40, examples: 5 })
+    expect(page.voice).toMatchObject({ language: 'en', sampleSize: 36, emoji: 'rare', hashtags: 'rare' })
+    const learned = page.voice
+
+    const updateVoice = (edit: { language: string; summary: string; traits: string[] }) =>
+      t.mutation(api.private.account.updateVoice, { personaId: ada._id, ...edit })
+    const edit = { language: ' nb ', summary: ' Rolig og presis. ', traits: ['Short sentences', ' Lists in threads '] }
+    await updateVoice(edit)
+    const edited = (await t.query(api.private.personas.get, { personaId: ada._id }))?.voice
+    expect(edited).toEqual({
+      ...learned,
+      language: 'nb',
+      summary: 'Rolig og presis.',
+      traits: ['Short sentences', 'Lists in threads'],
+    })
+
+    await expect(updateVoice({ ...edit, language: '  ' })).rejects.toThrow('The language is empty.')
+    await expect(updateVoice({ ...edit, language: 'not a tag' })).rejects.toThrow('"not a tag" is not a language tag such as en, nb or tr.')
+    await expect(updateVoice({ ...edit, summary: '' })).rejects.toThrow('The summary is empty.')
+    await expect(updateVoice({ ...edit, traits: [] })).rejects.toThrow('A voice has 1 to 8 traits.')
+    await expect(updateVoice({ ...edit, traits: Array.from({ length: 9 }, (_, index) => `Trait ${index}`) })).rejects.toThrow(
+      'A voice has 1 to 8 traits.'
+    )
+    await expect(updateVoice({ ...edit, traits: ['Fine', ' '] })).rejects.toThrow('Trait 2 is empty.')
+    expect((await t.query(api.private.personas.get, { personaId: ada._id }))?.voice).toEqual(edited)
+
+    // A persona whose voice was never learned has nothing to edit.
+    const personaId = await t.mutation(api.private.personas.create, { ...newPersona, formats: [{ platform: 'x', ...DEFAULT_FORMATS.x }] })
+    await expect(t.mutation(api.private.account.updateVoice, { personaId, ...edit })).rejects.toThrow(
+      'Learn the voice first; there is nothing to edit yet.'
+    )
+  })
+
+  it('keeps at most eight examples, shows them first, and clears them with the history', async () => {
+    const t = setup()
+    await t.action(internal.internal.seed.run, {})
+    const ada = await seededAda(t)
+    const top: Doc<'accountPosts'>[] = await t.query(api.private.account.topPosts, { personaId: ada._id, limit: 10 })
+    const examples = top.filter((post) => post.example)
+    expect(examples.length).toBe(5)
+    // Examples first, then the other originals by likes plus reposts; no reply is a candidate.
+    expect(top.slice(0, 5).every((post) => post.example)).toBe(true)
+    expect(top.length).toBe(15)
+    expect(top.some((post) => post.isReply)).toBe(false)
+    const others = top.slice(5).map((post) => post.likes + post.reposts)
+    expect(others).toEqual([...others].sort((a, b) => b - a))
+
+    const candidates = top.slice(5)
+    const setExample = (accountPostId: Id<'accountPosts'>, example: boolean) =>
+      t.mutation(api.private.account.setExample, { accountPostId, example })
+    for (const post of candidates.slice(0, VOICE_EXAMPLES_MAX - 5)) await setExample(post._id, true)
+    const ninth = candidates[VOICE_EXAMPLES_MAX - 5]
+    if (!ninth) throw new Error('not enough top posts')
+    await expect(setExample(ninth._id, true)).rejects.toThrow('A voice keeps at most 8 example posts; unmark one first.')
+    // Marking one that already is an example changes nothing and is not refused.
+    await setExample(candidates[0]!._id, true)
+    await setExample(examples[0]!._id, false)
+    await setExample(ninth._id, true)
+    expect((await t.query(api.private.personas.get, { personaId: ada._id }))?.account).toEqual({ posts: 40, examples: 8 })
+
+    expect(await t.mutation(api.private.account.clearHistory, { personaId: ada._id })).toEqual({ deleted: 40, more: false })
+    const cleared = await t.query(api.private.personas.get, { personaId: ada._id })
+    expect(cleared?.voice).toBeNull()
+    expect(cleared?.persona.voice).toBeUndefined()
+    expect(cleared?.account).toEqual({ posts: 0, examples: 0 })
+    expect((await t.query(api.private.account.history, { personaId: ada._id, limit: 10 })).totals.count).toBe(0)
+  })
+
+  it('gives every post an intent and a length that fits its kind', async () => {
+    const t = setup()
+    await t.action(internal.internal.seed.run, {})
+    const ada = await seededAda(t)
+    const page = await t.query(api.private.personas.get, { personaId: ada._id })
+    const posts = (page?.episodes ?? []).filter((episode) => episode.kind !== 'video')
+    expect(posts.map((post) => [post.kind, post.intent, post.length]).sort()).toEqual([
+      ['image', 'share', 'medium'],
+      ['text', 'inform', 'medium'],
+      ['thread', 'teach', 'long'],
+    ])
+    expect(page?.episodes.filter((episode) => episode.kind === 'video').every((video) => video.intent === undefined)).toBe(true)
+
+    // The planner's idea: a thread that is not long, or a text or image post that is, is refused before anything is stored.
+    const persona = await t.run((ctx) => ctx.db.get(ada._id))
+    if (!persona) throw new Error('Ada vanished')
+    const idea = (kind: 'text' | 'image' | 'thread', length: PostLength, intent: PostIntent = 'ask') =>
+      t.run((ctx) =>
+        createIdea(ctx, persona, {
+          personaId: persona._id,
+          plannedFor: addDays(dayKey(Date.now(), TIMEZONE), 7),
+          concept: `A ${kind} post`,
+          pillar: persona.pillars[0] ?? '',
+          sponsorSegment: 'none',
+          signalIds: [],
+          kind,
+          publishHour: 15,
+          intent,
+          length,
+        })
+      )
+    await expect(idea('thread', 'medium')).rejects.toThrow('A thread is always long.')
+    await expect(idea('text', 'long')).rejects.toThrow('A text post is short or medium, never long.')
+    await expect(idea('image', 'long')).rejects.toThrow('An image post is short or medium, never long.')
+    const planned = await idea('thread', 'long', 'teach')
+    expect(await t.run((ctx) => ctx.db.get(planned))).toMatchObject({ kind: 'thread', intent: 'teach', length: 'long', status: 'idea' })
+
+    // The episode update: a thread stored with a length that is not long cannot be saved, however well its parts fit X.
+    const episodeId = await insertPost(t, ada, { kind: 'thread', status: 'scripted', hour: 15, length: 'short' })
+    await expect(
+      t.mutation(api.private.episodes.updatePost, { episodeId, title: 'A thread', post: { parts: ['First.', 'Second.'] } })
+    ).rejects.toThrow('A thread is always long.')
+    const text = await insertPost(t, ada, { kind: 'text', status: 'scripted', hour: 18, length: 'long' })
+    await expect(
+      t.mutation(api.private.episodes.updatePost, { episodeId: text, title: 'A text post', post: { parts: ['One.'] } })
+    ).rejects.toThrow('A text post is short or medium, never long.')
+    // A post planned before intents and lengths existed has no length to check.
+    const legacy = await insertPost(t, ada, { kind: 'thread', status: 'scripted', hour: 18 })
+    await t.mutation(api.private.episodes.updatePost, { episodeId: legacy, title: 'A thread', post: { parts: ['First.', 'Second.'] } })
+  })
+})
+
+/**
+ * A tweets.js with `originals` posts of the account's own, the first of them
+ * a two-part self-thread, and `replies` replies to posts outside the file.
+ */
+function archiveOf(originals: number, replies: number) {
+  const day = Date.UTC(2026, 8, 1)
+  const item = (id: string, text: string, offsetHours: number, replyTo?: string) => ({
+    tweet: {
+      id_str: id,
+      full_text: text,
+      created_at: new Date(day + offsetHours * 3_600_000)
+        .toUTCString()
+        .replace(/^(\w+), (\d+) (\w+) (\d+) (\S+) GMT$/, '$1 $3 $2 $5 +0000 $4'),
+      favorite_count: String(10 * offsetHours),
+      retweet_count: '1',
+      ...(replyTo === undefined ? {} : { in_reply_to_status_id_str: replyTo }),
+      lang: 'en',
+    },
+  })
+  return [
+    ...Array.from({ length: originals }, (_, index) => item(`${100 + index}`, `Original ${index + 1}.`, index + 1)),
+    item('199', 'The second part of the first thread.', 1.5, '100'),
+    ...Array.from({ length: replies }, (_, index) => item(`${300 + index}`, `@someone Reply ${index + 1}.`, 20 + index, `9${index}`)),
+    item('400', 'RT @someone: not the account’s words', 30),
+  ]
+}
+
 /** A persona the tests create, before its formats. */
 const newPersona = {
   name: 'Iris Ships',
@@ -905,7 +1150,13 @@ async function seededAda(t: ReturnType<typeof setup>) {
 async function insertPost(
   t: ReturnType<typeof setup>,
   ada: { _id: Id<'personas'> },
-  args: { kind: 'text' | 'image' | 'thread'; status: 'idea' | 'scripted'; hour: number; post?: { parts: string[]; cardTitle?: string } }
+  args: {
+    kind: 'text' | 'image' | 'thread'
+    status: 'idea' | 'scripted'
+    hour: number
+    post?: { parts: string[]; cardTitle?: string }
+    length?: PostLength
+  }
 ): Promise<Id<'episodes'>> {
   const plannedFor = addDays(dayKey(Date.now(), TIMEZONE), 7)
   const now = Date.now()
@@ -914,6 +1165,7 @@ async function insertPost(
       personaId: ada._id,
       slug: `test-${args.kind}`,
       kind: args.kind,
+      length: args.length,
       status: args.status,
       concept: `A ${args.kind} post`,
       title: `A ${args.kind} post`,

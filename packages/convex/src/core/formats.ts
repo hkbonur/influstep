@@ -48,7 +48,8 @@ export function earliestPublishAt(persona: FormatOwner & Pick<Doc<'personas'>, '
 
 /**
  * What personas.create and update accept: at least one platform, each once,
- * every value in range, and a post cadence on X and nowhere else.
+ * every value in range, and a post cadence on X and nowhere else, with each
+ * post kind and each post intent at most once and neither list empty.
  */
 export function assertFormats(formats: PlatformFormat[]): void {
   if (formats.length === 0) throw refusal('A persona needs at least one platform.')
@@ -74,7 +75,7 @@ export function assertFormats(formats: PlatformFormat[]): void {
 }
 
 function assertCadence(cadence: XCadence): void {
-  const { postsPerDay, kinds } = cadence
+  const { postsPerDay, kinds, intents } = cadence
   if (!Number.isInteger(postsPerDay) || postsPerDay < CADENCE_POSTS_MIN || postsPerDay > CADENCE_POSTS_MAX) {
     throw refusal(`X: posts per day is ${CADENCE_POSTS_MIN} to ${CADENCE_POSTS_MAX}.`)
   }
@@ -84,4 +85,7 @@ function assertCadence(cadence: XCadence): void {
     if (picked.has(kind)) throw refusal(`X: ${EPISODE_KIND_LABELS[kind]} is picked twice.`)
     picked.add(kind)
   }
+  // The planner rotates through the intents in order, so a repeated one would only skew the mix.
+  if (intents.length === 0) throw refusal('X: pick at least one post intent.')
+  if (new Set(intents).size !== intents.length) throw refusal('X: each post intent once.')
 }

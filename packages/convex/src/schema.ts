@@ -1,6 +1,8 @@
 import { defineSchema, defineTable } from 'convex/server'
 import { v } from 'convex/values'
 import {
+  accountPostSourceValidator,
+  accountSourceCountsValidator,
   agentRoleValidator,
   aspectRatioValidator,
   checklistActionValidator,
@@ -22,6 +24,8 @@ import {
   personaColorValidator,
   platformFormatValidator,
   platformValidator,
+  postIntentValidator,
+  postLengthValidator,
   renderValidator,
   scriptValidator,
   shotPlanValidator,
@@ -30,6 +34,8 @@ import {
   signalStatusValidator,
   sponsorSegmentValidator,
   variantValidator,
+  voiceCountsValidator,
+  voiceValidator,
 } from './lib/validators'
 
 export default defineSchema({
@@ -73,6 +79,9 @@ export default defineSchema({
     autoApprove: v.boolean(),
     paused: v.boolean(),
     timezone: v.string(),
+    // How the X account this persona took over writes, learned from its imported posts (accountPosts) and
+    // edited by the operator. Absent until the analyst learns it, and again once the history is cleared.
+    voice: v.optional(voiceValidator),
     createdAt: v.number(),
   })
     .index('by_workspace', ['workspaceId'])
@@ -92,6 +101,10 @@ export default defineSchema({
     script: scriptValidator,
     // A post's parts and card title, exactly what X receives. Set once the post is written; never on a video.
     post: v.optional(episodePostValidator),
+    // What a post sets out to do and how long it runs (shared post-mix.ts), set by the planner for every post
+    // slot; never on a video. A thread is always long, a text or image post never is (core/posts.ts).
+    intent: v.optional(postIntentValidator),
+    length: v.optional(postLengthValidator),
     sponsorSegment: sponsorSegmentValidator,
     // The platforms this episode goes to: a non-empty subset of the persona's.
     platforms: v.array(platformValidator),
@@ -147,6 +160,49 @@ export default defineSchema({
     .index('by_episode', ['episodeId'])
     .index('by_persona', ['personaId'])
     .index('by_status_scheduled', ['status', 'scheduledAt']),
+
+  // The history of the X account a persona took over (docs/plan.md, slice 5): imported from the X archive,
+  // pasted by the operator, or read from the timeline. Read only: importing never posts, likes or follows.
+  // A self-thread is one row with its parts, root first. Example posts are the ones the writer imitates.
+  accountPosts: defineTable({
+    personaId: v.id('personas'),
+    // The X id of the post (a thread's root), or `paste-<hash>` for a pasted post; unique per persona.
+    externalId: v.string(),
+    parts: v.array(v.string()),
+    postedAt: v.number(),
+    likes: v.number(),
+    reposts: v.number(),
+    replies: v.number(),
+    // Likes plus reposts (core/account.ts, engagementOf), stored so the top posts are read through an index.
+    // Set once on import: a stored post is never overwritten, so its counts never change.
+    engagement: v.number(),
+    // A reply to someone else's post; the voice is learned from the rest (the originals).
+    isReply: v.boolean(),
+    // The language X detected; absent when it could not tell.
+    lang: v.optional(v.string()),
+    source: accountPostSourceValidator,
+    example: v.boolean(),
+    importedAt: v.number(),
+  })
+    .index('by_persona_posted', ['personaId', 'postedAt'])
+    .index('by_persona_external', ['personaId', 'externalId'])
+    .index('by_persona_example', ['personaId', 'example'])
+    // The originals (isReply false) most engaging first, and newest first: the top posts and what the analyst reads.
+    .index('by_persona_reply_engagement', ['personaId', 'isReply', 'engagement', 'postedAt'])
+    .index('by_persona_reply_posted', ['personaId', 'isReply', 'postedAt']),
+
+  // What a persona's imported history counts, kept as posts are imported and deleted (core/account.ts), so
+  // the totals and the voice are read from one row and never from every post. One row per persona that
+  // holds imported posts: none before the first import, and none once Clear history is done.
+  accountCounts: defineTable({
+    personaId: v.id('personas'),
+    // Every imported post by where it came from; together, all of them.
+    bySource: accountSourceCountsValidator,
+    // The account's own posts counted for the voice (shared VoiceCounts); together, the originals.
+    originals: voiceCountsValidator,
+    // Clear history is deleting the posts a page at a time; importing and learning the voice wait until it is done.
+    clearing: v.boolean(),
+  }).index('by_persona', ['personaId']),
 
   metricSnapshots: defineTable({
     personaId: v.id('personas'),

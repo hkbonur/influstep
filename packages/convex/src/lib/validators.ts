@@ -1,5 +1,6 @@
 import { v, type Validator } from 'convex/values'
 import {
+  ACCOUNT_POST_SOURCES,
   AGENT_ROLES,
   ASPECT_RATIOS,
   CHECKLIST_STATUSES,
@@ -10,13 +11,16 @@ import {
   EPISODE_STATUSES,
   EXPERIMENT_KINDS,
   EXPERIMENT_STATUSES,
+  HABITS,
   JOB_KIND_LIST,
   JOB_RUNTIMES,
   JOB_STATUSES,
   METRIC_KEYS,
   PERSONA_COLORS,
   PLATFORMS,
+  POST_INTENTS,
   POST_KINDS,
+  POST_LENGTHS,
   SIGNAL_SOURCES,
   SIGNAL_STATUSES,
   SPONSOR_SEGMENTS,
@@ -50,11 +54,16 @@ export const deliveryValidator = literals(DELIVERIES)
 export const personaColorValidator = literals(PERSONA_COLORS)
 export const episodeKindValidator = literals(EPISODE_KINDS)
 export const postKindValidator = literals(POST_KINDS)
+export const postIntentValidator = literals(POST_INTENTS)
+export const postLengthValidator = literals(POST_LENGTHS)
+export const habitValidator = literals(HABITS)
+export const accountPostSourceValidator = literals(ACCOUNT_POST_SOURCES)
 
-/** X's post cadence (shared `XCadence`). Ranges are checked by core/formats.ts. */
+/** X's post cadence (shared `XCadence`). Ranges, and each kind and intent once, are checked by core/formats.ts. */
 export const xCadenceValidator = v.object({
   postsPerDay: v.number(),
   kinds: v.array(postKindValidator),
+  intents: v.array(postIntentValidator),
 })
 
 /** A persona's format for one platform (shared `PlatformFormat`). Ranges, and cadence only on X, are checked by core/formats.ts. */
@@ -66,6 +75,47 @@ export const platformFormatValidator = v.object({
   hookNote: v.string(),
   publishHour: v.number(),
   cadence: v.optional(xCadenceValidator),
+})
+
+/** The share of each post length (shared `LengthMix`). */
+export const lengthMixValidator = v.object({ short: v.number(), medium: v.number(), long: v.number() })
+
+/**
+ * An X persona's voice (shared `Voice`): the counted part from shared
+ * `voiceStats`, the language, summary and traits the analyst wrote and the
+ * operator edits (shared `voiceEditProblems` checks them).
+ */
+export const voiceValidator = v.object({
+  language: v.string(),
+  summary: v.string(),
+  traits: v.array(v.string()),
+  lengthMix: lengthMixValidator,
+  emoji: habitValidator,
+  hashtags: habitValidator,
+  sampleSize: v.number(),
+  learnedAt: v.number(),
+})
+
+/** Imported posts by where they came from (shared ACCOUNT_POST_SOURCES), every source present. */
+export const accountSourceCountsValidator = v.object({ archive: v.number(), paste: v.number(), api: v.number(), mock: v.number() })
+
+/** The voice counts over an account's originals (shared `VoiceCounts`): originals of each length, and those with an emoji or a hashtag. */
+export const voiceCountsValidator = v.object({
+  lengths: v.object({ short: v.number(), medium: v.number(), long: v.number() }),
+  withEmoji: v.number(),
+  withHashtag: v.number(),
+})
+
+/** One post of an account's history as the studio parsed it (shared `ImportedPost`). */
+export const importedPostValidator = v.object({
+  externalId: v.string(),
+  parts: v.array(v.string()),
+  postedAt: v.number(),
+  likes: v.number(),
+  reposts: v.number(),
+  replies: v.number(),
+  isReply: v.boolean(),
+  lang: v.union(v.string(), v.null()),
 })
 
 /** A post as written, exactly what X receives (shared `EpisodePost`); shared `postProblems` says whether X takes it. */

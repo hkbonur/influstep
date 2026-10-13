@@ -1,5 +1,18 @@
 import type { Infer } from 'convex/values'
-import type { Delivery, EpisodePost, PostKind, SponsorSegment } from '@influstep/shared'
+import {
+  SHORT_POST_MAX,
+  THREAD_PARTS_MAX,
+  THREAD_PARTS_MIN,
+  X_POST_LIMIT,
+  type Delivery,
+  type EpisodePost,
+  type PostIntent,
+  type PostKind,
+  type PostLength,
+  type SponsorSegment,
+  type Voice,
+  type VoiceStats,
+} from '@influstep/shared'
 import type { shotPlanValidator } from '../../lib/validators'
 
 /**
@@ -52,8 +65,26 @@ export interface PostBrief {
   /** The hook convention of the persona's X format; the first line of the first part follows it. */
   hookNote: string
   partLimit: number
+  /**
+   * What the post sets out to do and how long it runs, as the planner chose
+   * them. Null on a post planned before intents and lengths existed: it is
+   * written to its kind alone, as it was then.
+   */
+  intent: PostIntent | null
+  length: PostLength | null
+  /** The account's learned voice; null until the analyst learns one, and the post is written in English in the bible's tone. */
+  voice: Pick<Voice, 'language' | 'summary' | 'traits' | 'emoji' | 'hashtags'> | null
+  /** The account's own example posts, each as its parts, verbatim: style to imitate, never words to copy. */
+  examples: string[][]
   /** What was wrong with the previous draft, on the one retry; empty on the first try. */
   problems: string[]
+}
+
+/** What each length asks of the writer, in the words the prompt and a rejected draft both use. */
+export const POST_LENGTH_TARGETS: Record<PostLength, string> = {
+  short: `a one-liner: one part of at most ${SHORT_POST_MAX} characters`,
+  medium: `a full post: one part of more than ${SHORT_POST_MAX} and at most ${X_POST_LIMIT} characters`,
+  long: `a thread of ${THREAD_PARTS_MIN} to ${THREAD_PARTS_MAX} parts`,
 }
 
 export interface PostDraft {
@@ -61,6 +92,37 @@ export interface PostDraft {
   title: string
   /** The parts as X receives them, and the card title for an image post. */
   post: EpisodePost
+}
+
+/** One of the account's own posts as the analyst reads it. */
+export interface AccountPostSample {
+  parts: string[]
+  /** X's language tag for the post; null when X could not tell. */
+  lang: string | null
+  likes: number
+  reposts: number
+}
+
+/**
+ * What the analyst asks of a language model to learn an account's voice.
+ * Everything countable is counted in code first (`stats`); the model writes
+ * only the language, the summary and the traits.
+ */
+export interface VoiceBrief {
+  persona: ScriptBrief['persona']
+  stats: VoiceStats
+  /** The originals with the most likes plus reposts, best first. */
+  top: AccountPostSample[]
+  /** The newest originals not already in `top`, newest first. */
+  newest: AccountPostSample[]
+}
+
+export interface VoiceDraft {
+  /** A BCP 47 tag such as `en`, `nb`, `tr`. */
+  language: string
+  summary: string
+  /** One to VOICE_TRAITS_MAX recurring moves, each a short phrase. */
+  traits: string[]
 }
 
 export interface ChatTurn {
@@ -72,6 +134,7 @@ export interface LlmProvider {
   readonly name: string
   writeScript(brief: ScriptBrief): Promise<ScriptDraft>
   writePost(brief: PostBrief): Promise<PostDraft>
+  learnVoice(brief: VoiceBrief): Promise<VoiceDraft>
   /** The persona's reply in its own chat; `directive` is set when the message was stored as one. */
   reply(args: { persona: ScriptBrief['persona']; history: ChatTurn[]; directive?: string }): Promise<string>
 }

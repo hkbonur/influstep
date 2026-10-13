@@ -1,15 +1,18 @@
 import { v } from 'convex/values'
-import { canTransition, type EpisodeStatus } from '@influstep/shared'
+import { VOICE_EXAMPLES_MAX, canTransition, isPost, type EpisodeStatus } from '@influstep/shared'
 import type { Doc, Id } from '../_generated/dataModel'
 import { internalMutation, internalQuery, type MutationCtx } from '../_generated/server'
+import { internal } from '../_generated/api'
+import { deleteHistoryPage as deleteHistoryPageRule, examplePostsOf } from '../core/account'
 import { transition, type PipelineEvent } from '../core/pipeline'
 import { workspaceOf } from '../core/workspace'
 import { episodeStatusValidator } from '../lib/validators'
 
 /**
- * Internal reads and writes the agent actions use. Actions cannot touch the
- * database, so every fact they need and every change they make goes through
- * here. Domain rules stay in core/.
+ * Internal reads and writes the agent actions use, and the pages of Clear
+ * history the scheduler runs. Actions cannot touch the database, so every
+ * fact they need and every change they make goes through here. Domain rules
+ * stay in core/.
  */
 
 export const getJob = internalQuery({
@@ -34,6 +37,8 @@ export interface EpisodeContext {
   directives: Doc<'directives'>[]
   signals: Doc<'signals'>[]
   experiment: Doc<'experiments'> | null
+  /** The account posts the operator or the analyst marked as examples of the voice, most engaging first; only read for a post. */
+  examples: Doc<'accountPosts'>[]
 }
 
 export const getEpisodeContext = internalQuery({
@@ -52,7 +57,9 @@ export const getEpisodeContext = internalQuery({
       (signal): signal is Doc<'signals'> => signal !== null
     )
     const experiment = episode.experimentId ? await ctx.db.get(episode.experimentId) : null
-    return { episode, persona, workspace, directives, signals, experiment }
+    // setExample caps the marks at VOICE_EXAMPLES_MAX; the cap holds here too, so the writer's prompt stays short.
+    const examples = isPost(episode.kind) ? (await examplePostsOf(ctx, persona._id)).slice(0, VOICE_EXAMPLES_MAX) : []
+    return { episode, persona, workspace, directives, signals, experiment, examples }
   },
 })
 
@@ -92,5 +99,19 @@ export const setEpisodeStatus = internalMutation({
   args: { episodeId: v.id('episodes'), status: episodeStatusValidator },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.episodeId, { status: args.status, updatedAt: Date.now() })
+  },
+})
+
+/**
+ * The pages of Clear history after the first (private/account.ts,
+ * clearHistory): each deletes one page in its own mutation, so a history of
+ * any size stays inside a mutation's write limit, and queues the next until
+ * none is left.
+ */
+export const deleteHistoryPage = internalMutation({
+  args: { personaId: v.id('personas') },
+  handler: async (ctx, args): Promise<void> => {
+    const page = await deleteHistoryPageRule(ctx, args.personaId)
+    if (page.more) await ctx.scheduler.runAfter(0, internal.internal.data.deleteHistoryPage, { personaId: args.personaId })
   },
 })

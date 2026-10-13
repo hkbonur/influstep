@@ -7,6 +7,15 @@ export function formatCount(value: number): string {
   return String(Math.round(value))
 }
 
+/**
+ * The word a count takes, "post" for exactly one and "posts" for any other
+ * number, zero included. English only, like the rest of the studio; the caller
+ * prints the count itself, in its own tabular span.
+ */
+export function plural(count: number, one: string, other: string): string {
+  return count === 1 ? one : other
+}
+
 export function formatPercent(rate: number, digits = 1): string {
   return `${(rate * 100).toFixed(digits)}%`
 }
@@ -23,6 +32,26 @@ export function formatTime(at: number): string {
 /** A publish hour (0 to 23) as it reads on a schedule: 16 is "16:00". */
 export function formatHour(hour: number): string {
   return `${String(hour).padStart(2, '0')}:00`
+}
+
+/** A day in the past, with its year: an imported post can be years old. */
+export function formatDate(at: number): string {
+  return new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(at))
+}
+
+/**
+ * A language tag (BCP 47, such as `nb`) as the operator reads it, "Norwegian
+ * Bokmål". Null when the tag is malformed or names no language the browser
+ * knows, so the caller says what an unknown tag shows instead.
+ */
+export function languageName(tag: string, locale?: string): string | null {
+  try {
+    const name = new Intl.DisplayNames(locale, { type: 'language', fallback: 'none' }).of(tag)
+    return name === undefined ? null : name
+  } catch {
+    // A RangeError: the text is not a well-formed language tag at all.
+    return null
+  }
 }
 
 export function formatDateTime(at: number): string {

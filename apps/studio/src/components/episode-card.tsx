@@ -4,7 +4,7 @@ import { api } from '@influstep/convex/_generated/api'
 import type { FunctionReturnType } from 'convex/server'
 import { cn } from '@/lib/cn'
 import { formatTime } from '@/lib/format'
-import { PlatformGlyphs, PostKindIcon, TINT_CLASS } from './status'
+import { PlatformGlyphs, PostKindIcon, PostShape, TINT_CLASS } from './status'
 
 export type CalendarEpisode = FunctionReturnType<typeof api.private.calendar.week>['days'][number]['episodes'][number]
 
@@ -12,7 +12,8 @@ export type CalendarEpisode = FunctionReturnType<typeof api.private.calendar.wee
  * One episode on the calendar. The status is a wash and a dot; title at
  * weight 500; persona handle in mono; the episode's own platforms on the last
  * row, since an episode can go to fewer platforms than its persona has (DESIGN.md).
- * A post shows its kind icon and its first line where a video shows its title.
+ * A post shows its kind icon and its first line where a video shows its title,
+ * and under it what the planner asked of it: the intent and the length.
  */
 export function EpisodeCard(props: { episode: CalendarEpisode }) {
   const episode = props.episode
@@ -32,7 +33,11 @@ export function EpisodeCard(props: { episode: CalendarEpisode }) {
         <span aria-hidden className="mt-1.5 size-1.5 shrink-0 rounded-full bg-[var(--tint)]" />
         <div className="min-w-0 flex-1">
           {isPost(episode.kind) ? (
-            <PostLine kind={episode.kind} text={postLine(episode)} killed={episode.status === 'killed'} />
+            <>
+              <PostLine kind={episode.kind} text={postLine(episode)} killed={episode.status === 'killed'} />
+              {/* Indented past the kind icon, so it reads as part of the post line above it. */}
+              <PostShape intent={episode.intent} length={episode.length} className="mt-0.5 block pl-5" />
+            </>
           ) : (
             <div
               className={cn('line-clamp-2 text-[13px] leading-snug font-medium text-ink', { 'line-through': episode.status === 'killed' })}

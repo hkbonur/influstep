@@ -1,4 +1,13 @@
-import { isPost, postHook, postProblems, postSlotHours, runnerJobSchema, type PlatformFormat, type PostKind } from '@influstep/shared'
+import {
+  POST_INTENTS,
+  isPost,
+  postHook,
+  postProblems,
+  postSlotHours,
+  runnerJobSchema,
+  type PlatformFormat,
+  type PostKind,
+} from '@influstep/shared'
 import { describe, expect, it } from 'vitest'
 import { internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
@@ -17,7 +26,7 @@ const X_FORMAT: PlatformFormat = {
   delivery: 'talking_head',
   hookNote: 'Put the point in the first line; the video proves it.',
   publishHour: 22,
-  cadence: { postsPerDay: 2, kinds: KINDS },
+  cadence: { postsPerDay: 2, kinds: KINDS, intents: [...POST_INTENTS] },
 }
 
 type Test = ReturnType<typeof setup>
@@ -99,14 +108,18 @@ describe('posts on X', () => {
     const videos = planned.filter((episode) => episode.kind === 'video')
     expect(videos.map((episode) => episode.platforms)).toEqual([['x']])
 
-    // Every day at the cadence's hours, only to X, kinds rotating in time order and carrying on across days.
+    // Every day at the cadence's hours, only to X. The kind follows the planned length (voice.integration.test.ts pins
+    // the mix): a thread exactly when the post is long, and every kind one the cadence has.
     const posts = planned.filter((episode) => isPost(episode.kind)).sort((a, b) => a.scheduledAt - b.scheduledAt)
     const hours = postSlotHours(X_FORMAT)
     const week = Array.from({ length: 7 }, (_, offset) => addDays(nextMonday, offset))
     expect(posts.map((post) => [post.plannedFor, post.scheduledAt])).toEqual(
       week.flatMap((day) => hours.map((hour) => [day, instantAt(day, hour, TIMEZONE)]))
     )
-    expect(posts.map((post) => post.kind)).toEqual(posts.map((_, index) => KINDS[index % KINDS.length]))
+    for (const post of posts) {
+      expect(KINDS).toContain(post.kind)
+      expect(post.kind === 'thread').toBe(post.length === 'long')
+    }
     expect(posts.every((post) => post.status === 'idea' && post.platforms.length === 1 && post.platforms[0] === 'x')).toBe(true)
 
     // The dial sponsors some posts, always as a mention: a post shows no screen to demo on.

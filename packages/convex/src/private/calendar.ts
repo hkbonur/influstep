@@ -8,6 +8,9 @@ export interface CalendarEpisode {
   _id: Doc<'episodes'>['_id']
   /** A video, or a post the card draws with its kind icon and first line. */
   kind: Doc<'episodes'>['kind']
+  /** What the planner asked of a post; a video has neither. */
+  intent: Doc<'episodes'>['intent']
+  length: Doc<'episodes'>['length']
   title: string
   /** A post's first line (empty until it is written); a video's first sentence. */
   hook: string
@@ -42,6 +45,8 @@ export const week = query({
         episodes.push({
           _id: episode._id,
           kind: episode.kind,
+          intent: episode.intent,
+          length: episode.length,
           title: episode.title,
           hook: episode.hook,
           status: episode.status,

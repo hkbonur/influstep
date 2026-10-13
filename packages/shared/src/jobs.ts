@@ -33,6 +33,8 @@ export const JOB_KINDS = {
   pull_metrics: { role: 'analyst', runsOn: 'backend' },
   evaluate_experiments: { role: 'analyst', runsOn: 'backend' },
   open_browser: { role: 'producer', runsOn: 'runner' },
+  import_x_history: { role: 'researcher', runsOn: 'backend' },
+  learn_voice: { role: 'analyst', runsOn: 'backend' },
 } as const satisfies Record<string, { role: AgentRole; runsOn: JobRuntime }>
 
 export type JobKind = keyof typeof JOB_KINDS
@@ -49,6 +51,8 @@ export const JOB_KIND_LABELS: Record<JobKind, string> = {
   pull_metrics: 'Pull metrics',
   evaluate_experiments: 'Evaluate experiments',
   open_browser: 'Open browser for sign-in',
+  import_x_history: 'Import X history',
+  learn_voice: 'Learn the voice',
 }
 
 // ---------------------------------------------------------------------------

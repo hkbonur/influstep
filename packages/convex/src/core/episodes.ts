@@ -12,7 +12,9 @@ import {
   type Delivery,
   type EpisodeFormat,
   type Platform,
+  type PostIntent,
   type PostKind,
+  type PostLength,
   type ProducePayload,
   type ProduceResult,
   type PublishResult,
@@ -28,7 +30,7 @@ import { assertXTitleFits, describePublication } from './attribution'
 import { instantAt } from './dates'
 import { activeDiscountCodeFor } from './discounts'
 import { earliestPublishAt, formatFor, formatsFor, platformsOf } from './formats'
-import { assertPostFits, findXPublication } from './posts'
+import { assertLengthFitsKind, assertPostFits, findXPublication } from './posts'
 import { workspaceOf } from './workspace'
 import { refusal } from '../lib/errors'
 
@@ -41,7 +43,8 @@ import { refusal } from '../lib/errors'
 
 /**
  * One planned episode. A video goes to every platform the persona has; a post
- * goes only to X, at one of the day's post slots (shared `postSlotHours`).
+ * goes only to X, at one of the day's post slots (shared `postSlotHours`),
+ * with the intent and the length the planner chose for that slot.
  */
 export type PlannedEpisodeInput = {
   personaId: Id<'personas'>
@@ -52,7 +55,7 @@ export type PlannedEpisodeInput = {
   signalIds: Id<'signals'>[]
   experimentId?: Id<'experiments'>
   variantKey?: string
-} & ({ kind: 'video' } | { kind: PostKind; publishHour: number })
+} & ({ kind: 'video' } | { kind: PostKind; publishHour: number; intent: PostIntent; length: PostLength })
 
 /** Where a new idea goes and when: a video everywhere the persona publishes, a post on X at its slot. */
 function placement(persona: Doc<'personas'>, input: PlannedEpisodeInput): { platforms: Platform[]; scheduledAt: number } {
@@ -65,14 +68,23 @@ function placement(persona: Doc<'personas'>, input: PlannedEpisodeInput): { plat
   return { platforms: ['x'], scheduledAt: instantAt(input.plannedFor, input.publishHour, persona.timezone) }
 }
 
+/** A post's intent and length, refused when the length does not fit the kind; a video has neither. */
+function postShape(input: PlannedEpisodeInput): { intent?: PostIntent; length?: PostLength } {
+  if (input.kind === 'video') return {}
+  assertLengthFitsKind(input.kind, input.length)
+  return { intent: input.intent, length: input.length }
+}
+
 /** A new idea, queued for the writer. The operator narrows a video's platforms per episode; a post stays on X. */
 export async function createIdea(ctx: MutationCtx, persona: Doc<'personas'>, input: PlannedEpisodeInput): Promise<Id<'episodes'>> {
   const now = Date.now()
   const { platforms, scheduledAt } = placement(persona, input)
+  const shape = postShape(input)
   const episodeId = await ctx.db.insert('episodes', {
     personaId: input.personaId,
     slug: `${slugify(input.concept) || 'episode'}-${makeSlug(4)}`,
     kind: input.kind,
+    ...shape,
     status: 'idea',
     concept: input.concept,
     title: input.concept,

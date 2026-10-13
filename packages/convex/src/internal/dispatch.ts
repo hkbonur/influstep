@@ -18,6 +18,8 @@ const BACKEND_RUNNERS: Partial<Record<JobKind, (ctx: ActionCtx, payload: unknown
   poll_comments: (ctx, payload) => ctx.runAction(internal.internal.agents.pollComments, payloadWith(payload, 'personaId')),
   pull_metrics: (ctx, payload) => ctx.runAction(internal.internal.agents.pullMetrics, payloadWith(payload, 'personaId')),
   evaluate_experiments: (ctx, payload) => ctx.runAction(internal.internal.agents.evaluateExperiments, payloadWith(payload, 'personaId')),
+  import_x_history: (ctx, payload) => ctx.runAction(internal.internal.agents.importXHistory, payloadWith(payload, 'personaId')),
+  learn_voice: (ctx, payload) => ctx.runAction(internal.internal.agents.learnVoice, payloadWith(payload, 'personaId')),
 }
 
 // Payloads are stored as v.any(); narrow them here, at the boundary, by the keys each agent needs.

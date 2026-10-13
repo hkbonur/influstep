@@ -1,4 +1,15 @@
-import { postSlotHours, type PlatformFormat, type PostKind, type SponsorSegment } from '@influstep/shared'
+import {
+  DEFAULT_LENGTH_MIX,
+  pickLengths,
+  postSlotHours,
+  type LengthMix,
+  type PlatformFormat,
+  type PostIntent,
+  type PostKind,
+  type PostLength,
+  type SponsorSegment,
+  type XCadence,
+} from '@influstep/shared'
 import type { Doc } from '../_generated/dataModel'
 import { addDays, instantAt } from './dates'
 
@@ -91,18 +102,24 @@ export function planWeek(args: {
   })
 }
 
-/** One post slot of the plan: a day, its hour on X, the kind it takes, and what it is about. */
-export interface PlannedPost extends Omit<PlannedEpisode, 'experimentId' | 'variantKey'> {
-  hour: number
+/** What a post slot sets out to do, how long it runs, and the kind of post that length takes. */
+export interface PostShape {
+  intent: PostIntent
+  length: PostLength
   kind: PostKind
+}
+
+/** One post slot of the plan: a day, its hour on X, what it is about, and its shape. */
+export interface PlannedPost extends Omit<PlannedEpisode, 'experimentId' | 'variantKey'>, PostShape {
+  hour: number
 }
 
 /**
  * The post slots of a persona with an X format: every day of the week at the
  * hours of its cadence (postSlotHours), skipping a day that already holds
- * posts and any hour already gone. Kinds rotate through the cadence in time
- * order and carry on from the posts the persona already has, so a new week
- * continues where the last one stopped.
+ * posts and any hour already gone. The slots are shaped in time order
+ * (shapePostSlots), from the voice's length mix once the analyst has learned
+ * it, so a new week carries on where the last one stopped.
  *
  * Concepts, pillars and the sponsor follow the same rule as the video slots:
  * planWeek plans one slot per day, so it runs once per slot hour with every
@@ -111,10 +128,10 @@ export interface PlannedPost extends Omit<PlannedEpisode, 'experimentId' | 'vari
  */
 export function planPostSlots(args: {
   weekStart: string
-  persona: Pick<Doc<'personas'>, 'pillars' | 'sponsorDial' | 'sponsorRampEpisodes' | 'timezone'>
+  persona: Pick<Doc<'personas'>, 'pillars' | 'sponsorDial' | 'sponsorRampEpisodes' | 'timezone' | 'voice'>
   format: PlatformFormat
   /** The persona's live posts. */
-  posts: Pick<Doc<'episodes'>, 'plannedFor'>[]
+  posts: Pick<Doc<'episodes'>, 'plannedFor' | 'kind'>[]
   /** Every live episode of the persona plus the videos planned this run, for the sponsor ramp and the pillar rotation. */
   episodeCount: number
   /** Signals no video took. */
@@ -127,7 +144,7 @@ export function planPostSlots(args: {
   const week = Array.from({ length: 7 }, (_, offset) => addDays(args.weekStart, offset))
   const open = (day: string, hour: number) =>
     !args.posts.some((post) => post.plannedFor === day) && instantAt(day, hour, args.persona.timezone) > args.now
-  const slots: Omit<PlannedPost, 'kind'>[] = []
+  const slots: Omit<PlannedPost, keyof PostShape>[] = []
   let signals = args.signals
   for (const hour of postSlotHours(args.format)) {
     const row = planWeek({
@@ -156,7 +173,54 @@ export function planPostSlots(args: {
     signals = signals.filter((signal) => !taken.has(signal.id))
   }
   slots.sort((a, b) => a.plannedFor.localeCompare(b.plannedFor) || a.hour - b.hour)
-  return slots.map((slot, index) => ({ ...slot, kind: cadence.kinds[(args.posts.length + index) % cadence.kinds.length] }))
+  const shapes = shapePostSlots({
+    cadence,
+    // Before the analyst learns the account's voice, the week follows the default mix.
+    lengthMix: args.persona.voice?.lengthMix ?? DEFAULT_LENGTH_MIX,
+    count: slots.length,
+    postsSoFar: args.posts.length,
+    singlesSoFar: args.posts.filter((post) => post.kind !== 'thread').length,
+  })
+  return slots.map((slot, index) => {
+    const shape = shapes[index]
+    if (!shape) throw new Error(`post slot ${index} has no shape`)
+    return { ...slot, ...shape }
+  })
+}
+
+/**
+ * What each new post slot sets out to do and how long it runs, in time
+ * order (docs/plan.md, slice 5). Intents rotate through the cadence's and
+ * carry on from the posts the persona already has, across days and weeks.
+ * Lengths come from the length mix (shared `pickLengths`). The kind follows
+ * the length: a long slot is a thread when the cadence has threads and a full
+ * post when it does not, and one-liners and full posts rotate through the
+ * cadence's other kinds. A cadence of threads alone cannot honor a short or
+ * full post, so every slot there is a thread.
+ */
+function shapePostSlots(args: {
+  cadence: XCadence
+  lengthMix: LengthMix
+  count: number
+  /** The persona's live posts, for the intent rotation. */
+  postsSoFar: number
+  /** The persona's live text and image posts, for the kind rotation. */
+  singlesSoFar: number
+}): PostShape[] {
+  const { intents, kinds } = args.cadence
+  if (intents.length === 0) throw new Error('an X cadence without post intents cannot plan posts')
+  const singles = kinds.filter((kind) => kind !== 'thread')
+  const threads = kinds.includes('thread')
+  let single = args.singlesSoFar
+  return pickLengths(args.lengthMix, args.count).map((picked, index): PostShape => {
+    const intent = intents[(args.postsSoFar + index) % intents.length]
+    if (intent === undefined) throw new Error('intent rotation out of range')
+    if (singles.length === 0 || (picked === 'long' && threads)) return { intent, length: 'long', kind: 'thread' }
+    const kind = singles[single % singles.length]
+    if (kind === undefined) throw new Error('kind rotation out of range')
+    single += 1
+    return { intent, length: picked === 'long' ? 'medium' : picked, kind }
+  })
 }
 
 /** Which slots of the week carry the sponsor, honoring the ramp and the dial. */

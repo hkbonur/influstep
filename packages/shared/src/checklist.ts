@@ -1,6 +1,12 @@
 export const CHECKLIST_STATUSES = ['open', 'done'] as const
 export type ChecklistStatus = (typeof CHECKLIST_STATUSES)[number]
 
+/**
+ * The provider key the X publisher reads once the adapter exists. The X
+ * connect checklist item asks for it, and the voice page finds that item by it.
+ */
+export const X_PROVIDER_KEY = 'X_OAUTH'
+
 export const DIRECTIVE_VERBS = ['focus', 'stop', 'always', 'never', 'more', 'less', 'try'] as const
 
 /**

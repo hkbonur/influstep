@@ -19,8 +19,9 @@ import { useMutation, useQuery } from 'convex/react'
 import type { FunctionReturnType } from 'convex/server'
 import React from 'react'
 import { PostEditor } from '@/components/post-editor'
+import { PostParts } from '@/components/post-parts'
 import { ScriptEditor } from '@/components/script-editor'
-import { PlatformGlyphs, PostKindIcon, SponsorPill, StatusPill } from '@/components/status'
+import { JobDot, PlatformGlyphs, PostKindIcon, PostShape, SponsorPill, StatusPill } from '@/components/status'
 import {
   AttributionNote,
   Button,
@@ -106,6 +107,8 @@ function EpisodePage() {
                 <PostKindIcon kind={episode.kind} showLabel />
               </span>
             )}
+            {/* What the planner asked of the post, as plain text: the writer reads it, the operator edits the post itself. */}
+            <PostShape intent={episode.intent} length={episode.length} className="ml-2 text-xs whitespace-nowrap" />
             {episode.format && (
               <>
                 {' '}
@@ -258,7 +261,8 @@ function EpisodePage() {
                             : `due ${relativeTime(publication.scheduledAt)}`}
                         </span>
                       </div>
-                      {publication.parts && <PublishedParts parts={publication.parts} />}
+                      {/* A post publication as X receives it: the parts exactly as written. */}
+                      {publication.parts && <PostParts parts={publication.parts} className="my-1 text-xs text-graphite" />}
                       {publication.url && (
                         <a
                           href={publication.url}
@@ -365,15 +369,7 @@ function EpisodePage() {
             <ul className="space-y-1.5 font-mono text-[11px]">
               {data.jobs.map((job) => (
                 <li key={job._id} className="flex items-start gap-2">
-                  <span
-                    aria-hidden
-                    className={cn('mt-1 size-1.5 shrink-0 rounded-full', {
-                      'bg-field-green': job.status === 'done',
-                      'bg-signal-red': job.status === 'failed',
-                      'bg-note-blue': job.status === 'running',
-                      'bg-fog': job.status === 'queued',
-                    })}
-                  />
+                  <JobDot status={job.status} className="mt-1" />
                   <span className="text-graphite">{job.kind}</span>
                   <span className="text-ash">
                     {job.runsOn} · {job.status} · {relativeTime(job.finishedAt ?? job.startedAt ?? job.createdAt)}
@@ -583,21 +579,6 @@ function RendersSection(props: { renders: EpisodeData['renders'] }) {
         ))}
       </div>
     </section>
-  )
-}
-
-/** A post publication as X receives it: the parts exactly as written, numbered when it is a thread. */
-function PublishedParts(props: { parts: string[] }) {
-  return (
-    <ol className="my-1 grid gap-1">
-      {props.parts.map((part, index) => (
-        // Copied from the post and never reordered, so the position is the part's identity.
-        <li key={index} className="flex gap-2 text-xs">
-          {props.parts.length > 1 && <span className="tabular w-4 shrink-0 font-mono text-[11px] text-ash">{index + 1}</span>}
-          <p className="min-w-0 whitespace-pre-line text-graphite">{part}</p>
-        </li>
-      ))}
-    </ol>
   )
 }
 

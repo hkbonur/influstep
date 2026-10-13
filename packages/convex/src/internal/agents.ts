@@ -1,21 +1,35 @@
 import { v, type Infer } from 'convex/values'
 import {
   MEASUREMENT_WINDOW_MS,
+  POST_LENGTH_LABELS,
   SIGNAL_SOURCES,
   X_POST_LIMIT,
   decideExperiment,
   isPost,
   METRIC_DENOMINATOR,
   normalizeDiscountCode,
+  postLengthOf,
   postProblems,
   resolveEpisodeFormat,
+  voiceStatsOf,
+  type EpisodePost,
   type PostKind,
+  type PostLength,
   type SignalSource,
   type VariantStats,
 } from '@influstep/shared'
 import { internal } from '../_generated/api'
 import type { Doc, Id } from '../_generated/dataModel'
 import { internalAction, internalMutation, internalQuery, type ActionCtx, type QueryCtx } from '../_generated/server'
+import {
+  accountCountsOf,
+  examplePostsOf,
+  insertAccountPosts,
+  newestOriginalsOf,
+  requireXPersona,
+  topOriginalsOf,
+  voiceSampleOf,
+} from '../core/account'
 import { addDays, dayKey } from '../core/dates'
 import { discountCodesFor as discountCodesRule, redemptionOwner } from '../core/discounts'
 import { approveEpisode, createIdea, formatAndShots } from '../core/episodes'
@@ -28,15 +42,18 @@ import { providersMode } from '../lib/env'
 import { analyticsProvider } from '../providers/analytics'
 import { platformProvider } from '../providers/comments'
 import { discountsProvider } from '../providers/discounts'
-import { llmProvider, type PostBrief } from '../providers/llm'
+import { POST_LENGTH_TARGETS, llmProvider, type AccountPostSample, type PostBrief } from '../providers/llm'
 import { signalSourceHasRealAdapter, signalsProvider } from '../providers/signals'
+import { timelineProvider } from '../providers/timeline'
 import {
   conversionKindValidator,
   episodePostValidator,
+  importedPostValidator,
   platformValidator,
   scriptValidator,
   shotPlanValidator,
   signalSourceValidator,
+  voiceValidator,
 } from '../lib/validators'
 import { applyEvent, type EpisodeContext } from './data'
 
@@ -105,6 +122,50 @@ export const storeSignals = internalMutation({
       inserted += 1
     }
     return inserted
+  },
+})
+
+/**
+ * Import from X (docs/plan.md, slice 5): the account's own timeline becomes
+ * its history. Reading only; nothing is posted, liked or followed. Mock mode
+ * serves plausible history from the persona's niche and pillars; real mode
+ * refuses until the X adapter exists.
+ */
+export const importXHistory = internalAction({
+  args: { personaId: v.string() },
+  handler: async (ctx, args): Promise<{ added: number; skipped: number }> => {
+    const personaId = args.personaId as Id<'personas'>
+    const persona = await ctx.runQuery(internal.internal.agents.xPersona, { personaId })
+    const posts = await timelineProvider().history({
+      handle: persona.handle,
+      niche: persona.niche,
+      pillars: persona.pillars,
+      now: Date.now(),
+    })
+    return ctx.runMutation(internal.internal.agents.storeAccountPosts, {
+      personaId,
+      source: providersMode() === 'mock' ? 'mock' : 'api',
+      posts,
+    })
+  },
+})
+
+/** The persona, or the refusal core/account.ts gives when it has no X account to take over. */
+export const xPersona = internalQuery({
+  args: { personaId: v.id('personas') },
+  handler: async (ctx, args): Promise<Doc<'personas'>> => requireXPersona(ctx, args.personaId),
+})
+
+/** The timeline's posts, through the same dedupe as the operator's import: a post already there is skipped. */
+export const storeAccountPosts = internalMutation({
+  args: {
+    personaId: v.id('personas'),
+    source: v.union(v.literal('api'), v.literal('mock')),
+    posts: v.array(importedPostValidator),
+  },
+  handler: async (ctx, args): Promise<{ added: number; skipped: number }> => {
+    await requireXPersona(ctx, args.personaId)
+    return insertAccountPosts(ctx, args)
   },
 })
 
@@ -182,6 +243,7 @@ export const planWeekMutation = internalMutation({
     }
     const xFormat = persona.formats.find((format) => format.platform === 'x')
     if (!xFormat) return { planned: plan.length }
+    if (!xFormat.cadence) throw new Error('an X format without a post cadence cannot plan posts')
     const usedSignals = new Set(plan.map((planned) => planned.signalId))
     const posts = planPostSlots({
       weekStart: args.weekStart,
@@ -204,6 +266,8 @@ export const planWeekMutation = internalMutation({
         signalIds: post.signalId ? [post.signalId as Id<'signals'>] : [],
         kind: post.kind,
         publishHour: post.hour,
+        intent: post.intent,
+        length: post.length,
       })
     }
     return { planned: plan.length + posts.length }
@@ -295,12 +359,16 @@ export const storeScript = internalMutation({
 
 /**
  * The writer's post path. The limits are X's: every part up to X_POST_LIMIT,
- * and X gets the parts exactly as written. A draft that breaks them goes back
- * to the model once with the problems named; a second miss fails the episode
- * with them.
+ * and X gets the parts exactly as written. The post is written to the
+ * intent and length the planner chose, in the account's voice with its
+ * example posts in front of the writer. A draft that breaks a limit or
+ * misses the length goes back to the model once with the problems named; a
+ * second miss fails the episode with them.
  */
 async function writePost(ctx: ActionCtx, context: EpisodeContext, kind: PostKind): Promise<{ title: string }> {
-  const { episode, persona, workspace, directives, signals } = context
+  const { episode, persona, workspace, directives, signals, examples } = context
+  // A post planned before intents and lengths existed has neither and is written to its kind alone.
+  const length = episode.length ?? null
   const brief: PostBrief = {
     persona: {
       name: persona.name,
@@ -319,14 +387,26 @@ async function writePost(ctx: ActionCtx, context: EpisodeContext, kind: PostKind
     signals: signals.map((signal) => ({ title: signal.title, summary: signal.summary, url: signal.url })),
     hookNote: formatFor(persona, 'x').hookNote,
     partLimit: X_POST_LIMIT,
+    intent: episode.intent ?? null,
+    length,
+    voice: persona.voice
+      ? {
+          language: persona.voice.language,
+          summary: persona.voice.summary,
+          traits: persona.voice.traits,
+          emoji: persona.voice.emoji,
+          hashtags: persona.voice.hashtags,
+        }
+      : null,
+    examples: examples.map((example) => example.parts),
     problems: [],
   }
   const llm = llmProvider()
   const first = await llm.writePost(brief)
-  const firstProblems = postProblems(kind, first.post)
+  const firstProblems = draftProblems(kind, length, first.post)
   const draft = firstProblems.length === 0 ? first : await llm.writePost({ ...brief, problems: firstProblems })
-  const problems = postProblems(kind, draft.post)
-  if (problems.length > 0) throw new Error(`The writer missed X's limits twice: ${problems.join(' ')}`)
+  const problems = draftProblems(kind, length, draft.post)
+  if (problems.length > 0) throw new Error(`The writer missed the post's limits twice: ${problems.join(' ')}`)
   await ctx.runMutation(internal.internal.agents.storePost, {
     episodeId: episode._id,
     title: draft.title,
@@ -334,6 +414,15 @@ async function writePost(ctx: ActionCtx, context: EpisodeContext, kind: PostKind
     autoApprove: persona.autoApprove,
   })
   return { title: draft.title }
+}
+
+/** X's rules for the kind (shared `postProblems`), then the length the planner chose, when it chose one. */
+function draftProblems(kind: PostKind, length: PostLength | null, post: EpisodePost): string[] {
+  const problems = postProblems(kind, post)
+  if (length === null) return problems
+  const written = postLengthOf(post.parts)
+  if (written === length) return problems
+  return [...problems, `This post should be ${POST_LENGTH_TARGETS[length]}; the draft is a ${POST_LENGTH_LABELS[written].toLowerCase()}.`]
 }
 
 /**
@@ -710,6 +799,100 @@ export async function variantStatsFor(ctx: { db: QueryCtx['db'] }, experiment: D
     entry.successes += successes
   }
   return [...stats.values()]
+}
+
+/** How many of the account's most engaging originals the analyst marks as examples when it learns the voice. */
+const LEARNED_EXAMPLES = 5
+/** How many of the top and of the newest originals the model reads verbatim. */
+const VOICE_READ_POSTS = 30
+
+/**
+ * Learn the voice (docs/plan.md, slice 5). Everything countable comes from
+ * the counts kept as posts are imported (shared `voiceStatsOf`), and the
+ * examples are the originals with the most likes plus reposts; the language
+ * model writes only the language, the summary and the traits, from the top
+ * and the newest originals verbatim. Nothing here reads every post, so an
+ * archive of any size can be learned from. Learning again replaces the voice
+ * and every example mark.
+ */
+export const learnVoice = internalAction({
+  args: { personaId: v.string() },
+  handler: async (ctx, args): Promise<{ language: string; sampleSize: number; examples: number }> => {
+    const personaId = args.personaId as Id<'personas'>
+    const { persona } = await ctx.runQuery(internal.internal.data.getPersona, { personaId })
+    const reading: VoiceReading = await ctx.runQuery(internal.internal.agents.voiceReading, { personaId, read: VOICE_READ_POSTS })
+    const stats = voiceStatsOf(voiceSampleOf(reading.counts))
+    const draft = await llmProvider().learnVoice({
+      persona: {
+        name: persona.name,
+        handle: persona.handle,
+        niche: persona.niche,
+        tone: persona.tone,
+        bible: persona.bible,
+        pillars: persona.pillars,
+      },
+      stats,
+      top: reading.top.map(sampleOf),
+      newest: reading.newest.map(sampleOf),
+    })
+    const examples = reading.top.slice(0, LEARNED_EXAMPLES).map((post) => post._id)
+    await ctx.runMutation(internal.internal.agents.storeVoice, {
+      personaId,
+      voice: {
+        ...draft,
+        lengthMix: stats.lengthMix,
+        emoji: stats.emoji,
+        hashtags: stats.hashtags,
+        sampleSize: stats.sampleSize,
+        learnedAt: Date.now(),
+      },
+      exampleIds: examples,
+    })
+    return { language: draft.language, sampleSize: stats.sampleSize, examples: examples.length }
+  },
+})
+
+interface VoiceReading {
+  /** The persona's counts row, null before its first import. */
+  counts: Doc<'accountCounts'> | null
+  /** The `read` most engaging originals, most engaging first. */
+  top: Doc<'accountPosts'>[]
+  /** The `read` newest originals that are not among the top, newest first. */
+  newest: Doc<'accountPosts'>[]
+}
+
+/** What the analyst learns a voice from, in one read: the counts, and the originals the model reads verbatim. */
+export const voiceReading = internalQuery({
+  args: { personaId: v.id('personas'), read: v.number() },
+  handler: async (ctx, args): Promise<VoiceReading> => {
+    const counts = await accountCountsOf(ctx, args.personaId)
+    const top = await topOriginalsOf(ctx, args.personaId, args.read)
+    const topIds = new Set(top.map((post) => post._id))
+    // Every top post can be among the newest too, so reading that many more still leaves `read` others.
+    const newest = (await newestOriginalsOf(ctx, args.personaId, args.read + top.length))
+      .filter((post) => !topIds.has(post._id))
+      .slice(0, args.read)
+    return { counts, top, newest }
+  },
+})
+
+/** The learned voice, and exactly these posts as the examples: every earlier mark is cleared. */
+export const storeVoice = internalMutation({
+  args: { personaId: v.id('personas'), voice: voiceValidator, exampleIds: v.array(v.id('accountPosts')) },
+  handler: async (ctx, args) => {
+    const marked = await examplePostsOf(ctx, args.personaId)
+    for (const post of marked) if (!args.exampleIds.includes(post._id)) await ctx.db.patch(post._id, { example: false })
+    for (const id of args.exampleIds) {
+      const post = await ctx.db.get(id)
+      if (!post || post.personaId !== args.personaId) throw new Error(`account post ${id} is not ${args.personaId}'s`)
+      await ctx.db.patch(id, { example: true })
+    }
+    await ctx.db.patch(args.personaId, { voice: args.voice })
+  },
+})
+
+function sampleOf(post: Doc<'accountPosts'>): AccountPostSample {
+  return { parts: post.parts, lang: post.lang ?? null, likes: post.likes, reposts: post.reposts }
 }
 
 // ---------------------------------------------------------------------------

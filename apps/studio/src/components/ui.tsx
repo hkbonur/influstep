@@ -30,9 +30,8 @@ function buttonClass(variant: ButtonVariant, size: ButtonSize, className: string
   )
 }
 
-export function Button(
-  props: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; size?: ButtonSize; busy?: boolean }
-) {
+/** Takes a `ref` like the element (React 19 passes it as a prop), so a confirm step can hand focus back to the button that opened it. */
+export function Button(props: React.ComponentProps<'button'> & { variant?: ButtonVariant; size?: ButtonSize; busy?: boolean }) {
   const { variant = 'outline', size = 'md', busy, className, children, ...rest } = props
   return (
     <button type="button" {...rest} disabled={rest.disabled || busy} className={buttonClass(variant, size, className)}>

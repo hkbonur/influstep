@@ -10,11 +10,14 @@ import {
   LENGTH_SEC_MIN,
   PLATFORMS,
   PLATFORM_LABELS,
+  POST_INTENTS,
+  POST_INTENT_LABELS,
   POST_KINDS,
   formatLength,
   postSlotHours,
   type Platform,
   type PlatformFormat,
+  type PostIntent,
   type PostKind,
   type XCadence,
 } from '@influstep/shared'
@@ -136,15 +139,20 @@ function FormatRow(props: { format: PlatformFormat; onChange: (change: FormatCha
 
 /**
  * X's post cadence: how many posts a day, three hours apart from the publish
- * hour, and which kinds the planner rotates through. Kinds keep POST_KINDS
- * order, and the last ticked kind cannot be cleared, because the backend
- * refuses an X format without one.
+ * hour, and which kinds and intents the planner rotates through. Kinds keep
+ * POST_KINDS order and intents POST_INTENTS order, and the last ticked one of
+ * each cannot be cleared, because the backend refuses an X format without one.
  */
 function CadenceFields(props: { format: PlatformFormat; cadence: XCadence; onChange: (cadence: XCadence) => void }) {
   const toggle = (kind: PostKind, on: boolean) =>
     props.onChange({
       ...props.cadence,
       kinds: POST_KINDS.filter((candidate) => (candidate === kind ? on : props.cadence.kinds.includes(candidate))),
+    })
+  const toggleIntent = (intent: PostIntent, on: boolean) =>
+    props.onChange({
+      ...props.cadence,
+      intents: POST_INTENTS.filter((candidate) => (candidate === intent ? on : props.cadence.intents.includes(candidate))),
     })
   // The field reports every number the operator types, out of range ones too; the hours only mean something inside the range.
   const postsPerDay = props.cadence.postsPerDay
@@ -177,6 +185,27 @@ function CadenceFields(props: { format: PlatformFormat; cadence: XCadence; onCha
                   onChange={(event) => toggle(kind, event.target.checked)}
                 />
                 {EPISODE_KIND_LABELS[kind]}
+              </label>
+            )
+          })}
+        </div>
+      </fieldset>
+      {/* Under the kinds on wide screens: both lists say what the planner rotates through. */}
+      <fieldset className="col-span-2 flex flex-col gap-1.5 lg:col-span-3 lg:col-start-2">
+        <legend className="mb-1.5 text-xs font-medium text-graphite">Post intents</legend>
+        <div className="flex min-h-8 flex-wrap items-center gap-x-4 gap-y-1">
+          {POST_INTENTS.map((intent) => {
+            const on = props.cadence.intents.includes(intent)
+            return (
+              <label key={intent} className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="size-3.5 accent-ink"
+                  checked={on}
+                  disabled={on && props.cadence.intents.length === 1}
+                  onChange={(event) => toggleIntent(intent, event.target.checked)}
+                />
+                {POST_INTENT_LABELS[intent]}
               </label>
             )
           })}

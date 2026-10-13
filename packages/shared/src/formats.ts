@@ -1,4 +1,5 @@
 import type { PostKind } from './episode-kinds'
+import { POST_INTENTS, type PostIntent } from './post-mix'
 import { PLATFORMS, PLATFORM_ASPECT, type AspectRatio, type Platform } from './platforms'
 
 /**
@@ -17,14 +18,16 @@ export const DELIVERY_LABELS: Record<Delivery, string> = {
 }
 
 /**
- * How often an X persona posts without a video, and which kinds of post the
- * planner rotates through. Only X has one.
+ * How often an X persona posts without a video, which kinds of post it
+ * writes, and which intents the planner rotates through. Only X has one.
  */
 export interface XCadence {
   /** Posts a day, CADENCE_POSTS_MIN to CADENCE_POSTS_MAX, three hours apart from the publish hour. */
   postsPerDay: number
   /** Each kind at most once, never empty. */
   kinds: PostKind[]
+  /** Each intent at most once, never empty. */
+  intents: PostIntent[]
 }
 
 export const CADENCE_POSTS_MIN = 1
@@ -76,7 +79,7 @@ export const DEFAULT_FORMATS: Record<Platform, Omit<PlatformFormat, 'platform'>>
     delivery: 'talking_head',
     hookNote: 'Put the point in the first line; the video proves it.',
     publishHour: 15,
-    cadence: { postsPerDay: 2, kinds: ['text', 'image', 'thread'] },
+    cadence: { postsPerDay: 2, kinds: ['text', 'image', 'thread'], intents: [...POST_INTENTS] },
   },
 }
 

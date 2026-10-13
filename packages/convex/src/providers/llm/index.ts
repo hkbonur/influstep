@@ -6,5 +6,5 @@ import type { LlmProvider } from './types'
 export function llmProvider(): LlmProvider {
   return providersMode() === 'real' ? anthropicLlm : mockLlm
 }
-export { PRESENTER_TOOL } from './types'
-export type { ScriptBrief, ScriptDraft, PostBrief, PostDraft, ChatTurn } from './types'
+export { POST_LENGTH_TARGETS, PRESENTER_TOOL } from './types'
+export type { AccountPostSample, ScriptBrief, ScriptDraft, PostBrief, PostDraft, VoiceBrief, VoiceDraft, ChatTurn } from './types'
