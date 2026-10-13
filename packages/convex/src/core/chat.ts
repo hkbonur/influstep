@@ -5,6 +5,7 @@ import {
   JOB_KIND_LABELS,
   WEEKDAYS,
   WEEKDAY_LABELS,
+  carriesCode,
   isChatTask,
   matchEpisodes,
   normalizeDiscountCode,
@@ -166,9 +167,18 @@ function weekdayLabel(day: string): string {
 
 type Resolved = { ok: true; episode: Doc<'episodes'> } | { ok: false; text: string }
 
-/** The one episode of the changeable plan a target names, or the reply that says there is none or that there are several. */
-async function resolveTarget(ctx: Reader, persona: Doc<'personas'>, target: EpisodeTarget): Promise<Resolved> {
-  const plan = await changeablePlan(ctx, persona._id)
+/**
+ * The one episode of the changeable plan a target names, among those that
+ * `fits` (all by default), or the reply that says there is none or that there
+ * are several.
+ */
+async function resolveTarget(
+  ctx: Reader,
+  persona: Doc<'personas'>,
+  target: EpisodeTarget,
+  fits: (episode: Doc<'episodes'>) => boolean = () => true
+): Promise<Resolved> {
+  const plan = (await changeablePlan(ctx, persona._id)).filter(fits)
   const matches = matchEpisodes(plan, target)
   const [only] = matches
   if (only && matches.length === 1) return { ok: true, episode: only }
@@ -334,7 +344,8 @@ async function giveCode(
   }
   let episode: Doc<'episodes'> | null = null
   if (intent.target && namesEpisode(intent.target)) {
-    const resolved = await resolveTarget(ctx, persona, intent.target)
+    // Only an episode a code reaches can take one, so "Wednesday's episode" skips Wednesday's X posts.
+    const resolved = await resolveTarget(ctx, persona, intent.target, carriesCode)
     if (!resolved.ok) return storeReply(ctx, persona, { text: resolved.text })
     episode = resolved.episode
   }

@@ -1,3 +1,5 @@
+import type { Platform } from './platforms'
+
 /**
  * What an episode is (docs/plan.md, slice 4): a video, or a post that goes
  * only to X and never records a screen or a voice. A text post and a thread
@@ -19,4 +21,13 @@ export const EPISODE_KIND_LABELS: Record<EpisodeKind, string> = {
 
 export function isPost(kind: EpisodeKind): kind is PostKind {
   return kind !== 'video'
+}
+
+/**
+ * Whether a discount code reaches this episode: only a video's description
+ * carries one, and nothing is appended on X, so a video needs a platform
+ * besides X.
+ */
+export function carriesCode(episode: { kind: EpisodeKind; platforms: readonly Platform[] }): boolean {
+  return !isPost(episode.kind) && episode.platforms.some((platform) => platform !== 'x')
 }

@@ -8,6 +8,7 @@ import {
   PLATFORM_LABELS,
   SIGNAL_SOURCE_LABELS,
   VALUE_LABEL,
+  carriesCode,
   formatLength,
   isPost,
   platformsOpen,
@@ -100,7 +101,7 @@ function EpisodePage() {
   const mock = data.renders.some((render) => render.mock) || data.publications.some((publication) => publication.mock) || data.value.mock
   const openItems = data.checklist.filter((item) => item.status === 'open')
   const showValue = episode.status === 'published' || episode.status === 'measured' || data.value.clicks > 0
-  const carriesCode = !isPost(episode.kind) && episode.platforms.some((platform) => platform !== 'x')
+  const showsCode = carriesCode(episode)
   const packageWaits = episode.status === 'rendered' && data.publications.some((publication) => publication.status === 'draft')
   const unsaved = unsavedPlatforms(data.publications, draftEdits)
   const editDraft = (publicationId: Id<'publications'>, edit: DraftEdit | null) =>
@@ -282,7 +283,7 @@ function EpisodePage() {
               <Eyebrow className="mb-3">Publications</Eyebrow>
               <p className="text-ash">{noPublicationsLine(episode.kind, episode.status, persona.autoPublish)}</p>
               {/* Nothing is appended on X, posts and videos alike, so the code line speaks only for a video's other platforms. */}
-              {carriesCode && episode.status !== 'killed' && <CodeInForce code={data.discountCode} />}
+              {showsCode && episode.status !== 'killed' && <CodeInForce code={data.discountCode} />}
             </section>
           )}
           {data.publications.length === 0 && episode.kind === 'video' && data.renders.length > 0 && (

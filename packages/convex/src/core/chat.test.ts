@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { insertEpisode, insertPersona, insertPublication, TIMEZONE } from '../../test/fixtures'
 import { setup } from '../../test/setup'
 import { applyChatIntent, changeablePlan } from './chat'
+import { weekdayOf } from '@influstep/shared'
 import { addDays, dayKey, weekStart } from './dates'
 
 describe('changeablePlan', () => {
@@ -83,5 +84,34 @@ describe('applyChatIntent', () => {
     expect(outcome.text).toMatch(/^That matches 2 episodes: .+n8n retries; .+n8n webhooks\. Which one\?$/)
     const statuses = await t.run(async (ctx) => (await ctx.db.query('episodes').collect()).map((episode) => episode.status))
     expect(statuses).toEqual(['idea', 'idea'])
+  })
+
+  it("gives a code to the one episode of the day it reaches, past that day's X posts", async () => {
+    const t = setup()
+    const today = dayKey(Date.now(), TIMEZONE)
+    const { persona, messageId, video } = await t.run(async (ctx) => {
+      const persona = await insertPersona(ctx)
+      const video = await insertEpisode(ctx, persona, { status: 'idea', plannedFor: today, concept: 'retries' })
+      await insertEpisode(ctx, persona, { status: 'idea', plannedFor: today, kind: 'text', concept: 'a short take' })
+      const messageId = await ctx.db.insert('messages', {
+        personaId: persona._id,
+        author: 'operator',
+        text: "use code ADA20 for today's episode, 20% off",
+        createdAt: Date.now(),
+      })
+      return { persona, messageId, video }
+    })
+
+    const outcome = await t.run((ctx) =>
+      applyChatIntent(
+        ctx,
+        persona,
+        messageId,
+        { kind: 'give_code', code: 'ADA20', offer: '20% off', target: { weekday: weekdayOf(today) } },
+        null
+      )
+    )
+
+    expect(outcome.episodeId).toBe(video._id)
   })
 })
