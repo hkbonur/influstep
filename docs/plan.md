@@ -64,7 +64,7 @@ Written 2026-10-10 after the operator's second brief. The product in one sentenc
 
 ### Progress
 
-Updated 2026-10-13. Slices 1 to 10 are built and committed on `main`; slice 11 is next. The operator builds slices 10 to 16 in the main session, without multi-agent workflow runs.
+Updated 2026-10-13. Slices 1 to 10 are built and committed on `main`. Slice 11 part A (listen, write, post, measure, report) is committed; part B (reply experiments) is next. The operator builds slices 10 to 16 in the main session, without multi-agent workflow runs.
 
 | Slice | State | Commits |
 | ----- | ----- | ------- |
@@ -78,7 +78,8 @@ Updated 2026-10-13. Slices 1 to 10 are built and committed on `main`; slice 11 i
 | 8 Strategy review | done | 480dbfb, fc5d0ad |
 | 9 Fresh research, like a real creator | done | 2814bf2 |
 | 10 Memory and assets | done | 3b67ebf, d178ddf |
-| 11 to 16 | to build | |
+| 11 Engagement on X | part A done | 6865f41 |
+| 12 to 16 | to build | |
 
 How a slice is built: write a short brief of the data, agent and studio changes; build; run `pnpm quality:fix`, `pnpm quality:check`, `pnpm test` and `pnpm knip`; reset, push and seed the local backend (see CLAUDE.md); smoke test every new screen and action in Chrome; commit with explicit paths.
 
@@ -106,6 +107,7 @@ Small issues found while building slices 1 to 9, kept for the polish pass. Slice
 - `poll_comments` keeps the first 120 characters of a comment as its title, so a longer question loses its "?" and never counts toward the problem log.
 - Slice 10 smoke: a remembered entry that ends in a quote is quoted again in the replies and refusals (`already remembers that: "Never say "guys""`). The memory page lists every learning and goal note ever written; a persona a year old will want a page size.
 - Slice 10 assets: the writer places assets in video beats only; an image post never uses one from the library. The Made by the producer section and the persona page's Assets count read the whole library with a URL for every file, with no page size. A clip's preview on the Assets page stays blank in a background tab (Chrome holds back media there); check it in a foreground tab at polish time.
+- Slice 11 smoke: the replies page can show two status lines at once (Listen now's and the page's). Post reply stays on once the budget is spent and only refuses on click. The mock listener can hear the same author twice in a day. The persona header has no Replies button; the page is reached from the Replies section and the report.
 - `private.episodes.rewrite` throws a plain Error on an idea; the studio hides the button, but it should be a `refusal()`.
 - Remove the leftover `evaluate_experiments` job kind: `pull_metrics` evaluates experiments now.
 
