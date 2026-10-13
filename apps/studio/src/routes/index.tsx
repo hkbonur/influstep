@@ -1,4 +1,4 @@
-import { EPISODE_STATUSES, EPISODE_STATUS_LABELS, EPISODE_STATUS_TINTS } from '@influstep/shared'
+import { EPISODE_STATUSES, EPISODE_STATUS_LABELS, EPISODE_STATUS_TINTS, waitsOnOperator, type EpisodeStatus } from '@influstep/shared'
 import { api } from '@influstep/convex/_generated/api'
 import type { Id } from '@influstep/convex/_generated/dataModel'
 import { createFileRoute } from '@tanstack/react-router'
@@ -35,9 +35,7 @@ function CalendarPage() {
     navigate({ search: (previous) => ({ ...previous, week: next === weekStart(today) ? undefined : next }) })
   const total = data?.days.reduce((sum, day) => sum + day.episodes.length, 0) ?? 0
   const loud =
-    data?.days
-      .flatMap((day) => day.episodes)
-      .filter((episode) => episode.status === 'failed' || episode.status === 'waiting_on_you' || episode.status === 'scripted') ?? []
+    data?.days.flatMap((day) => day.episodes).filter((episode) => waitsOnOperator(episode.status) || episode.status === 'failed') ?? []
 
   const plan = async () => {
     setPlanning(true)
@@ -62,7 +60,7 @@ function CalendarPage() {
               need{loud.length === 1 ? 's' : ''} you this week: {summarize(loud.map((episode) => episode.status))}.
             </>
           ) : (
-            'Every persona’s plan for the week. Amber waits on you, red failed, green goes out on its own.'
+            'Every persona’s plan for the week. Blue and amber wait on you, red failed, green goes out on its own.'
           )
         }
         actions={
@@ -154,10 +152,9 @@ function CalendarPage() {
   )
 }
 
-function summarize(statuses: string[]): string {
-  const counts = new Map<string, number>()
+/** One bucket per status in the week's loud cards, "1 failed, 2 needs approval, 1 ready to publish", in the order they appear. */
+function summarize(statuses: EpisodeStatus[]): string {
+  const counts = new Map<EpisodeStatus, number>()
   for (const status of statuses) counts.set(status, (counts.get(status) ?? 0) + 1)
-  return [...counts.entries()]
-    .map(([status, count]) => `${count} ${EPISODE_STATUS_LABELS[status as keyof typeof EPISODE_STATUS_LABELS].toLowerCase()}`)
-    .join(', ')
+  return [...counts.entries()].map(([status, count]) => `${count} ${EPISODE_STATUS_LABELS[status].toLowerCase()}`).join(', ')
 }

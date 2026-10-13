@@ -6,9 +6,11 @@ import {
   DELIVERY_LABELS,
   POST_INTENT_BRIEFS,
   POST_INTENT_LABELS,
+  PUBLICATION_TITLE_MAX,
   THREAD_PARTS_MAX,
   THREAD_PARTS_MIN,
   VOICE_TRAITS_MAX,
+  WORDS_PER_SECOND,
   formatLength,
   type Habit,
 } from '@influstep/shared'
@@ -16,7 +18,6 @@ import { requireEnv } from '../../lib/env'
 import {
   POST_LENGTH_TARGETS,
   PRESENTER_TOOL,
-  WORDS_PER_SECOND,
   type AccountPostSample,
   type LlmProvider,
   type PostBrief,
@@ -31,10 +32,8 @@ const MODEL = 'claude-opus-5-5'
 
 const scriptDraftSchema = z.object({
   title: z.string(),
-  hook: z.string(),
-  script: z.object({ hook: z.string(), body: z.string(), sponsor: z.string(), cta: z.string() }),
+  description: z.string(),
   shotPlan: z.array(z.object({ title: z.string(), voiceover: z.string(), tool: z.string(), url: z.string() })),
-  topics: z.array(z.string()),
 })
 
 // One shape for every kind keeps the structured output simple; the card title is empty unless the post is an image post.
@@ -77,6 +76,8 @@ export const anthropicLlm: LlmProvider = {
           role: 'user',
           content: [
             lengthInstruction(brief),
+            BEATS_INSTRUCTION,
+            deliveryInstruction(brief),
             `Concept: ${brief.concept}`,
             `Pillar: ${brief.pillar}`,
             brief.variant ? `This episode is the "${brief.variant.key}" variant of an experiment: ${brief.variant.description}` : '',
@@ -85,8 +86,9 @@ export const anthropicLlm: LlmProvider = {
             brief.signals.length > 0
               ? `What the audience is talking about:\n${brief.signals.map((signal) => `- ${signal.title}: ${signal.summary} (${signal.url})`).join('\n')}`
               : '',
-            `Hook conventions of the platforms this goes to, all of which the hook must satisfy:\n- ${brief.format.hookNotes.join('\n- ')}`,
-            `Return the hook as its own field and again as script.hook. ${deliveryInstruction(brief)}`,
+            `Hook conventions of the platforms this goes to, all of which the hook (the first sentence of the first beat) must satisfy:\n- ${brief.format.hookNotes.join('\n- ')}`,
+            brief.problems.length > 0 ? `Your last draft broke these rules. Fix every one:\n- ${brief.problems.join('\n- ')}` : '',
+            `Return a title of at most ${PUBLICATION_TITLE_MAX} characters, the description, and the beats in order. The description is one to three sentences in your own voice about what the video shows, for the description box under it. Leave out links, discount codes, the AI disclosure, the sponsor line and hashtags: what each platform needs is added when it goes out.`,
           ]
             .filter(Boolean)
             .join('\n\n'),
@@ -202,22 +204,31 @@ export const anthropicLlm: LlmProvider = {
 function lengthInstruction(brief: ScriptBrief): string {
   const { lengthSec, delivery } = brief.format
   const words = Math.round(lengthSec * WORDS_PER_SECOND)
-  return `Write a spoken script of about ${formatLength(lengthSec)} (${lengthSec} seconds) for a video delivered as "${DELIVERY_LABELS[delivery]}". At ${WORDS_PER_SECOND} words per second that is a budget of about ${words} words across hook, body, sponsor and call to action.`
+  return `Write a script of about ${formatLength(lengthSec)} (${lengthSec} seconds) for a video delivered as "${DELIVERY_LABELS[delivery]}". At ${WORDS_PER_SECOND} words per second that is about ${words} spoken words across all the beats together.`
 }
 
+/** The beats are the only script: the voice track is built from them word for word. */
+const BEATS_INSTRUCTION = [
+  'The script is a list of beats, and nothing else is spoken. Each beat has a short title and a voiceover: exactly the words said while that beat is on screen, with no stage directions, labels or notes.',
+  'The first sentence of the first beat is the hook. The call to action closes the last beat.',
+].join(' ')
+
 function deliveryInstruction(brief: ScriptBrief): string {
-  if (brief.format.delivery === 'talking_head')
-    return `Delivery is talking head: the presenter speaks to camera and no screen is recorded. The shot plan is a list of beats, each with tool "${PRESENTER_TOOL}" and an empty url.`
+  if (brief.format.delivery === 'talking_head') {
+    const demo = brief.sponsorSegment === 'demo' ? ', except the sponsor demo beat described below' : ''
+    return `Delivery is talking head: the presenter speaks every beat to camera and no screen is recorded. Every beat has tool "${PRESENTER_TOOL}" and an empty url${demo}.`
+  }
   if (brief.format.delivery === 'screen_only')
-    return `Delivery is screen only: the shot plan lists the screens to record, two to four shots, and every beat names the tool on screen and the URL to open.`
-  return `Delivery is screen with avatar: the first beat of the shot plan is the presenter speaking the hook (tool "${PRESENTER_TOOL}", empty url); the beats after it are the screens to record, each naming the tool on screen and the URL to open.`
+    return `Delivery is screen only: two to four beats, each showing a screen, and every beat names the tool on screen and the URL to open.`
+  return `Delivery is screen with avatar: the first beat is the presenter speaking to camera (tool "${PRESENTER_TOOL}", empty url) and it opens with the hook; the beats after it are the screens to record, each naming the tool on screen and the URL to open.`
 }
 
 function sponsorInstruction(brief: ScriptBrief): string {
-  if (brief.sponsorSegment === 'none') return `No sponsor in this episode. Leave script.sponsor empty.`
+  if (brief.sponsorSegment === 'none') return `No sponsor in this episode: never name ${brief.sponsorName} in any beat.`
   if (brief.sponsorSegment === 'mention')
-    return `Include a one-sentence sponsor mention for ${brief.sponsorName} (forms that workflows and AI agents send to one customer, answers come back into the flow) in script.sponsor. Say it is sponsored.`
-  return `Include a sponsor demo of ${brief.sponsorName} in script.sponsor: show how a workflow creates a request, the customer fills a prefilled form, and the answers return to the flow. Add a shot for it. Say it is sponsored.`
+    return `Sponsor mention: one sentence inside a beat names ${brief.sponsorName} (forms that workflows and AI agents send to one customer; the answers come back into the flow) and says the video is sponsored by it. The mention gets no beat of its own.`
+  const spoken = brief.format.delivery === 'talking_head' ? ' The presenter speaks it to camera; nothing is recorded.' : ''
+  return `Sponsor demo: ${brief.sponsorName} gets a beat of its own with tool "${brief.sponsorName}" and url "${brief.sponsorUrl}".${spoken} Its voiceover shows how a workflow creates a request, the customer fills a prefilled form, and the answers return to the flow, and says the video is sponsored by ${brief.sponsorName}.`
 }
 
 /** Who writes a post. The bible, the voice and the examples follow in the request, in that order of weight. */

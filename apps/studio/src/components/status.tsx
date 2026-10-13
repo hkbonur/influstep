@@ -5,6 +5,7 @@ import {
   EPISODE_STATUS_TINTS,
   PLATFORM_LABELS,
   POST_INTENT_LABELS,
+  PUBLICATION_STATUS_LABELS,
   POST_LENGTH_LABELS,
   SPONSOR_SEGMENT_LABELS,
   type EpisodeStatus,
@@ -13,6 +14,7 @@ import {
   type PostIntent,
   type PostKind,
   type PostLength,
+  type PublicationStatus,
   type SponsorSegment,
   type StatusTint,
 } from '@influstep/shared'
@@ -38,6 +40,24 @@ export function StatusPill(props: { status: EpisodeStatus }) {
       {EPISODE_STATUS_LABELS[props.status]}
     </Pill>
   )
+}
+
+/**
+ * A publication's own status, apart from its episode's (DESIGN.md, Publish
+ * package): a draft waits on the operator like "Ready to publish", queued is
+ * quiet until its time, uploading is the runner at work, live is green and
+ * failed is red.
+ */
+const PUBLICATION_STATUS_TINTS: Record<PublicationStatus, StatusTint> = {
+  draft: 'note-blue',
+  queued: 'fog',
+  uploading: 'note-blue',
+  live: 'field-green',
+  failed: 'signal-red',
+}
+
+export function PublicationStatusPill(props: { status: PublicationStatus }) {
+  return <Pill tint={PUBLICATION_STATUS_TINTS[props.status]}>{PUBLICATION_STATUS_LABELS[props.status]}</Pill>
 }
 
 export function SponsorPill(props: { segment: SponsorSegment }) {

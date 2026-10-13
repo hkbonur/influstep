@@ -147,6 +147,42 @@ export function Field(props: { label: string; hint?: string; children: React.Rea
   )
 }
 
+/**
+ * A setting that is on or off: the setting's name above, the checkbox with
+ * what checking it means, and an optional hint under it that the checkbox is
+ * described by. A fieldset, so the name is announced with the checkbox.
+ */
+export function CheckboxField(props: {
+  label: string
+  name: string
+  defaultChecked: boolean
+  hint?: string
+  children: React.ReactNode
+  className?: string
+}) {
+  const hintId = React.useId()
+  return (
+    <fieldset className={cn('flex flex-col gap-1.5', props.className)}>
+      <legend className="mb-1.5 text-xs font-medium text-graphite">{props.label}</legend>
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          name={props.name}
+          defaultChecked={props.defaultChecked}
+          aria-describedby={props.hint === undefined ? undefined : hintId}
+          className="size-3.5 accent-ink"
+        />
+        {props.children}
+      </label>
+      {props.hint !== undefined && (
+        <span id={hintId} className="text-xs text-ash">
+          {props.hint}
+        </span>
+      )}
+    </fieldset>
+  )
+}
+
 /** A short line that names mock data as mock, on every screen that shows numbers. */
 export function MockNote(props: { when: boolean; children?: React.ReactNode }) {
   if (!props.when) return null

@@ -1,17 +1,18 @@
 import { v } from 'convex/values'
-import { canTransition, EPISODE_STATUS_LABELS, isPost, textEditable } from '@influstep/shared'
-import { mutation, query } from '../_generated/server'
-import { assertXTitleFits } from '../core/attribution'
+import { canTransition, EPISODE_STATUS_LABELS, hookOf, isPost, scriptProblems, textEditable } from '@influstep/shared'
+import type { Doc } from '../_generated/dataModel'
+import { mutation, query, type QueryCtx } from '../_generated/server'
+import { assertXTitleFits, publicationFooter, type DescriptionFooter } from '../core/attribution'
 import { hourAt, instantAt } from '../core/dates'
 import { activeDiscountCodeFor } from '../core/discounts'
-import { approveEpisode, setEpisodePlatforms, startProduction } from '../core/episodes'
+import { approveEpisode, formatAndShots, setEpisodePlatforms, startProduction } from '../core/episodes'
 import { earliestPublishAt, formatFor, platformsOf } from '../core/formats'
 import { savePost } from '../core/posts'
 import { countConversions } from '../core/report'
 import { workspaceOf } from '../core/workspace'
 import { applyEvent } from '../internal/data'
 import { enqueueJob } from '../jobs/queue'
-import { episodePostValidator, platformValidator, scriptValidator } from '../lib/validators'
+import { beatEditValidator, episodePostValidator, platformValidator } from '../lib/validators'
 import { refusal } from '../lib/errors'
 
 export const get = query({
@@ -48,6 +49,23 @@ export const get = query({
     const experiment = episode.experimentId ? await ctx.db.get(episode.experimentId) : null
     const renders = []
     for (const render of episode.renders) renders.push({ ...render, url: await ctx.storage.getUrl(render.storageId) })
+    // The code in force now: what every publication that has not gone out will carry, a failed one included.
+    const discountCode = await activeDiscountCodeFor(ctx, persona._id, episode._id)
+    // The publish package: each publication with the render it uploads and the footer dispatch adds around its body.
+    const packaged: PackagedPublication[] = []
+    for (const publication of publications) {
+      const render = renders.find((candidate) => candidate.aspect === publication.aspect)
+      const link = links.find((candidate) => candidate._id === publication.linkId)
+      if (!link) throw new Error(`link ${publication.linkId} of publication ${publication._id} not found`)
+      const sent = wentOut(publication)
+      const footerCode = sent ? await stampedCode(ctx, publication) : discountCode
+      packaged.push({
+        ...publication,
+        renderUrl: render?.url ?? null,
+        footer: publicationFooter({ workspace, episode, publication, linkSlug: link.slug, discountCode: footerCode }),
+        sent,
+      })
+    }
     const snapshots = await ctx.db
       .query('metricSnapshots')
       .withIndex('by_episode', (q) => q.eq('episodeId', episode._id))
@@ -64,14 +82,15 @@ export const get = query({
       ...countConversions(conversions, workspace.valuePerPaid),
       mock: conversions.some((conversion) => conversion.mock) || publications.some((publication) => publication.mock),
     }
-    // The code in force now (what the next render gets) and the codes the written descriptions carry.
-    const discountCode = await activeDiscountCodeFor(ctx, persona._id, episode._id)
-    const codesInDescriptions = []
-    for (const discountCodeId of new Set(publications.map((publication) => publication.discountCodeId))) {
+    // The codes the descriptions that went out carried, stamped on their publications at dispatch. A failed attempt's
+    // stamp is left out: it never reached viewers, and a retry is composed and stamped again.
+    const codesSent = []
+    const sentCodeIds = new Set(publications.filter(wentOut).map((publication) => publication.discountCodeId))
+    for (const discountCodeId of sentCodeIds) {
       if (!discountCodeId) continue
       const code = await ctx.db.get(discountCodeId)
       if (!code) throw new Error(`discount code ${discountCodeId} of a publication of episode ${episode._id} not found`)
-      codesInDescriptions.push({ code: code.code, offer: code.offer })
+      codesSent.push({ code: code.code, offer: code.offer })
     }
     return {
       episode,
@@ -81,7 +100,7 @@ export const get = query({
       appUrl: workspace.appUrl,
       sponsorName: workspace.sponsorName,
       currency: workspace.currency,
-      publications,
+      publications: packaged,
       links,
       checklist,
       jobs,
@@ -91,13 +110,56 @@ export const get = query({
       snapshots,
       value,
       discountCode: discountCode ? { code: discountCode.code, offer: discountCode.offer } : null,
-      codesInDescriptions,
+      codesSent,
     }
   },
 })
 
-export const updateScript = mutation({
-  args: { episodeId: v.id('episodes'), title: v.string(), script: scriptValidator },
+/**
+ * A publication as the episode page shows it in the publish package: the
+ * storage URL of the render its aspect names (null when there is none, as for
+ * a text post or a thread), what dispatch adds around its body (null on X,
+ * where nothing is appended), and whether it went out, which decides both the
+ * code in that footer and how the page labels it.
+ */
+type PackagedPublication = Doc<'publications'> & { renderUrl: string | null; footer: DescriptionFooter | null; sent: boolean }
+
+/**
+ * Handed to the runner or live: its description is fixed, with the code
+ * stamped at dispatch. A failed publication has not gone out, since a retry
+ * or a new render composes it again with the code in force then.
+ */
+function wentOut(publication: Doc<'publications'>): boolean {
+  return publication.status === 'uploading' || publication.status === 'live'
+}
+
+/**
+ * Not yet handed to the runner and still due to go: a move takes its time
+ * along. Narrower than "has not gone out" (`wentOut`): a failed publication
+ * keeps its time until a retry or a new render arms it again.
+ */
+function waitsForDispatch(publication: Doc<'publications'>): boolean {
+  return publication.status === 'draft' || publication.status === 'queued'
+}
+
+/** The code a publication that went out carried, or null when none was in force then. */
+async function stampedCode(ctx: { db: QueryCtx['db'] }, publication: Doc<'publications'>): Promise<Doc<'discountCodes'> | null> {
+  if (publication.discountCodeId === undefined) return null
+  const code = await ctx.db.get(publication.discountCodeId)
+  if (!code) throw new Error(`discount code ${publication.discountCodeId} of publication ${publication._id} not found`)
+  return code
+}
+
+/**
+ * Save a video's script as the operator edited it: the title and each beat's
+ * title and spoken line. The beats are the script the recording speaks, so
+ * the shots and the format are derived from them again and the hook is read
+ * from the first beat. The beat count, and each beat's tool and URL, stay the
+ * writer's. The length is not checked: an operator may trim a script, and the
+ * editor shows the spoken seconds instead.
+ */
+export const updateBeats = mutation({
+  args: { episodeId: v.id('episodes'), title: v.string(), beats: v.array(beatEditValidator) },
   handler: async (ctx, args) => {
     const episode = await ctx.db.get(args.episodeId)
     if (!episode) throw new Error('episode not found')
@@ -108,7 +170,33 @@ export const updateScript = mutation({
     // X posts the title as the video's text. Approval checks it too, but an edit after approval (waiting on a sign-in, or
     // failed) starts production without passing approval again, so the edit itself is refused.
     if (episode.platforms.includes('x')) assertXTitleFits(args.title)
-    await ctx.db.patch(args.episodeId, { title: args.title, hook: args.script.hook, script: args.script, updatedAt: Date.now() })
+    const stored = episode.shotPlan
+    if (!stored) throw refusal('The writer has not written this script yet.')
+    if (args.beats.length !== stored.length) throw refusal('Beats can be edited, not added or removed, here.')
+    const shotPlan = stored.map((beat, index) => {
+      const edit = args.beats[index]
+      if (!edit) throw new Error(`beat ${index + 1} of episode ${episode._id} has no edit`)
+      return { title: edit.title.trim(), voiceover: edit.voiceover.trim(), tool: beat.tool, url: beat.url }
+    })
+    const persona = await ctx.db.get(episode.personaId)
+    if (!persona) throw new Error(`persona ${episode.personaId} not found`)
+    const workspace = await workspaceOf(ctx, persona)
+    const [problem] = scriptProblems(shotPlan, { sponsorSegment: episode.sponsorSegment, sponsorName: workspace.sponsorName })
+    if (problem) throw refusal(problem)
+    const { format, shots } = formatAndShots({
+      persona,
+      platforms: episode.platforms,
+      draft: { shotPlan },
+      sponsorName: workspace.sponsorName,
+    })
+    await ctx.db.patch(args.episodeId, {
+      title: args.title,
+      shotPlan,
+      format,
+      shots,
+      hook: hookOf(shotPlan),
+      updatedAt: Date.now(),
+    })
   },
 })
 
@@ -183,9 +271,17 @@ export const retry = mutation({
       .query('publications')
       .withIndex('by_episode', (q) => q.eq('episodeId', episode._id))
       .collect()
+    // A package never approved goes back to the operator as it was; nothing of it went out.
+    if (publications.some((publication) => publication.status === 'draft')) {
+      await applyEvent(ctx, args.episodeId, { type: 'retry' }, 'rendered')
+      return
+    }
     if (publications.length > 0) {
-      for (const publication of publications)
-        if (publication.status === 'failed') await ctx.db.patch(publication._id, { status: 'queued', error: undefined })
+      // The code a failed attempt was stamped with never reached viewers; dispatch stamps the code in force when it goes again.
+      for (const publication of publications) {
+        if (publication.status !== 'failed') continue
+        await ctx.db.patch(publication._id, { status: 'queued', error: undefined, discountCodeId: undefined })
+      }
       await applyEvent(ctx, args.episodeId, { type: 'retry' }, 'scheduled')
       return
     }
@@ -219,20 +315,20 @@ export const reschedule = mutation({
       .query('publications')
       .withIndex('by_episode', (q) => q.eq('episodeId', episode._id))
       .collect()
-    // A post keeps its slot's hour on the new day, and so does its X publication.
+    // A post keeps its slot's hour on the new day, and so does its X publication, drafted or queued.
     if (isPost(episode.kind)) {
       const scheduledAt = instantAt(args.plannedFor, hourAt(episode.scheduledAt, persona.timezone), persona.timezone)
       await ctx.db.patch(args.episodeId, { plannedFor: args.plannedFor, scheduledAt, updatedAt: Date.now() })
       for (const publication of publications) {
-        if (publication.status === 'queued') await ctx.db.patch(publication._id, { scheduledAt })
+        if (waitsForDispatch(publication)) await ctx.db.patch(publication._id, { scheduledAt })
       }
       return
     }
     const scheduledAt = earliestPublishAt(persona, episode.platforms, args.plannedFor)
     await ctx.db.patch(args.episodeId, { plannedFor: args.plannedFor, scheduledAt, updatedAt: Date.now() })
-    // Each queued publication keeps its platform's hour on the new day.
+    // Each publication not yet gone out, a package's drafts included, keeps its platform's hour on the new day.
     for (const publication of publications) {
-      if (publication.status !== 'queued') continue
+      if (!waitsForDispatch(publication)) continue
       const hour = formatFor(persona, publication.platform).publishHour
       await ctx.db.patch(publication._id, { scheduledAt: instantAt(args.plannedFor, hour, persona.timezone) })
     }

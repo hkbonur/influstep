@@ -18,6 +18,7 @@ import {
   type ProducePayload,
   type ProduceResult,
   type PublishResult,
+  type Beat,
   type Shot,
 } from '@influstep/shared'
 import type { Doc, Id } from '../_generated/dataModel'
@@ -25,10 +26,9 @@ import type { MutationCtx } from '../_generated/server'
 import { applyEvent } from '../internal/data'
 import { enqueueJob } from '../jobs/queue'
 import { providersMode } from '../lib/env'
-import { PRESENTER_TOOL, type ScriptDraft } from '../providers/llm'
-import { assertXTitleFits, describePublication } from './attribution'
+import { PRESENTER_TOOL } from '../providers/llm'
+import { assertXTitleFits } from './attribution'
 import { instantAt } from './dates'
-import { activeDiscountCodeFor } from './discounts'
 import { earliestPublishAt, formatFor, formatsFor, platformsOf } from './formats'
 import { assertLengthFitsKind, assertPostFits, findXPublication } from './posts'
 import { workspaceOf } from './workspace'
@@ -89,7 +89,6 @@ export async function createIdea(ctx: MutationCtx, persona: Doc<'personas'>, inp
     concept: input.concept,
     title: input.concept,
     hook: '',
-    script: { hook: '', body: '', sponsor: '', cta: '' },
     sponsorSegment: input.sponsorSegment,
     platforms,
     shots: [],
@@ -108,21 +107,25 @@ export async function createIdea(ctx: MutationCtx, persona: Doc<'personas'>, inp
   return episodeId
 }
 
+/** A video's beats as the writer or the beat editor leaves them: the only script (shared `Beat`). */
+export interface BeatsDraft {
+  shotPlan: readonly Beat[]
+}
+
 /**
- * The writer's beats become shots the way the delivery asks: a talking head
- * speaks every beat to camera, a screen-only episode records every beat, and
- * screen with avatar opens on the presenter saying the hook before the screens.
- * A presenter beat has no screen to record, so it is a take under every
- * delivery: the beats a talking-head script stored survive a widening to a
- * screen delivery.
+ * The beats become shots the way the delivery asks, each speaking its own
+ * beat's voiceover, so the recording says exactly what the script says: a
+ * talking head speaks every beat to camera, a screen-only episode records
+ * every beat, and screen with avatar opens on the presenter speaking the
+ * first beat before the screens. A presenter beat has no screen to record, so
+ * it is a take under every delivery: the beats a talking-head script stored
+ * survive a widening to a screen delivery.
  */
-export function shotsFromDraft(draft: Pick<ScriptDraft, 'hook' | 'shotPlan'>, sponsorName: string, delivery: Delivery): Shot[] {
+export function shotsFromDraft(draft: BeatsDraft, sponsorName: string, delivery: Delivery): Shot[] {
   return draft.shotPlan.map((beat, index) => {
     const id = `shot-${index + 1}`
-    if (delivery === 'talking_head' || beat.tool === PRESENTER_TOOL) {
-      return { kind: 'avatar', id, title: beat.title, voiceover: beat.voiceover }
-    }
-    if (delivery === 'screen_with_avatar' && index === 0) return { kind: 'avatar', id, title: beat.title, voiceover: draft.hook }
+    const presenter = delivery === 'talking_head' || beat.tool === PRESENTER_TOOL || (delivery === 'screen_with_avatar' && index === 0)
+    if (presenter) return { kind: 'avatar', id, title: beat.title, voiceover: beat.voiceover }
     if (beat.tool.toLowerCase() === sponsorName.toLowerCase()) {
       return {
         kind: 'screen',
@@ -158,7 +161,7 @@ export function shotsFromDraft(draft: Pick<ScriptDraft, 'hook' | 'shotPlan'>, sp
 export function formatAndShots(args: {
   persona: Pick<Doc<'personas'>, 'formats'>
   platforms: Platform[]
-  draft: Pick<ScriptDraft, 'hook' | 'shotPlan'>
+  draft: BeatsDraft
   sponsorName: string
 }): { format: EpisodeFormat; shots: Shot[] } {
   const format = resolveEpisodeFormat(formatsFor(args.persona, args.platforms))
@@ -190,7 +193,7 @@ export async function setEpisodePlatforms(ctx: MutationCtx, episodeId: Id<'episo
   const derived = formatAndShots({
     persona,
     platforms: chosen,
-    draft: { hook: episode.hook, shotPlan: episode.shotPlan },
+    draft: { shotPlan: episode.shotPlan },
     sponsorName: workspace.sponsorName,
   })
   await ctx.db.patch(episodeId, { ...base, ...derived })
@@ -274,7 +277,8 @@ export async function approveEpisode(ctx: MutationCtx, episodeId: Id<'episodes'>
 
   await ctx.db.patch(episodeId, { approvedAt: Date.now() })
   if (episode.kind === 'text' || episode.kind === 'thread') {
-    await createPostPublication(ctx, episode, persona, { mock: providersMode() === 'mock' })
+    // Approving a text post or a thread is approving what goes out: it has no render, so no package waits.
+    await createPostPublication(ctx, episode, persona, { mock: providersMode() === 'mock', status: 'queued' })
     await applyEvent(ctx, episodeId, { type: 'scheduled' })
     return
   }
@@ -285,6 +289,11 @@ export async function approveEpisode(ctx: MutationCtx, episodeId: Id<'episodes'>
     return
   }
   if (episode.platforms.includes('x')) assertXTitleFits(episode.title)
+  // Every publication off X starts from the writer's description; a video written before descriptions existed has
+  // none, and is refused here rather than after a render it could not publish.
+  if (episode.platforms.some((platform) => platform !== 'x') && episode.description === undefined) {
+    throw refusal('The episode has no description to publish with; rewrite it.')
+  }
   const missing = toolsNeededBy(episode.shots).filter(
     (host) => workspace.signInRequiredHosts.includes(host) && !workspace.signedInHosts.includes(host)
   )
@@ -348,12 +357,37 @@ function producePayload(episode: Doc<'episodes'>, persona: Doc<'personas'>): Pro
   }
 }
 
+/** What a publication starts as: queued to go out, or a draft in the publish package the operator approves. */
+type ArmedStatus = Extract<Doc<'publications'>['status'], 'draft' | 'queued'>
+
+/** A persona that publishes on its own queues its publications at render; any other leaves them as a package. */
+function armedStatus(persona: Doc<'personas'>): ArmedStatus {
+  return persona.autoPublish ? 'queued' : 'draft'
+}
+
 /**
- * The runner rendered the episode: store renders, then queue one publication
+ * The persona's own description text of a video publication: the writer's
+ * description off X, nothing on X (a video's X text is its title). Approval
+ * refuses a video off X without a description, so a missing one here is a bug.
+ */
+function publicationBody(episode: Doc<'episodes'>, platform: Platform): string | undefined {
+  if (platform === 'x') return undefined
+  if (episode.description === undefined) throw new Error(`episode ${episode._id} has no description to publish on ${platform}`)
+  return episode.description
+}
+
+/**
+ * The runner rendered the episode: store renders, then create one publication
  * per cut the episode was produced to, each with the cut's aspect at that
- * platform's current hour. The cut is the episode's own, frozen when it was
- * scripted; the hour and timezone are the persona's today. An image post
- * rendered its card and gets its one X publication instead.
+ * platform's current hour, the episode's title and, off X, its description as
+ * the body. The cut is the episode's own, frozen when it was scripted; the
+ * hour and timezone are the persona's today. An image post rendered its card
+ * and gets its one X publication instead. The episode is rendered: a persona
+ * that publishes on its own schedules it at once with every publication
+ * queued; otherwise the publications are drafts and the episode waits as a
+ * publish package for the operator (private/publications.ts, approvePackage).
+ * Nothing composes a description here: dispatch does, with the code in force
+ * when the publication goes out.
  */
 export async function completeProduction(ctx: MutationCtx, episodeId: Id<'episodes'>, result: ProduceResult): Promise<void> {
   const episode = await ctx.db.get(episodeId)
@@ -369,17 +403,17 @@ export async function completeProduction(ctx: MutationCtx, episodeId: Id<'episod
     updatedAt: Date.now(),
   })
   await applyEvent(ctx, episodeId, { type: 'produced' })
+  const status = armedStatus(persona)
+  const mock = result.renders.some((render) => render.mock)
 
-  // An image post's card goes out with the post, at the post's own slot.
+  // An image post's card goes out with the post, at the post's own slot. Its parts are the approved post.
   if (episode.kind === 'image') {
-    await createPostPublication(ctx, episode, persona, { mock: result.renders.some((render) => render.mock) })
-    await applyEvent(ctx, episodeId, { type: 'scheduled' })
+    await createPostPublication(ctx, episode, persona, { mock, status })
+    if (persona.autoPublish) await applyEvent(ctx, episodeId, { type: 'scheduled' })
     return
   }
   if (!episode.format) throw new Error(`episode ${episodeId} has no format: it cannot be scheduled before it is scripted`)
 
-  // The same code on every platform: the episode's own, else the persona's.
-  const discountCode = await activeDiscountCodeFor(ctx, persona._id, episodeId)
   for (const cut of episode.format.cuts) {
     const platform = cut.platform
     const existing = await ctx.db
@@ -388,55 +422,53 @@ export async function completeProduction(ctx: MutationCtx, episodeId: Id<'episod
       .filter((q) => q.eq(q.field('platform'), platform))
       .first()
     const scheduledAt = instantAt(episode.plannedFor, formatFor(persona, platform).publishHour, persona.timezone)
-    const mock = result.renders.some((render) => render.mock)
+    const text = { title: episode.title, body: publicationBody(episode, platform) }
     if (existing) {
-      // A publication that failed before goes out again from this render, with today's text and hour; anything
-      // queued, uploading or live stays as it is.
+      // A publication that failed before goes out again from this render, with today's text and hour; a draft
+      // keeps the operator's edits, and anything queued, uploading or live stays as it is. The code the failed
+      // attempt was stamped with never reached viewers, so the stamp goes: dispatch stamps the code in force then.
       if (existing.status !== 'failed') continue
-      const link = await ctx.db.get(existing.linkId)
-      if (!link) throw new Error(`link ${existing.linkId} not found`)
       await ctx.db.patch(existing._id, {
-        status: 'queued',
+        status,
         aspect: cut.aspect,
-        title: episode.title,
-        ...describePublication({ workspace, episode, platform, linkSlug: link.slug, discountCode }),
+        ...text,
         scheduledAt,
         mock,
         error: undefined,
+        discountCodeId: undefined,
       })
       continue
     }
     const linkId = await createTrackedLink(ctx, { persona, episode, platform, target: workspace.sponsorUrl })
-    const link = await ctx.db.get(linkId)
-    if (!link) throw new Error('link vanished')
     await ctx.db.insert('publications', {
       episodeId,
       personaId: persona._id,
       platform,
       aspect: cut.aspect,
-      status: 'queued',
-      title: episode.title,
-      ...describePublication({ workspace, episode, platform, linkSlug: link.slug, discountCode }),
+      status,
+      ...text,
       linkId,
       scheduledAt,
       mock,
     })
   }
   await ctx.db.patch(episodeId, { scheduledAt: earliestPublishAt(persona, episode.platforms, episode.plannedFor) })
-  await applyEvent(ctx, episodeId, { type: 'scheduled' })
+  if (persona.autoPublish) await applyEvent(ctx, episodeId, { type: 'scheduled' })
 }
 
 /**
  * A post's one publication, on X at the post's slot, with the parts exactly
  * as written: no footer, no code. It gets a tracked link of its own like
  * every publication (the schema's one link per publication); the post does
- * not print it. An image post's publication carries its card's aspect.
+ * not print it. An image post's publication carries its card's aspect. A text
+ * post or a thread is queued on approval; an image post's waits as a draft
+ * after its render unless the persona publishes on its own.
  */
 export async function createPostPublication(
   ctx: MutationCtx,
   episode: Doc<'episodes'>,
   persona: Doc<'personas'>,
-  args: { mock: boolean }
+  args: { mock: boolean; status: ArmedStatus }
 ): Promise<Id<'publications'>> {
   if (!isPost(episode.kind)) throw new Error(`episode ${episode._id} is a video: its publications follow its render`)
   const post = assertPostFits(episode.kind, episode.post)
@@ -445,7 +477,7 @@ export async function createPostPublication(
     // A post approved again after its publication failed (a rewrite, a retry) sends the new words at the new slot.
     if (existing.status !== 'failed') return existing._id
     await ctx.db.patch(existing._id, {
-      status: 'queued',
+      status: args.status,
       aspect: episode.kind === 'image' ? X_IMAGE_ASPECT : undefined,
       title: episode.title,
       parts: post.parts,
@@ -462,7 +494,7 @@ export async function createPostPublication(
     personaId: persona._id,
     platform: 'x',
     aspect: episode.kind === 'image' ? X_IMAGE_ASPECT : undefined,
-    status: 'queued',
+    status: args.status,
     title: episode.title,
     parts: post.parts,
     linkId,

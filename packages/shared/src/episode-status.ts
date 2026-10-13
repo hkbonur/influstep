@@ -53,12 +53,25 @@ export function textEditable(status: EpisodeStatus): boolean {
   return TEXT_EDITABLE.includes(status)
 }
 
+/**
+ * The statuses that wait on the operator: a script to approve, a sign-in to
+ * do, a publish package to approve. Failed is not one of them: it has its own
+ * mark everywhere (the sidebar's red dot, the calendar's failed count), so a
+ * row never carries two.
+ */
+export const WAITS_ON_OPERATOR: readonly EpisodeStatus[] = ['scripted', 'waiting_on_you', 'rendered']
+
+/** The one rule for "waits on you" counts: the sidebar badge, the persona list, the episode card's emphasis. */
+export function waitsOnOperator(status: EpisodeStatus): boolean {
+  return WAITS_ON_OPERATOR.includes(status)
+}
+
 export const EPISODE_STATUS_LABELS: Record<EpisodeStatus, string> = {
   idea: 'Idea',
   scripted: 'Needs approval',
   waiting_on_you: 'Waiting on you',
   recording: 'Recording',
-  rendered: 'Rendered',
+  rendered: 'Ready to publish',
   scheduled: 'Scheduled',
   published: 'Published',
   measured: 'Measured',
@@ -74,7 +87,8 @@ export const EPISODE_STATUS_TINTS: Record<EpisodeStatus, StatusTint> = {
   scripted: 'note-blue',
   waiting_on_you: 'alert-amber',
   recording: 'smoke',
-  rendered: 'smoke',
+  // A rendered episode waits for the operator to approve its publish package, like a script waiting for approval.
+  rendered: 'note-blue',
   scheduled: 'field-green',
   published: 'field-green',
   measured: 'ink',

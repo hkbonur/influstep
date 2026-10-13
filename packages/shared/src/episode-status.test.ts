@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { EPISODE_STATUSES, EPISODE_TRANSITIONS, canTransition, textEditable } from './episode-status'
+import {
+  EPISODE_STATUSES,
+  EPISODE_STATUS_LABELS,
+  EPISODE_TRANSITIONS,
+  canTransition,
+  textEditable,
+  waitsOnOperator,
+} from './episode-status'
 
 describe('episode transitions', () => {
   it('lists every status exactly once', () => {
@@ -23,5 +30,15 @@ describe('episode transitions', () => {
 describe('textEditable', () => {
   it('keeps the text open until recording starts and again once the episode failed', () => {
     expect(EPISODE_STATUSES.filter(textEditable)).toEqual(['idea', 'scripted', 'waiting_on_you', 'failed'])
+  })
+})
+
+describe('waitsOnOperator', () => {
+  it('counts a script to approve, a sign-in and a publish package, and leaves failed to its own mark', () => {
+    expect(EPISODE_STATUSES.filter(waitsOnOperator)).toEqual(['scripted', 'waiting_on_you', 'rendered'])
+    expect(waitsOnOperator('failed')).toBe(false)
+  })
+  it('calls a rendered episode ready to publish', () => {
+    expect(EPISODE_STATUS_LABELS.rendered).toBe('Ready to publish')
   })
 })

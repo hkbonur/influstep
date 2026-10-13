@@ -54,8 +54,28 @@ export function languageName(tag: string, locale?: string): string | null {
   }
 }
 
-export function formatDateTime(at: number): string {
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(at))
+/**
+ * A moment as the operator reads it: month, day and time. Without a time zone
+ * it is the browser's; a publish time passes the persona's, because that is the
+ * clock the persona's publish hours are set in.
+ */
+export function formatDateTime(at: number, timeZone?: string): string {
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone }).format(
+    new Date(at)
+  )
+}
+
+/**
+ * The host a beat's screen opens, "app.n8n.cloud" for a full URL. Null when
+ * the text is not a URL the browser can read, so the caller shows it as written.
+ */
+export function urlHost(url: string): string | null {
+  try {
+    return new URL(url).host
+  } catch {
+    // A TypeError: the text is not an absolute URL.
+    return null
+  }
 }
 
 export function formatDay(day: string, options: Intl.DateTimeFormatOptions = { weekday: 'short', day: 'numeric' }): string {

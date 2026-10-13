@@ -1,9 +1,21 @@
 import { v } from 'convex/values'
-import { isPost, produceResultSchema, publishResultSchema, type AspectRatio, type PublishPayload, type RunnerJob } from '@influstep/shared'
+import {
+  X_POST_LIMIT,
+  isPost,
+  produceResultSchema,
+  publishResultSchema,
+  xLength,
+  type AspectRatio,
+  type PublishPayload,
+  type RunnerJob,
+} from '@influstep/shared'
 import type { Doc, Id } from '../_generated/dataModel'
 import { internalMutation, internalQuery, type MutationCtx, type QueryCtx } from '../_generated/server'
+import { composeDescription } from '../core/attribution'
+import { activeDiscountCodeFor } from '../core/discounts'
 import { completeProduction, completePublication, failPublication, startProduction } from '../core/episodes'
 import { RUNNER_STALE_MS } from '../core/jobs'
+import { workspaceOf } from '../core/workspace'
 import { enqueueJob, markDone, markFailed, markRunning } from '../jobs/queue'
 import { applyEvent, failEpisodeIfPossible } from './data'
 
@@ -144,9 +156,13 @@ export const latest = internalQuery({
 
 /**
  * Publications whose time has come become publish jobs (crons.ts, every five
- * minutes). The render URL is resolved here so the runner needs no storage
- * access of its own. A publication that cannot be handed over fails with the
- * reason, and the rest go out.
+ * minutes). Only a queued publication is due: a draft waits in its publish
+ * package until the operator approves it. The render URL is resolved here so
+ * the runner needs no storage access of its own, and the description is
+ * composed here with the code in force at this moment, so the same patch that
+ * hands the publication over stamps the code it went out with. A publication
+ * that failed and is dispatched again is composed and stamped again. One that
+ * cannot be handed over fails with the reason, and the rest go out.
  */
 export const dispatchDuePublications = internalMutation({
   args: { now: v.optional(v.number()) },
@@ -162,13 +178,13 @@ export const dispatchDuePublications = internalMutation({
       if (!episode || episode.status !== 'scheduled') continue
       const persona = await ctx.db.get(publication.personaId)
       if (!persona || persona.paused) continue
-      const built = await publishPayloadFor(ctx, publication, episode)
+      const built = await publishPayloadFor(ctx, { publication, episode, persona })
       if (!built.ok) {
         await failPublication(ctx, publication._id, built.error)
         continue
       }
-      await ctx.db.patch(publication._id, { status: 'uploading' })
-      await enqueueJob(ctx, { kind: 'publish', personaId: persona._id, episodeId: episode._id, payload: built.value })
+      await ctx.db.patch(publication._id, { status: 'uploading', discountCodeId: built.value.discountCodeId })
+      await enqueueJob(ctx, { kind: 'publish', personaId: persona._id, episodeId: episode._id, payload: built.value.payload })
       dispatched += 1
     }
     return { dispatched }
@@ -178,43 +194,60 @@ export const dispatchDuePublications = internalMutation({
 type Built<T> = { ok: true; value: T } | { ok: false; error: string }
 
 /**
- * What the runner uploads for one publication. A video publication carries
- * its title, description and the render of its cut; a post publication
+ * What the runner uploads for one publication, and the code its description
+ * carries. A video publication carries its title, its description composed
+ * now (core/attribution.ts) and the render of its cut; a post publication
  * carries its parts exactly as written, with nothing appended, and, for an
- * image post, the card render its aspect names.
+ * image post, the card render its aspect names. Neither X text carries a code.
  */
 async function publishPayloadFor(
-  ctx: { storage: QueryCtx['storage'] },
-  publication: Doc<'publications'>,
-  episode: Doc<'episodes'>
-): Promise<Built<PublishPayload>> {
+  ctx: { db: QueryCtx['db']; storage: QueryCtx['storage'] },
+  rows: { publication: Doc<'publications'>; episode: Doc<'episodes'>; persona: Doc<'personas'> }
+): Promise<Built<{ payload: PublishPayload; discountCodeId: Id<'discountCodes'> | undefined }>> {
+  const { publication, episode, persona } = rows
   if (isPost(episode.kind)) {
     if (publication.platform !== 'x') return { ok: false, error: `a post goes only to X, not ${publication.platform}` }
     if (!publication.parts) return { ok: false, error: 'the post publication has no parts' }
     const base = { kind: 'post' as const, publicationId: publication._id, platform: publication.platform, parts: publication.parts }
-    if (!publication.aspect) return { ok: true, value: { ...base, scheduledAt: publication.scheduledAt } }
+    if (!publication.aspect)
+      return { ok: true, value: { payload: { ...base, scheduledAt: publication.scheduledAt }, discountCodeId: undefined } }
     const media = await renderOf(ctx, episode, publication.aspect)
     if (!media.ok) return media
     return {
       ok: true,
-      value: { ...base, mediaStorageId: media.value.storageId, mediaUrl: media.value.url, scheduledAt: publication.scheduledAt },
+      value: {
+        payload: { ...base, mediaStorageId: media.value.storageId, mediaUrl: media.value.url, scheduledAt: publication.scheduledAt },
+        discountCodeId: undefined,
+      },
     }
   }
-  if (!publication.aspect || publication.description === undefined)
-    return { ok: false, error: 'the video publication has no cut or no description' }
+  if (!publication.aspect) return { ok: false, error: 'the video publication has no cut' }
+  // composeDescription treats both as broken invariants and throws; here they fail this publication alone.
+  if (publication.platform === 'x' && xLength(publication.title) > X_POST_LIMIT)
+    return { ok: false, error: `the title is ${xLength(publication.title)} characters; X allows ${X_POST_LIMIT}` }
+  if (publication.platform !== 'x' && publication.body === undefined)
+    return { ok: false, error: 'the video publication has no description' }
   const render = await renderOf(ctx, episode, publication.aspect)
   if (!render.ok) return render
+  const link = await ctx.db.get(publication.linkId)
+  if (!link) return { ok: false, error: 'the tracked link of the publication is missing' }
+  const workspace = await workspaceOf(ctx, persona)
+  // X carries the title alone, so no code is in it whatever is in force.
+  const discountCode = publication.platform === 'x' ? null : await activeDiscountCodeFor(ctx, persona._id, episode._id)
   return {
     ok: true,
     value: {
-      kind: 'video',
-      publicationId: publication._id,
-      platform: publication.platform,
-      title: publication.title,
-      description: publication.description,
-      renderStorageId: render.value.storageId,
-      renderUrl: render.value.url,
-      scheduledAt: publication.scheduledAt,
+      payload: {
+        kind: 'video',
+        publicationId: publication._id,
+        platform: publication.platform,
+        title: publication.title,
+        description: composeDescription({ workspace, episode, publication, linkSlug: link.slug, discountCode }),
+        renderStorageId: render.value.storageId,
+        renderUrl: render.value.url,
+        scheduledAt: publication.scheduledAt,
+      },
+      discountCodeId: discountCode?._id,
     },
   }
 }

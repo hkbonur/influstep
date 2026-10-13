@@ -5,6 +5,7 @@ import {
   parseXArchive,
   platformsOpen,
   runnerJobSchema,
+  spokenWordCount,
   type ImportedPost,
   type PostIntent,
   type PostLength,
@@ -14,15 +15,16 @@ import { describe, expect, it } from 'vitest'
 import { api, internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import { addDays, dayKey, instantAt, weekStart } from './core/dates'
-import { createIdea } from './core/episodes'
+import { completeProduction, createIdea } from './core/episodes'
 import { setup } from '../test/setup'
 
 const TIMEZONE = 'Europe/Oslo'
 
 /**
  * One episode through the whole pipeline with mock providers: seed, writer,
- * approval blocked on a sign-in, checklist done, runner produces, cron
- * dispatches, runner publishes, a viewer clicks, the analyst measures.
+ * approval blocked on a sign-in, checklist done, runner produces, the
+ * operator approves the publish package, cron dispatches, runner publishes, a
+ * viewer clicks, the analyst measures.
  */
 describe('episode pipeline', () => {
   it('walks an episode from idea to measured', async () => {
@@ -63,6 +65,9 @@ describe('episode pipeline', () => {
     const blocked = await t.query(api.private.episodes.get, { episodeId: scripted._id })
     expect(blocked?.episode.status).toBe('waiting_on_you')
     expect(blocked?.personaPlatforms).toEqual(['youtube', 'tiktok', 'instagram', 'x'])
+    // The script to approve became the sign-in to do: still one wait on the sidebar, not the item and the episode both.
+    const afterBlock = (await t.query(api.private.personas.list, {})).find((persona) => persona._id === ada._id)
+    expect(afterBlock?.counts.waitingTotal).toBe(ada.counts.waitingTotal)
 
     // Done: the host counts as signed in and the producer starts.
     await t.mutation(api.private.checklist.complete, { itemId: signIn._id })
@@ -85,10 +90,12 @@ describe('episode pipeline', () => {
       },
     })
 
-    // One publication per platform, each with its platform's cut at its platform's hour; the episode's time is the first.
-    const scheduled = await t.query(api.private.episodes.get, { episodeId: scripted._id })
-    expect(scheduled?.episode.status).toBe('scheduled')
-    const byPlatform = new Map(scheduled?.publications.map((publication) => [publication.platform, publication]))
+    // Ada does not publish on her own: the render waits as a package of drafts, one per platform, each with its
+    // platform's cut at its platform's hour; the episode's time is the first.
+    const rendered = await t.query(api.private.episodes.get, { episodeId: scripted._id })
+    expect(rendered?.episode.status).toBe('rendered')
+    expect(rendered?.publications.map((publication) => publication.status)).toEqual(['draft', 'draft', 'draft', 'draft'])
+    const byPlatform = new Map(rendered?.publications.map((publication) => [publication.platform, publication]))
     expect([...byPlatform.keys()].sort()).toEqual(['instagram', 'tiktok', 'x', 'youtube'])
     expect(byPlatform.get('youtube')?.aspect).toBe('16:9')
     expect(byPlatform.get('tiktok')?.aspect).toBe('9:16')
@@ -98,13 +105,29 @@ describe('episode pipeline', () => {
     expect(byPlatform.get('tiktok')?.scheduledAt).toBe(instantAt(scripted.plannedFor, 18, TIMEZONE))
     expect(byPlatform.get('instagram')?.scheduledAt).toBe(instantAt(scripted.plannedFor, 12, TIMEZONE))
     expect(byPlatform.get('x')?.scheduledAt).toBe(instantAt(scripted.plannedFor, 15, TIMEZONE))
-    expect(scheduled?.episode.scheduledAt).toBe(instantAt(scripted.plannedFor, 12, TIMEZONE))
-    expect(byPlatform.get('youtube')?.description).toContain('/go/')
-    // On X the video's text is its title and nothing else: no footer, no link, no code.
-    expect(byPlatform.get('x')?.description).toBe(scheduled?.episode.title)
-    expect(byPlatform.get('x')?.discountCodeId).toBeUndefined()
+    expect(rendered?.episode.scheduledAt).toBe(instantAt(scripted.plannedFor, 12, TIMEZONE))
+    // Off X each draft carries the writer's description and previews the footer dispatch adds: the seeded code and the link.
+    const description = rendered?.episode.description
+    if (!description) throw new Error('the writer left no description')
+    expect(byPlatform.get('youtube')?.body).toBe(description)
+    expect(byPlatform.get('youtube')?.renderUrl).toContain('http')
+    expect(byPlatform.get('youtube')?.footer?.below.slice(-2)).toEqual([
+      'Code ADA20: 20% off Pro for 3 months.',
+      `http://localhost:3300/go/${rendered?.links.find((link) => link.platform === 'youtube')?.slug}`,
+    ])
+    // On X the video's text is its title and nothing else: no body, no footer, no link, no code.
+    expect(byPlatform.get('x')?.body).toBeUndefined()
+    expect(byPlatform.get('x')?.footer).toBeNull()
+    expect(byPlatform.get('x')?.title).toBe(rendered?.episode.title)
 
-    // The last publish time comes: the cron turns every publication into a runner job.
+    // The operator approves the package: every draft is queued and the episode is scheduled.
+    expect(await t.mutation(api.private.publications.approvePackage, { episodeId: scripted._id })).toBe(4)
+    const scheduled = await t.query(api.private.episodes.get, { episodeId: scripted._id })
+    expect(scheduled?.episode.status).toBe('scheduled')
+    expect(scheduled?.publications.map((publication) => publication.status)).toEqual(['queued', 'queued', 'queued', 'queued'])
+
+    // The last publish time comes: the cron turns every publication into a runner job, composing each description
+    // now and stamping the code it carries.
     const lastAt = Math.max(...(scheduled?.publications.map((publication) => publication.scheduledAt) ?? []))
     const dispatched = await t.mutation(internal.internal.runner.dispatchDuePublications, { now: lastAt + 1 })
     expect(dispatched.dispatched).toBeGreaterThanOrEqual(4)
@@ -112,6 +135,11 @@ describe('episode pipeline', () => {
       const job = await claimUntil(t, 'publish', scripted._id)
       if (job.kind !== 'publish' || job.payload.kind !== 'video') throw new Error('expected a video publish job')
       expect(job.payload.renderUrl).toContain('http')
+      const sent = byPlatform.get(job.payload.platform)
+      if (!sent) throw new Error(`no ${job.payload.platform} publication`)
+      if (job.payload.platform === 'x') expect(job.payload.description).toBe(scheduled?.episode.title)
+      else
+        expect(job.payload.description).toBe([...(sent.footer?.above ?? []), '', description, '', ...(sent.footer?.below ?? [])].join('\n'))
       await t.mutation(internal.internal.runner.complete, {
         jobId: job.id as Id<'jobs'>,
         result: {
@@ -124,6 +152,8 @@ describe('episode pipeline', () => {
     }
     const published = await t.query(api.private.episodes.get, { episodeId: scripted._id })
     expect(published?.episode.status).toBe('published')
+    expect(published?.codesSent).toEqual([{ code: 'ADA20', offer: '20% off Pro for 3 months' }])
+    expect(published?.publications.find((publication) => publication.platform === 'x')?.discountCodeId).toBeUndefined()
 
     // A viewer clicks the YouTube link and lands on the sponsor with UTM.
     const link = published!.links.find((candidate) => candidate.platform === 'youtube')!
@@ -171,11 +201,11 @@ describe('episode pipeline', () => {
     expect(episode.format).toEqual({ lengthSec: 35, delivery: 'talking_head', cuts: [{ platform: 'tiktok', aspect: '9:16' }] })
     expect(episode.shots.length).toBeGreaterThan(0)
     expect(episode.shots.every((shot) => shot.kind === 'avatar')).toBe(true)
-    expect(episode.script.body.split(/\s+/).length).toBeGreaterThan(40)
+    expect(spokenWordCount(episode.shotPlan ?? [])).toBeGreaterThan(40)
     const checklist = await t.query(api.private.checklist.list, {})
     expect(checklist.filter((item) => item.episodeId === episode._id)).toEqual([])
 
-    // One vertical cut, one publication, at TikTok's hour.
+    // Max publishes on his own: one vertical cut, one queued publication at TikTok's hour, and no package to approve.
     const produceJob = await claimUntil(t, 'produce', episode._id)
     if (produceJob.kind !== 'produce' || produceJob.payload.kind !== 'video') throw new Error('expected a video produce job')
     expect(produceJob.payload.aspects).toEqual(['9:16'])
@@ -189,6 +219,8 @@ describe('episode pipeline', () => {
     expect(scheduled?.publications.length).toBe(1)
     const [publication] = scheduled?.publications ?? []
     expect(publication?.platform).toBe('tiktok')
+    expect(publication?.status).toBe('queued')
+    expect(publication?.body).toBe(scheduled?.episode.description)
     expect(publication?.aspect).toBe('9:16')
     expect(publication?.scheduledAt).toBe(instantAt(episode.plannedFor, 17, TIMEZONE))
     expect(scheduled?.episode.scheduledAt).toBe(publication?.scheduledAt)
@@ -344,21 +376,23 @@ describe('episode pipeline', () => {
         ],
       },
     })
-    const scheduled = await t.query(api.private.episodes.get, { episodeId: scripted._id })
-    expect(scheduled?.episode.status).toBe('scheduled')
-    expect(scheduled?.publications.map((publication) => [publication.platform, publication.aspect]).sort()).toEqual([
+    const rendered = await t.query(api.private.episodes.get, { episodeId: scripted._id })
+    expect(rendered?.episode.status).toBe('rendered')
+    expect(rendered?.publications.map((publication) => [publication.platform, publication.aspect]).sort()).toEqual([
       ['tiktok', '9:16'],
       ['x', '16:9'],
       ['youtube', '16:9'],
     ])
 
-    // Scheduled, it holds TikTok: the platform cannot leave the persona until the episode is through.
+    // Waiting as a package, it holds TikTok: the platform cannot leave the persona until the episode is through.
     await expect(
       t.mutation(api.private.personas.update, {
         ...settings,
         formats: without('instagram').filter((format) => format.platform !== 'tiktok'),
       })
-    ).rejects.toThrow(`"${scripted.title}" is at "Scheduled" with TikTok in its cuts. Kill it, or remove TikTok once it is published.`)
+    ).rejects.toThrow(
+      `"${scripted.title}" is at "Ready to publish" with TikTok in its cuts. Kill it, or remove TikTok once it is published.`
+    )
   })
 
   it('reports a funnel and decides the seeded experiment when the data allows', async () => {
@@ -410,6 +444,7 @@ describe('episode pipeline', () => {
       sponsorRampEpisodes: 10,
       episodesPerWeek: 3,
       autoApprove: false,
+      autoPublish: false,
       timezone: TIMEZONE,
     })
     const queued = await t.query(api.private.personas.list, {})
@@ -452,7 +487,7 @@ describe('episode pipeline', () => {
     expect((await t.mutation(internal.internal.runner.claimNext, { runnerName: 'test' }))?.kind).toBe('produce')
   })
 
-  it('puts a persona discount code into every new description and counts its redemptions', async () => {
+  it('composes a persona discount code into every description at dispatch and counts its redemptions', async () => {
     const t = setup()
     await t.action(internal.internal.seed.run, { appUrl: 'http://localhost:3300' })
     await t.finishAllScheduledFunctions(() => {})
@@ -478,7 +513,7 @@ describe('episode pipeline', () => {
     )
 
     // The operator hands Ada a code in her settings. It replaces the seeded ADA20 (same scope), Ada says where it
-    // goes, and the queued descriptions of her scheduled episode carry it from now on.
+    // goes, and every publication of her scheduled episode not yet sent previews it in its footer from now on.
     const offer = '20% off Pro for 3 months'
     const codeId = await t.mutation(api.private.personas.giveDiscountCode, { personaId: ada._id, code: ' ada20 ', offer })
     const page = await t.query(api.private.personas.get, { personaId: ada._id })
@@ -492,29 +527,28 @@ describe('episode pipeline', () => {
     for (const publication of queued?.publications ?? []) {
       // X carries the title alone, so a code never reaches it.
       if (publication.platform === 'x') {
-        expect(publication.description).toBe(queuedEpisode.title)
+        expect(publication.footer).toBeNull()
         continue
       }
-      expect(publication.description).toContain('Code ADA30: 30% off.')
-      expect(publication.description).not.toContain('ADA20')
+      expect(publication.footer?.below).toContain('Code ADA30: 30% off.')
+      expect(publication.footer?.below.join('\n')).not.toContain('ADA20')
     }
-    expect(queued?.codesInDescriptions).toEqual([{ code: 'ADA30', offer: '30% off' }])
-    // Retiring it puts the queued descriptions back to no code; the live ones keep what they shipped with.
+    expect(queued?.discountCode).toEqual({ code: 'ADA30', offer: '30% off' })
+    expect(queued?.codesSent).toEqual([])
+    // Retiring it leaves the footers with no code; the live ones keep the code they went out with.
     await t.mutation(api.private.personas.retireDiscountCode, { discountCodeId: newer })
     const reverted = await t.query(api.private.episodes.get, { episodeId: queuedEpisode._id })
-    expect(reverted?.publications.every((publication) => publication.description?.includes('Code ADA') === false)).toBe(true)
-    expect(reverted?.codesInDescriptions).toEqual([])
+    expect(
+      reverted?.publications.every((publication) => (publication.footer?.below ?? []).every((line) => !line.startsWith('Code ')))
+    ).toBe(true)
+    expect(reverted?.discountCode).toBeNull()
     const liveVideo = page?.episodes.find(
       (episode) => episode.kind === 'video' && (episode.status === 'published' || episode.status === 'measured')
     )
     if (!liveVideo) throw new Error('the seed has no live video for Ada')
     const live = await t.query(api.private.episodes.get, { episodeId: liveVideo._id })
-    expect(live?.codesInDescriptions).toEqual([{ code: 'ADA20', offer: '20% off Pro for 3 months' }])
-    // ADA20 can come back now that nothing else holds it.
-    const again = await t.mutation(api.private.personas.giveDiscountCode, { personaId: ada._id, code: 'ADA20', offer })
-    // The mock billing provider reports one redemption every nine days since the code was created, and the
-    // mutation stamps now. Backdating the row by a month is the only way a test can see redemptions.
-    await t.run((ctx) => ctx.db.patch(again, { createdAt: Date.now() - 30 * 86_400_000 }))
+    expect(live?.codesSent).toEqual([{ code: 'ADA20', offer }])
+    expect(live?.publications.find((publication) => publication.platform === 'youtube')?.footer?.below).toContain(`Code ADA20: ${offer}.`)
 
     // The writer plans next week (this week is full from the seed) and scripts every idea.
     const nextMonday = addDays(weekStart(dayKey(Date.now(), ada.timezone)), 7)
@@ -544,20 +578,49 @@ describe('episode pipeline', () => {
       },
     })
 
-    // Every publication off X carries the code and the sponsor line; X carries the title alone.
-    const scheduled = await t.query(api.private.episodes.get, { episodeId: scripted._id })
-    expect(scheduled?.episode.status).toBe('scheduled')
-    expect(scheduled?.publications.length).toBe(4)
-    for (const publication of scheduled?.publications ?? []) {
+    // Rendered with no code in force, the package previews none.
+    const rendered = await t.query(api.private.episodes.get, { episodeId: scripted._id })
+    expect(rendered?.episode.status).toBe('rendered')
+    expect(rendered?.discountCode).toBeNull()
+    expect(
+      rendered?.publications.every((publication) => (publication.footer?.below ?? []).every((line) => !line.startsWith('Code ')))
+    ).toBe(true)
+
+    // ADA20 comes back after the render, now that nothing else holds it, and reaches the drafts by construction.
+    const again = await t.mutation(api.private.personas.giveDiscountCode, { personaId: ada._id, code: 'ADA20', offer })
+    // The mock billing provider reports one redemption every nine days since the code was created, and the
+    // mutation stamps now. Backdating the row by a month is the only way a test can see redemptions.
+    await t.run((ctx) => ctx.db.patch(again, { createdAt: Date.now() - 30 * 86_400_000 }))
+    const withCode = await t.query(api.private.episodes.get, { episodeId: scripted._id })
+    expect(withCode?.discountCode).toEqual({ code: 'ADA20', offer })
+    expect(withCode?.currency).toBe('EUR')
+    for (const publication of withCode?.publications ?? []) {
       if (publication.platform === 'x') {
-        expect(publication.description).toBe(scheduled?.episode.title)
+        expect(publication.footer).toBeNull()
         continue
       }
-      expect(publication.description).toContain(`Code ADA20: ${offer}.`)
-      expect(publication.description).toContain('Formstep collects')
+      expect(publication.footer?.below).toContain(`Code ADA20: ${offer}.`)
+      expect(publication.footer?.below[0]).toContain('Formstep collects')
     }
-    expect(scheduled?.discountCode).toEqual({ code: 'ADA20', offer })
-    expect(scheduled?.currency).toBe('EUR')
+
+    // Approved and dispatched, every description off X goes out with the code and is stamped with it; X takes the title alone.
+    await t.mutation(api.private.publications.approvePackage, { episodeId: scripted._id })
+    const lastAt = Math.max(...(withCode?.publications.map((publication) => publication.scheduledAt) ?? []))
+    await t.mutation(internal.internal.runner.dispatchDuePublications, { now: lastAt + 1 })
+    for (let i = 0; i < 4; i += 1) {
+      const job = await claimUntil(t, 'publish', scripted._id)
+      if (job.kind !== 'publish' || job.payload.kind !== 'video') throw new Error('expected a video publish job')
+      if (job.payload.platform === 'x') expect(job.payload.description).toBe(scripted.title)
+      else expect(job.payload.description).toContain(`Code ADA20: ${offer}.`)
+    }
+    const sent = await t.query(api.private.episodes.get, { episodeId: scripted._id })
+    expect(sent?.publications.map((publication) => [publication.platform, publication.status, publication.discountCodeId]).sort()).toEqual([
+      ['instagram', 'uploading', again],
+      ['tiktok', 'uploading', again],
+      ['x', 'uploading', undefined],
+      ['youtube', 'uploading', again],
+    ])
+    expect(sent?.codesSent).toEqual([{ code: 'ADA20', offer }])
 
     // The analyst polls the code once, hands each order to the row in force when it was placed (the newest
     // row here, backdated to the seed's instant plus a few milliseconds) and keeps the count on that row.
@@ -586,6 +649,208 @@ describe('episode pipeline', () => {
     expect(report?.funnel.value).toBe(report!.funnel.paid * 29)
     expect(report?.topByValue.length).toBeGreaterThan(0)
     expect(report?.topByValue.length).toBeLessThanOrEqual(5)
+  })
+
+  it('holds a rendered episode as a publish package until the operator approves it', async () => {
+    const t = setup()
+    await t.action(internal.internal.seed.run, { appUrl: 'http://localhost:3300' })
+    await t.finishAllScheduledFunctions(() => {})
+    const ada = await seededAda(t)
+    const page = await t.query(api.private.personas.get, { personaId: ada._id })
+    const waiting = page?.episodes.find((episode) => episode.status === 'rendered')
+    if (!waiting) throw new Error('the seed has no publish package for Ada')
+    // The package waits on the operator like the video and the post to approve and the sign-in to do.
+    expect(ada.counts.waitsOnOperator).toBe(4)
+    // The sidebar counts each wait once: the two X setup items and the sign-in, then the episodes to approve; the
+    // episode held by the sign-in is counted through its checklist item.
+    expect(ada.counts.checklist).toBe(3)
+    expect(ada.counts.waitingTotal).toBe(6)
+
+    // One draft per platform, each with its cut's render; off X the writer's description and the footer dispatch adds.
+    const rendered = await t.query(api.private.episodes.get, { episodeId: waiting._id })
+    const drafts = rendered?.publications ?? []
+    expect(drafts.map((publication) => [publication.platform, publication.status])).toEqual([
+      ['youtube', 'draft'],
+      ['tiktok', 'draft'],
+      ['instagram', 'draft'],
+      ['x', 'draft'],
+    ])
+    expect(drafts.every((publication) => publication.renderUrl !== null)).toBe(true)
+    const draftOn = (platform: string) => {
+      const draft = drafts.find((publication) => publication.platform === platform)
+      if (!draft) throw new Error(`the package has no ${platform} draft`)
+      return draft
+    }
+    expect(draftOn('youtube').body).toBe(waiting.description)
+    expect(draftOn('youtube').footer?.above).toEqual(['This video features an AI-generated presenter.'])
+    expect(draftOn('youtube').footer?.below).toContain('Code ADA20: 20% off Pro for 3 months.')
+    expect(draftOn('tiktok').footer?.below.at(-1)).toBe('Link in bio.')
+    expect(draftOn('x').body).toBeUndefined()
+    expect(draftOn('x').footer).toBeNull()
+
+    // Dispatch never picks a draft, however late it runs.
+    const lastAt = Math.max(...drafts.map((publication) => publication.scheduledAt))
+    await t.mutation(internal.internal.runner.dispatchDuePublications, { now: lastAt + 1 })
+    const still = await t.query(api.private.episodes.get, { episodeId: waiting._id })
+    expect(still?.episode.status).toBe('rendered')
+    expect(still?.publications.every((publication) => publication.status === 'draft')).toBe(true)
+
+    // The operator edits each draft within its platform's rules.
+    const updateDraft = (platform: string, title: string, body?: string) =>
+      t.mutation(api.private.publications.updateDraft, { publicationId: draftOn(platform)._id, title, body })
+    await expect(updateDraft('x', 'a'.repeat(281))).rejects.toThrow('The title is 281 characters; X allows 280.')
+    await expect(updateDraft('x', 'Quote, then wait', 'More words.')).rejects.toThrow(
+      'Nothing is appended on X: the title is the whole post.'
+    )
+    await expect(updateDraft('youtube', 'a'.repeat(101), 'Words.')).rejects.toThrow(
+      "A title is 1 to 100 characters, YouTube's limit; this one is 101."
+    )
+    await expect(updateDraft('youtube', 'Quote, then wait', 'a'.repeat(1501))).rejects.toThrow(
+      'The YouTube description is 1501 characters; it holds 1500 before the footer.'
+    )
+    await updateDraft('x', 'Send the quote, then let n8n wait for the yes')
+    await updateDraft('youtube', '  Quote, then wait  ', '  My own words about the quote.  ')
+    const edited = await t.query(api.private.episodes.get, { episodeId: waiting._id })
+    expect(edited?.publications.find((publication) => publication.platform === 'youtube')).toMatchObject({
+      title: 'Quote, then wait',
+      body: 'My own words about the quote.',
+    })
+
+    // A post's publication goes out as the post was approved: the package never edits it.
+    const imagePost = page?.episodes.find((episode) => episode.kind === 'image')
+    if (!imagePost) throw new Error('the seed has no image post for Ada')
+    const [card] = (await t.query(api.private.episodes.get, { episodeId: imagePost._id }))?.publications ?? []
+    if (!card) throw new Error('the seeded image post has no publication')
+    await expect(t.mutation(api.private.publications.updateDraft, { publicationId: card._id, title: 'New words' })).rejects.toThrow(
+      'A post goes out as it was approved; edit the post and approve it again.'
+    )
+    // Only a package waits for approval.
+    await expect(t.mutation(api.private.publications.approvePackage, { episodeId: imagePost._id })).rejects.toThrow(
+      'Only an episode at "Ready to publish" can be approved; this one is at "Scheduled".'
+    )
+
+    // A code given while the package waits shows in its footers.
+    const fresh = await t.mutation(api.private.personas.giveDiscountCode, { personaId: ada._id, code: 'ADA50', offer: '50% off' })
+    const withFresh = await t.query(api.private.episodes.get, { episodeId: waiting._id })
+    expect(withFresh?.publications.find((publication) => publication.platform === 'youtube')?.footer?.below).toContain(
+      'Code ADA50: 50% off.'
+    )
+
+    // Approval queues every draft and schedules the episode; a queued publication takes no more edits.
+    expect(await t.mutation(api.private.publications.approvePackage, { episodeId: waiting._id })).toBe(4)
+    const approved = await t.query(api.private.episodes.get, { episodeId: waiting._id })
+    expect(approved?.episode.status).toBe('scheduled')
+    expect(approved?.episode.approvedAt).toBe(waiting.approvedAt)
+    expect(approved?.publications.every((publication) => publication.status === 'queued')).toBe(true)
+    await expect(updateDraft('youtube', 'Too late', 'Words.')).rejects.toThrow(
+      'A publication can be edited until its package is approved; this one is queued.'
+    )
+
+    // Retired before dispatch, the code goes out with none of the descriptions.
+    await t.mutation(api.private.personas.retireDiscountCode, { discountCodeId: fresh })
+    await t.mutation(internal.internal.runner.dispatchDuePublications, { now: lastAt + 1 })
+    for (let i = 0; i < 4; i += 1) {
+      const job = await claimUntil(t, 'publish', waiting._id)
+      if (job.kind !== 'publish' || job.payload.kind !== 'video') throw new Error('expected a video publish job')
+      expect(job.payload.description).not.toContain('Code ')
+      if (job.payload.platform === 'x') expect(job.payload.description).toBe('Send the quote, then let n8n wait for the yes')
+      if (job.payload.platform === 'youtube') expect(job.payload.description).toContain('\n\nMy own words about the quote.\n\n')
+    }
+    const sent = await t.query(api.private.episodes.get, { episodeId: waiting._id })
+    expect(sent?.publications.every((publication) => publication.status === 'uploading' && publication.discountCodeId === undefined)).toBe(
+      true
+    )
+    expect(sent?.codesSent).toEqual([])
+  })
+
+  it('composes a failed publication again with the code in force, and counts only what went out as sent', async () => {
+    const t = setup()
+    await t.action(internal.internal.seed.run, { appUrl: 'http://localhost:3300' })
+    await t.finishAllScheduledFunctions(() => {})
+    const ada = await seededAda(t)
+    const page = await t.query(api.private.personas.get, { personaId: ada._id })
+    const waiting = page?.episodes.find((episode) => episode.status === 'rendered')
+    if (!waiting) throw new Error('the seed has no publish package for Ada')
+
+    // Approved and handed to the runner with ADA20 stamped, every upload fails: nothing reached viewers.
+    expect(await t.mutation(api.private.publications.approvePackage, { episodeId: waiting._id })).toBe(4)
+    const approved = await t.query(api.private.episodes.get, { episodeId: waiting._id })
+    const lastAt = Math.max(...(approved?.publications.map((publication) => publication.scheduledAt) ?? []))
+    await t.mutation(internal.internal.runner.dispatchDuePublications, { now: lastAt + 1 })
+    for (let i = 0; i < 4; i += 1) {
+      const job = await claimUntil(t, 'publish', waiting._id)
+      await t.mutation(internal.internal.runner.fail, { jobId: job.id as Id<'jobs'>, error: 'The upload was refused.' })
+    }
+    const failed = await t.query(api.private.episodes.get, { episodeId: waiting._id })
+    expect(failed?.episode.status).toBe('failed')
+    expect(failed?.publications.every((publication) => publication.status === 'failed' && !publication.sent)).toBe(true)
+    const youtubeOf = (data: typeof failed) => {
+      const publication = data?.publications.find((candidate) => candidate.platform === 'youtube')
+      if (!publication) throw new Error('the package has no YouTube publication')
+      return publication
+    }
+    expect(youtubeOf(failed).discountCodeId).toBeDefined()
+    expect(failed?.codesSent).toEqual([])
+
+    // A new code reaches the failed blocks' footers: it is the one a retry sends.
+    await t.mutation(api.private.personas.giveDiscountCode, { personaId: ada._id, code: 'ADA30', offer: '30% off' })
+    const recoded = await t.query(api.private.episodes.get, { episodeId: waiting._id })
+    expect(youtubeOf(recoded).footer?.below).toContain('Code ADA30: 30% off.')
+    expect(youtubeOf(recoded).footer?.below.join('\n')).not.toContain('ADA20')
+    expect(recoded?.codesSent).toEqual([])
+
+    // Retry queues them again without the old stamp, and dispatch composes and stamps them with the code in force.
+    await t.mutation(api.private.episodes.retry, { episodeId: waiting._id })
+    const requeued = await t.query(api.private.episodes.get, { episodeId: waiting._id })
+    expect(requeued?.publications.every((publication) => publication.status === 'queued' && publication.discountCodeId === undefined)).toBe(
+      true
+    )
+    expect(requeued?.codesSent).toEqual([])
+    await t.mutation(internal.internal.runner.dispatchDuePublications, { now: lastAt + 1 })
+    for (let i = 0; i < 4; i += 1) {
+      const job = await claimUntil(t, 'publish', waiting._id)
+      if (job.kind !== 'publish' || job.payload.kind !== 'video') throw new Error('expected a video publish job')
+      if (job.payload.platform !== 'x') expect(job.payload.description).toContain('Code ADA30: 30% off.')
+    }
+    const resent = await t.query(api.private.episodes.get, { episodeId: waiting._id })
+    expect(resent?.publications.every((publication) => publication.sent)).toBe(true)
+    expect(resent?.codesSent).toEqual([{ code: 'ADA30', offer: '30% off' }])
+  })
+
+  it('arms a failed publication again on a new render without the code its failed attempt was stamped with', async () => {
+    const t = setup()
+    await t.action(internal.internal.seed.run, { appUrl: 'http://localhost:3300' })
+    await t.finishAllScheduledFunctions(() => {})
+    const ada = await seededAda(t)
+    const page = await t.query(api.private.personas.get, { personaId: ada._id })
+    const waiting = page?.episodes.find((episode) => episode.status === 'rendered')
+    if (!waiting) throw new Error('the seed has no publish package for Ada')
+    const [code] = page?.discountCodes ?? []
+    if (!code) throw new Error('the seed gives Ada no code')
+    const before = await t.query(api.private.episodes.get, { episodeId: waiting._id })
+    const youtube = before?.publications.find((publication) => publication.platform === 'youtube')
+    if (!youtube) throw new Error('the package has no YouTube publication')
+
+    // The YouTube upload failed after it was stamped, and the episode is being rendered again.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(youtube._id, { status: 'failed', discountCodeId: code._id, error: 'The upload was refused.' })
+      await ctx.db.patch(waiting._id, { status: 'recording' })
+    })
+    const storageId = await t.run((ctx) => ctx.storage.store(new Blob(['video'])))
+    await t.run((ctx) =>
+      completeProduction(ctx, waiting._id, {
+        renders: [
+          { aspect: '16:9', storageId, durationSec: 50, mock: true },
+          { aspect: '9:16', storageId, durationSec: 50, mock: true },
+        ],
+      })
+    )
+
+    const rearmed = await t.query(api.private.episodes.get, { episodeId: waiting._id })
+    expect(rearmed?.episode.status).toBe('rendered')
+    const again = rearmed?.publications.find((publication) => publication._id === youtube._id)
+    expect([again?.status, again?.sent, again?.discountCodeId]).toEqual(['draft', false, undefined])
+    expect(rearmed?.codesSent).toEqual([])
   })
 
   it('turns a chat instruction into a directive the writer reads', async () => {
@@ -630,7 +895,8 @@ describe('posts on X', () => {
     const [publication] = scheduled?.publications ?? []
     expect(publication).toMatchObject({ platform: 'x', status: 'queued', parts: text.post.parts, scheduledAt: text.scheduledAt })
     expect(publication?.aspect).toBeUndefined()
-    expect(publication?.description).toBeUndefined()
+    expect(publication?.body).toBeUndefined()
+    expect(publication?.footer).toBeNull()
     expect(publication?.discountCodeId).toBeUndefined()
     expect(scheduled?.jobs.filter((job) => job.kind === 'produce')).toEqual([])
     expect(scheduled?.checklist).toEqual([])
@@ -662,7 +928,7 @@ describe('posts on X', () => {
     expect(reapproved?.publications.map((row) => [row.status, row.parts, row.error])).toEqual([['queued', again.parts, undefined]])
   })
 
-  it('renders an approved image post first, then schedules its card on X', async () => {
+  it('renders an approved image post first, then schedules its card on X once its package is approved', async () => {
     const t = setup()
     await t.action(internal.internal.seed.run, {})
     const ada = await seededAda(t)
@@ -686,12 +952,24 @@ describe('posts on X', () => {
       result: { renders: [{ aspect: '16:9', storageId, durationSec: 0, mock: true }] },
     })
 
+    // Ada approves each package, a card included: the card waits as a draft, its words exactly the approved post.
+    const rendered = await t.query(api.private.episodes.get, { episodeId })
+    expect(rendered?.episode.status).toBe('rendered')
+    expect(rendered?.episode.renders.map((render) => [render.aspect, render.durationSec])).toEqual([['16:9', 0]])
+    expect(rendered?.publications.length).toBe(1)
+    expect(rendered?.publications[0]).toMatchObject({ platform: 'x', aspect: '16:9', status: 'draft', parts: post.parts, mock: true })
+    expect(rendered?.publications[0]?.body).toBeUndefined()
+    expect(rendered?.publications[0]?.renderUrl).toContain('http')
+    expect(rendered?.publications[0]?.footer).toBeNull()
+    const [card] = rendered?.publications ?? []
+    if (!card) throw new Error('the rendered card made no publication')
+    await expect(t.mutation(api.private.publications.updateDraft, { publicationId: card._id, title: 'New words' })).rejects.toThrow(
+      'A post goes out as it was approved; edit the post and approve it again.'
+    )
+    expect(await t.mutation(api.private.publications.approvePackage, { episodeId })).toBe(1)
     const scheduled = await t.query(api.private.episodes.get, { episodeId })
     expect(scheduled?.episode.status).toBe('scheduled')
-    expect(scheduled?.episode.renders.map((render) => [render.aspect, render.durationSec])).toEqual([['16:9', 0]])
-    expect(scheduled?.publications.length).toBe(1)
-    expect(scheduled?.publications[0]).toMatchObject({ platform: 'x', aspect: '16:9', status: 'queued', parts: post.parts, mock: true })
-    expect(scheduled?.publications[0]?.description).toBeUndefined()
+    expect(scheduled?.publications[0]?.status).toBe('queued')
 
     // Moved to another day, the post and its publication keep the slot's hour.
     const newDay = addDays(scheduled!.episode.plannedFor, 7)
@@ -740,24 +1018,106 @@ describe('posts on X', () => {
     expect((await t.query(api.private.episodes.get, { episodeId }))?.episode.post?.cardTitle).toBe('Catch them all')
   })
 
-  it('refuses a video title X would not take when the script is edited after approval', async () => {
+  it('refuses a video title X would not take when the beats are edited after approval', async () => {
     const t = setup()
     await t.action(internal.internal.seed.run, {})
     const ada = await seededAda(t)
     const video = (await t.query(api.private.personas.get, { personaId: ada._id }))?.episodes.find(
       (episode) => episode.kind === 'video' && episode.status === 'scripted'
     )
-    if (!video) throw new Error('the seed has no scripted video for Ada')
-    // Waiting on a sign-in, the script still takes edits, and production starts without approval checking the title again.
+    if (!video?.shotPlan) throw new Error('the seed has no scripted video for Ada')
+    const beats = video.shotPlan.map((beat) => ({ title: beat.title, voiceover: beat.voiceover }))
+    // Waiting on a sign-in, the beats still take edits, and production starts without approval checking the title again.
     await t.run((ctx) => ctx.db.patch(video._id, { status: 'waiting_on_you', platforms: ['youtube', 'x'] }))
-    const updateScript = (title: string) =>
-      t.mutation(api.private.episodes.updateScript, { episodeId: video._id, title, script: video.script })
-    await expect(updateScript('a'.repeat(281))).rejects.toThrow('The title is 281 characters; X allows 280.')
-    await updateScript('a'.repeat(280))
+    const updateBeats = (title: string) => t.mutation(api.private.episodes.updateBeats, { episodeId: video._id, title, beats })
+    await expect(updateBeats('a'.repeat(281))).rejects.toThrow('The title is 281 characters; X allows 280.')
+    await updateBeats('a'.repeat(280))
 
     // The limit is X's: a video that does not go to X is not held to it.
     await t.run((ctx) => ctx.db.patch(video._id, { platforms: ['youtube'] }))
-    await updateScript('a'.repeat(281))
+    await updateBeats('a'.repeat(281))
+  })
+
+  it('records the beats as edited: shots and hook follow, the count and the sponsor hold', async () => {
+    const t = setup()
+    await t.action(internal.internal.seed.run, {})
+    const ada = await seededAda(t)
+    const episodes = (await t.query(api.private.personas.get, { personaId: ada._id }))?.episodes ?? []
+    const video = episodes.find((episode) => episode.kind === 'video' && episode.status === 'scripted')
+    if (!video?.shotPlan) throw new Error('the seed has no scripted video for Ada')
+    const edit = (beats: { title: string; voiceover: string }[], episodeId: Id<'episodes'> = video._id) =>
+      t.mutation(api.private.episodes.updateBeats, { episodeId, title: video.title, beats })
+
+    // The operator rewrites the opening line: the hook is its first sentence, and the presenter shot speaks it.
+    const [first, second] = video.shotPlan
+    if (!first || !second) throw new Error('the seeded script has fewer than two beats')
+    await edit([
+      { title: '  The problem  ', voiceover: '  Your webhook failed at 3 a.m. Nobody noticed.  ' },
+      { title: second.title, voiceover: second.voiceover },
+    ])
+    const edited = await t.query(api.private.episodes.get, { episodeId: video._id })
+    expect(edited?.episode.hook).toBe('Your webhook failed at 3 a.m.')
+    expect(edited?.episode.shotPlan?.[0]).toEqual({
+      ...first,
+      title: 'The problem',
+      voiceover: 'Your webhook failed at 3 a.m. Nobody noticed.',
+    })
+    expect(edited?.episode.shots.map((shot) => [shot.kind, shot.voiceover])).toEqual([
+      ['avatar', 'Your webhook failed at 3 a.m. Nobody noticed.'],
+      ['screen', second.voiceover],
+    ])
+    expect(edited?.episode.format).toEqual(video.format)
+
+    // A trimmed script is the operator's call: it is saved however short it runs.
+    await edit([
+      { title: 'The problem', voiceover: 'It failed.' },
+      { title: 'The fix', voiceover: 'Retry it.' },
+    ])
+    expect((await t.query(api.private.episodes.get, { episodeId: video._id }))?.episode.shots.map((shot) => shot.voiceover)).toEqual([
+      'It failed.',
+      'Retry it.',
+    ])
+
+    // Beats are edited in place: none added, none removed, none left silent, and no sponsor where the episode carries none.
+    await expect(edit([{ title: 'The problem', voiceover: 'It failed.' }])).rejects.toThrow(
+      'Beats can be edited, not added or removed, here.'
+    )
+    await expect(
+      edit([
+        { title: 'The problem', voiceover: 'It failed.' },
+        { title: 'The fix', voiceover: '   ' },
+      ])
+    ).rejects.toThrow('Beat 2 has no spoken line.')
+    await expect(
+      edit([
+        { title: 'The problem', voiceover: 'It failed.' },
+        { title: 'The fix', voiceover: 'Formstep fixes it.' },
+      ])
+    ).rejects.toThrow('Beat 2 names Formstep, but this episode carries no sponsor.')
+
+    // A mention episode keeps the sponsor in its beats: removing it is refused, and the sponsored sentence is spoken.
+    const mention = episodes.find(
+      (episode) => episode.kind === 'video' && episode.sponsorSegment === 'mention' && episode.status === 'scheduled'
+    )
+    if (!mention?.shotPlan) throw new Error('the seed has no scheduled mention video for Ada')
+    expect(mention.shots.some((shot) => shot.voiceover.includes('sponsored by Formstep'))).toBe(true)
+    await t.run((ctx) => ctx.db.patch(mention._id, { status: 'failed' }))
+    const mentionBeats = mention.shotPlan.map((beat) => ({ title: beat.title, voiceover: beat.voiceover }))
+    await expect(
+      edit(
+        mentionBeats.map((beat) => ({ ...beat, voiceover: beat.voiceover.replace(/This one is sponsored by Formstep[^.]*\./, '').trim() })),
+        mention._id
+      )
+    ).rejects.toThrow('A sponsored episode says Formstep in at least one beat.')
+
+    // Once recording starts the beats are locked.
+    await t.run((ctx) => ctx.db.patch(video._id, { status: 'recording' }))
+    await expect(
+      edit([
+        { title: 'The problem', voiceover: 'It failed.' },
+        { title: 'The fix', voiceover: 'Retry it.' },
+      ])
+    ).rejects.toThrow('The script is locked once recording starts')
   })
 
   it('refuses a post X would not take, and the video-only edits on a post', async () => {
@@ -783,11 +1143,7 @@ describe('posts on X', () => {
       'A post goes only to X.'
     )
     await expect(
-      t.mutation(api.private.episodes.updateScript, {
-        episodeId,
-        title: 'A thread',
-        script: { hook: 'h', body: 'b', sponsor: '', cta: '' },
-      })
+      t.mutation(api.private.episodes.updateBeats, { episodeId, title: 'A thread', beats: [{ title: 'h', voiceover: 'b' }] })
     ).rejects.toThrow('A post has no script; edit the post instead.')
     const video = (await t.query(api.private.personas.get, { personaId: ada._id }))?.episodes.find(
       (episode) => episode.kind === 'video' && episode.status === 'scripted'
@@ -1137,6 +1493,7 @@ const newPersona = {
   sponsorRampEpisodes: 10,
   episodesPerWeek: 3,
   autoApprove: false,
+  autoPublish: false,
   timezone: TIMEZONE,
 }
 
@@ -1170,7 +1527,6 @@ async function insertPost(
       concept: `A ${args.kind} post`,
       title: `A ${args.kind} post`,
       hook: args.post?.parts[0] ?? '',
-      script: { hook: '', body: '', sponsor: '', cta: '' },
       post: args.post,
       sponsorSegment: 'none',
       platforms: ['x'],
@@ -1207,6 +1563,7 @@ function settingsOf(persona: FunctionReturnType<typeof api.private.personas.list
     sponsorRampEpisodes: persona.sponsorRampEpisodes,
     episodesPerWeek: persona.episodesPerWeek,
     autoApprove: persona.autoApprove,
+    autoPublish: persona.autoPublish,
     timezone: persona.timezone,
   }
 }

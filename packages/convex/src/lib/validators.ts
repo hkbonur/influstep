@@ -21,9 +21,11 @@ import {
   POST_INTENTS,
   POST_KINDS,
   POST_LENGTHS,
+  PUBLICATION_STATUSES,
   SIGNAL_SOURCES,
   SIGNAL_STATUSES,
   SPONSOR_SEGMENTS,
+  type Beat,
 } from '@influstep/shared'
 
 /** One validator per shared enum, so the schema and the app read the same list. */
@@ -58,6 +60,7 @@ export const postIntentValidator = literals(POST_INTENTS)
 export const postLengthValidator = literals(POST_LENGTHS)
 export const habitValidator = literals(HABITS)
 export const accountPostSourceValidator = literals(ACCOUNT_POST_SOURCES)
+export const publicationStatusValidator = literals(PUBLICATION_STATUSES)
 
 /** X's post cadence (shared `XCadence`). Ranges, and each kind and intent once, are checked by core/formats.ts. */
 export const xCadenceValidator = v.object({
@@ -131,15 +134,18 @@ export const episodeFormatValidator = v.object({
   cuts: v.array(v.object({ platform: platformValidator, aspect: aspectRatioValidator })),
 })
 
-/** The writer's beats: a named tool and what to show. Stored so the shots can be derived again for another delivery. */
-export const shotPlanValidator = v.array(v.object({ title: v.string(), voiceover: v.string(), tool: v.string(), url: v.string() }))
+/** One beat of a video's script (shared `Beat`): what is spoken over it, and the tool and URL it shows. */
+export const beatValidator = v.object({ title: v.string(), voiceover: v.string(), tool: v.string(), url: v.string() }) satisfies Validator<
+  Beat,
+  'required',
+  keyof Beat
+>
 
-export const scriptValidator = v.object({
-  hook: v.string(),
-  body: v.string(),
-  sponsor: v.string(),
-  cta: v.string(),
-})
+/** A video's beats, the only script: the shots, the voice track and the hook are derived from them. */
+export const shotPlanValidator = v.array(beatValidator)
+
+/** The part of a beat the operator edits: its title and its spoken line. The tool and URL stay the writer's. */
+export const beatEditValidator = v.object({ title: v.string(), voiceover: v.string() })
 
 const recipeStepValidator = v.union(
   v.object({ step: v.literal('goto'), url: v.string() }),

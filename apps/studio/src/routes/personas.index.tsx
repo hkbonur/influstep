@@ -74,6 +74,7 @@ function PersonasPage() {
                     <Mono className="text-ash">@{persona.handle}</Mono>
                     {persona.paused && <Pill tint="alert-amber">Paused</Pill>}
                     {persona.autoApprove && <Pill tint="fog">Auto-approves</Pill>}
+                    {persona.autoPublish && <Pill tint="fog">Publishes on its own</Pill>}
                   </div>
                   <p className="mt-0.5 line-clamp-1 text-ash">{persona.niche}</p>
                   <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ash">
@@ -86,7 +87,12 @@ function PersonasPage() {
               </div>
               <dl className="flex gap-5 text-xs">
                 <Count label="Published" value={persona.counts.published} />
-                <Count label="Approve" value={persona.counts.needsApproval} tone={persona.counts.needsApproval > 0 ? 'blue' : undefined} />
+                {/* Scripts and publish packages to approve, and episodes held by a sign-in (shared waitsOnOperator). */}
+                <Count
+                  label="Waiting"
+                  value={persona.counts.waitsOnOperator}
+                  tone={persona.counts.waitsOnOperator > 0 ? 'blue' : undefined}
+                />
                 <Count label="Failed" value={persona.counts.failed} tone={persona.counts.failed > 0 ? 'red' : undefined} />
                 <Count label="Checklist" value={persona.counts.checklist} tone={persona.counts.checklist > 0 ? 'amber' : undefined} />
               </dl>
@@ -158,6 +164,8 @@ function NewPersonaForm(props: { usedColors: PersonaColor[]; onDone: () => void 
         sponsorRampEpisodes: SPONSOR_RAMP_EPISODES,
         episodesPerWeek: Number(form.get('episodesPerWeek') ?? 3),
         autoApprove: false,
+        // A new persona's rendered episodes wait for the operator as publish packages until its settings say otherwise.
+        autoPublish: false,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       })
       props.onDone()

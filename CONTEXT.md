@@ -47,7 +47,7 @@ _Avoid_: ad ratio, promo rate, sponsorship level.
 ## Episodes
 
 **Episode**:
-One video a persona plans, records, and publishes: a concept, a hook, a script, a shot list, a recording, a render, and one publication per platform. An episode belongs to one persona, sits on one calendar day, and may carry one experiment variant.
+One video a persona plans, records, and publishes: a concept, a hook, a script (its beats), a shot list, a recording, a render, and one publication per platform. An episode belongs to one persona, sits on one calendar day, and may carry one experiment variant.
 _Avoid_: video (that is the rendered file), post (that is the publication), content, piece.
 
 **Concept**:
@@ -55,19 +55,23 @@ The one-sentence idea of an episode ("Set up an n8n webhook that retries on fail
 _Avoid_: topic (that is the signal's subject), idea (fine casually), title (that is the published name).
 
 **Hook**:
-The first sentence of an episode, written to keep a viewer past the first two seconds. Hooks are the usual unit of an experiment.
+The first sentence of an episode, written to keep a viewer past the first two seconds: the first sentence of a video's first beat, or a post's first line. It is read from the script, never written apart from it. Hooks are the usual unit of an experiment.
 _Avoid_: intro, opener, teaser.
 
 **Script**:
-The spoken text of an episode in sections: hook, body, sponsor segment (optional), call to action. Written by the writer, edited by the operator, voiced by the producer.
+The spoken text of a video: its beats' spoken lines in order. The hook opens the first beat, the sponsor segment (when there is one) lives inside the beats, and the call to action closes the last. Written by the writer, edited by the operator beat by beat, voiced by the producer exactly as it reads.
 _Avoid_: copy, narration (that is the voiced result), transcript (that is what platforms derive).
 
+**Beat**:
+One part of a video's script: what is spoken (its line) and what is shown while it is spoken (the presenter to camera, or a tool's screen at a URL). The beats are the script: the shots and the voice track are built from them, so an edit to a beat is what the recording says. The operator edits a beat's title and line; the writer chooses how many beats there are and what each shows.
+_Avoid_: section, scene, segment (reserved for the sponsor segment), shot (that is the recorded piece built from a beat).
+
 **Sponsor segment**:
-The part of a script where the sponsor appears, in one of three shapes: a **mention** ("this episode is sponsored by Formstep"), a **demo** (a screen recording of Formstep solving the episode's problem), or **none**.
+Where the sponsor appears in a script, in one of three shapes: a **mention** (a sentence inside a beat: "this episode is sponsored by Formstep"), a **demo** (a beat of its own showing Formstep on screen solving the episode's problem), or **none** (no beat names it).
 _Avoid_: ad read, plug, promo, placement.
 
 **Shot**:
-One recorded piece of an episode: a screen recording of a web app driven by a recipe, an avatar take of the persona speaking, or a title card. The shot list orders them; the render joins them.
+One recorded piece of an episode: a screen recording of a web app driven by a recipe, an avatar take of the persona speaking, or a title card. Each beat becomes one shot, the way the episode's delivery asks; the shot list orders them and the render joins them.
 _Avoid_: clip (that is the file), scene, segment (reserved for the sponsor segment).
 
 **Recipe**:
@@ -79,12 +83,16 @@ The finished video file for one aspect ratio (16:9 for YouTube, 9:16 for TikTok,
 _Avoid_: export, output, final.
 
 **Publication**:
-One episode on one platform: the upload, its external id, its URL, its publish time, its AI-disclosure label, and the metric snapshots taken afterwards.
+One episode on one platform: the upload, its title and description, its external id, its URL, its publish time, its AI-disclosure label, and the metric snapshots taken afterwards. Its status is one of draft (waiting in a publish package), queued, uploading, live, or failed. A video's description off X is the persona's own text inside a footer composed when it goes out: the disclosure above, then the Formstep line, the discount code in force, and the tracked link or "Link in bio." below. On X nothing is appended: a video's text is its title, a post is its parts.
 _Avoid_: post (fine in UI copy for TikTok and Instagram, never as the term), upload, release.
 
+**Publish package**:
+A rendered episode's publications waiting for the operator's approval: per platform the render it uploads, its title, the persona's own description, its publish time, and the footer composed at dispatch. The operator edits the titles and descriptions, never the footer, so an edit is never overwritten and a code change reaches every package not yet live. Approving it queues every publication and schedules the episode. A persona set to publish on its own skips the package: its rendered episodes are scheduled at once. A text post or a thread has none; its approval schedules it.
+_Avoid_: bundle, preview (fine casually), draft (that is a publication's status inside the package), release.
+
 **Episode status**:
-Exactly one of: **idea** (concept only), **scripted** (script written, waiting for operator approval), **waiting on you** (a checklist item blocks it), **recording** (producer is recording shots), **rendered** (renders exist, waiting for publish time), **scheduled** (publications queued), **published** (every publication live), **measured** (metrics collected after the measurement window), **failed** (an agent run gave up; the error is on the episode), and **killed** (the operator withdrew it). Scripted episodes wait for the operator's approval before recording unless the persona is set to auto-approve.
-_Avoid_: draft, in progress, done, live, pending.
+Exactly one of: **idea** (concept only), **scripted** (script written, waiting for operator approval), **waiting on you** (a checklist item blocks it), **recording** (producer is recording shots), **rendered**, shown as "Ready to publish" (renders exist; the publish package waits for the operator's approval), **scheduled** (publications queued), **published** (every publication live), **measured** (metrics collected after the measurement window), **failed** (an agent run gave up; the error is on the episode), and **killed** (the operator withdrew it). Scripted episodes wait for the operator's approval before recording unless the persona is set to auto-approve, and rendered ones wait for approval of their publish package unless the persona publishes on its own. Needs approval, waiting on you and ready to publish are what "waits on you" counts; failed is counted on its own.
+_Avoid_: draft (that is a publication in a package), in progress, done, live (that is a publication), pending.
 
 **Measurement window**:
 The time after publishing (72 hours by default) during which the analyst snapshots metrics before marking an episode measured and feeding its experiment.

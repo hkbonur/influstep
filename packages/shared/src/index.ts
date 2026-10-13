@@ -1,5 +1,7 @@
 export * from './episode-status'
 export * from './episode-kinds'
+export * from './beats'
+export * from './publications'
 export * from './posts'
 export * from './post-mix'
 export * from './account'

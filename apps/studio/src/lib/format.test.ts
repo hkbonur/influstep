@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addDays, formatCount, formatHour, formatMoney, languageName, plural, weekStart } from './format'
+import { addDays, formatCount, formatDateTime, formatHour, formatMoney, languageName, plural, urlHost, weekStart } from './format'
 
 describe('format', () => {
   it('shortens counts the way a report reads them', () => {
@@ -26,6 +26,18 @@ describe('format', () => {
   it('finds Monday and walks days across a month end', () => {
     expect(weekStart('2026-10-09')).toBe('2026-10-05')
     expect(addDays('2026-10-30', 3)).toBe('2026-11-02')
+  })
+  it('reads a moment on the clock of the time zone it is given', () => {
+    const at = Date.UTC(2026, 9, 14, 14, 0)
+    // The browser's locale picks a 24 or a 12 hour clock; either way it is four in the afternoon in Oslo.
+    expect(formatDateTime(at, 'Europe/Oslo')).toMatch(/16[:.]00|0?4[:.]00\s?PM/i)
+    expect(formatDateTime(at, 'America/New_York')).toMatch(/10[:.]00/)
+  })
+  it('finds the host of a URL, and knows when the text is not one', () => {
+    expect(urlHost('https://app.n8n.cloud/workflow/new')).toBe('app.n8n.cloud')
+    expect(urlHost('http://localhost:5678/home')).toBe('localhost:5678')
+    expect(urlHost('')).toBeNull()
+    expect(urlHost('n8n.io')).toBeNull()
   })
   it('names a language tag, and knows when it cannot', () => {
     expect(languageName('nb', 'en')).toBe('Norwegian Bokmål')

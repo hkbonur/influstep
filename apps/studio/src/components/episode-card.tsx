@@ -1,4 +1,4 @@
-import { EPISODE_STATUS_TINTS, SPONSOR_SEGMENT_LABELS, isPost, type PostKind } from '@influstep/shared'
+import { EPISODE_STATUS_TINTS, SPONSOR_SEGMENT_LABELS, isPost, waitsOnOperator, type PostKind } from '@influstep/shared'
 import { Link } from '@tanstack/react-router'
 import { api } from '@influstep/convex/_generated/api'
 import type { FunctionReturnType } from 'convex/server'
@@ -17,7 +17,8 @@ export type CalendarEpisode = FunctionReturnType<typeof api.private.calendar.wee
  */
 export function EpisodeCard(props: { episode: CalendarEpisode }) {
   const episode = props.episode
-  const loud = episode.status === 'failed' || episode.status === 'waiting_on_you' || episode.status === 'scripted'
+  // A border when the card needs the operator: it waits on them, or it failed.
+  const loud = waitsOnOperator(episode.status) || episode.status === 'failed'
   return (
     <Link
       to="/episodes/$episodeId"

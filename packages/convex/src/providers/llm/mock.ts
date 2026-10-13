@@ -2,7 +2,11 @@ import {
   CARD_TITLE_MAX,
   POST_LENGTHS,
   SHORT_POST_MAX,
+  WORDS_PER_SECOND,
+  lengthProblem,
   xLength,
+  type Beat,
+  type Delivery,
   type Habit,
   type LengthMix,
   type PostIntent,
@@ -10,7 +14,6 @@ import {
 } from '@influstep/shared'
 import {
   PRESENTER_TOOL,
-  WORDS_PER_SECOND,
   type AccountPostSample,
   type LlmProvider,
   type PostBrief,
@@ -24,8 +27,15 @@ import {
 /**
  * A template writer. Deterministic from the brief, so a seeded demo and a
  * test read the same script twice. It is honest about being a mock: every
- * script opens with the concept and names the variant it follows. The body
- * grows with the format's length and the shot plan follows its delivery.
+ * script opens with the concept and names the variant it follows.
+ *
+ * The beats are the script, written to the rules the real writer is held
+ * to: the hook alone on the first beat, a fix that grows with the format's
+ * length, the sponsor in a beat when the slot carries one, and the call to
+ * action closing the last beat. A format too short for the full sponsor
+ * lines gets compact ones, so every sponsor segment fits from the shortest
+ * format up. The beats follow the delivery.
+ *
  * A post opens with its topic too, follows its intent and length, and every
  * part is cut to the limit the brief gives it, so a mock post always passes
  * X's rules. A voice in Norwegian or Turkish puts a short native phrase in
@@ -36,21 +46,11 @@ export const mockLlm: LlmProvider = {
   name: 'mock',
   async writeScript(brief: ScriptBrief): Promise<ScriptDraft> {
     const topic = brief.signals[0]?.title ?? brief.concept
-    const hook = hookFor(brief, topic)
-    const sponsor = sponsorFor(brief)
-    const cta =
-      brief.sponsorSegment === 'none'
-        ? `Follow ${brief.persona.name} for more ${brief.pillar.toLowerCase()}.`
-        : `Link to ${brief.sponsorName} in the description. Follow for the next one.`
-    const body = bodyFor(brief, {
-      budget: Math.round(brief.format.lengthSec * WORDS_PER_SECOND) - wordCount([hook, sponsor, cta].join(' ')),
-    })
+    const full = beatsFor(brief, topic, { compact: false })
     return {
       title: titleFor(brief.pillar, topic),
-      hook,
-      script: { hook, body, sponsor, cta },
-      shotPlan: shotPlanFor(brief, { hook, body, sponsor }),
-      topics: [brief.pillar, ...topic.toLowerCase().split(/\s+/).slice(0, 2)],
+      description: descriptionFor(brief, topic),
+      shotPlan: lengthProblem(full, brief.format.lengthSec) === null ? full : beatsFor(brief, topic, { compact: true }),
     }
   },
   async writePost(brief: PostBrief): Promise<PostDraft> {
@@ -235,11 +235,79 @@ function fit(text: string, limit: number): string {
   return `${words.join(' ')}…`
 }
 
-function sponsorFor(brief: ScriptBrief): string {
-  if (brief.sponsorSegment === 'none') return ''
-  if (brief.sponsorSegment === 'mention')
-    return `This one is sponsored by ${brief.sponsorName}: forms your workflows and AI agents send to one customer and get back as answers.`
-  return `And when the workflow needs something from a customer, I use ${brief.sponsorName}. Create a request, the customer gets a prefilled form, the answers come straight back into the flow. Here it is.`
+/** What the script says besides the fix: the hook, the sponsor line its segment asks for, and the call to action. */
+interface ScriptLines {
+  hook: string
+  /** One sentence inside the fix that names the sponsor and says it is sponsored. */
+  mention: string | null
+  /** The voiceover of the sponsor's own beat. */
+  demo: string | null
+  cta: string
+}
+
+/** The full lines, or the compact ones for a format too short to hold them. */
+function linesFor(brief: ScriptBrief, topic: string, args: { compact: boolean }): ScriptLines {
+  const hook = hookFor(brief, topic)
+  const sponsor = brief.sponsorName
+  if (brief.sponsorSegment === 'none') {
+    return {
+      hook,
+      mention: null,
+      demo: null,
+      cta: args.compact ? 'Follow for more.' : `Follow ${brief.persona.name} for more ${brief.pillar.toLowerCase()}.`,
+    }
+  }
+  const cta = args.compact ? 'Follow for more.' : `Try ${sponsor}, and follow for the next one.`
+  if (brief.sponsorSegment === 'mention') {
+    const mention = args.compact
+      ? `Sponsored by ${sponsor}.`
+      : `This one is sponsored by ${sponsor}: forms your workflows and AI agents send to one customer and get back as answers.`
+    return { hook, mention, demo: null, cta }
+  }
+  const demo = args.compact
+    ? `Sponsored by ${sponsor}: a request, a prefilled form, the answers back.`
+    : `This part is sponsored by ${sponsor}. When the workflow needs something from a customer, it creates a request, the customer gets a prefilled form, and the answers come straight back into the flow. Here it is.`
+  return { hook, mention: null, demo, cta }
+}
+
+/**
+ * Talking head: the presenter speaks every beat. Screen with avatar: the
+ * presenter says the hook, then the screens. Screen only: every beat is a
+ * screen. A demo is its own beat on the sponsor's site under every delivery,
+ * and a talking head speaks it to camera all the same.
+ */
+function beatsFor(brief: ScriptBrief, topic: string, args: { compact: boolean }): Beat[] {
+  const lines = linesFor(brief, topic, args)
+  const fixed = [lines.hook, lines.mention, lines.demo, lines.cta].filter((line) => line !== null).join(' ')
+  const body = bodyFor(brief, { budget: Math.round(brief.format.lengthSec * WORDS_PER_SECOND) - wordCount(fixed) })
+  const fix = lines.mention === null ? body : `${body} ${lines.mention}`
+  const opening = openingBeat(brief.format.delivery, lines.hook)
+  const fixScreen =
+    brief.format.delivery === 'talking_head' ? { tool: PRESENTER_TOOL, url: '' } : { tool: 'n8n', url: 'http://localhost:5678' }
+  if (lines.demo === null) return [opening, { title: 'The fix', voiceover: `${fix} ${lines.cta}`, ...fixScreen }]
+  return [
+    opening,
+    { title: 'The fix', voiceover: fix, ...fixScreen },
+    { title: `${brief.sponsorName} demo`, voiceover: `${lines.demo} ${lines.cta}`, tool: brief.sponsorName, url: brief.sponsorUrl },
+  ]
+}
+
+/** The first beat says the hook and nothing else, so the hook is its first sentence. */
+function openingBeat(delivery: Delivery, hook: string): Beat {
+  if (delivery === 'screen_only') return { title: 'The problem', voiceover: hook, tool: 'browser', url: 'https://news.ycombinator.com' }
+  return { title: 'The hook', voiceover: hook, tool: PRESENTER_TOOL, url: '' }
+}
+
+/**
+ * What the video shows, in the persona's voice, and nothing else. It becomes
+ * every video publication's body, so it never quotes a directive: the
+ * operator's words can carry a link or run past the body's limit, and the
+ * writer's checks would then fail every script of the persona.
+ */
+function descriptionFor(brief: ScriptBrief, topic: string): string {
+  const sentences = [`Where ${topic.toLowerCase()} breaks, and the plain way to fix it.`]
+  if (brief.sponsorSegment === 'demo') sentences.push(`Then I show how ${brief.sponsorName} collects what a flow needs from a customer.`)
+  return sentences.join(' ')
 }
 
 /** Steps a longer format keeps adding until the word budget is spent. Cycled, so a long tutorial reads as a tutorial. */
@@ -252,9 +320,9 @@ const MORE_STEPS = [
   'Save, run it again, and check the output end to end.',
 ]
 
-/** The setup sentences first, then numbered steps until the budget is met. Never shorter than the setup. */
+/** The setup sentences, then numbered steps, until the budget is met. Always at least the first sentence, so the fix is never silent. */
 function bodyFor(brief: ScriptBrief, args: { budget: number }): string {
-  const sentences = [
+  const setup = [
     `Here is the setup. ${brief.concept}.`,
     brief.signals.length > 0
       ? `People on ${brief.signals.map((signal) => hostOf(signal.url)).join(' and ')} were asking about this all week.`
@@ -262,35 +330,20 @@ function bodyFor(brief: ScriptBrief, args: { budget: number }): string {
     `Step one, open the tool and find the place everyone gets stuck.`,
     `Step two, fix it the plain way. No plugins, no tricks.`,
   ].filter(Boolean)
-  let step = 3
-  while (wordCount(sentences.join(' ')) < args.budget) {
-    const more = MORE_STEPS[(step - 3) % MORE_STEPS.length]
-    if (!more) throw new Error('the mock writer ran out of steps')
-    sentences.push(`Step ${step}, ${more.charAt(0).toLowerCase()}${more.slice(1)}`)
-    step += 1
+  const sentences: string[] = []
+  while (sentences.length === 0 || wordCount(sentences.join(' ')) < args.budget) {
+    sentences.push(bodySentence(setup, sentences.length))
   }
-  if (brief.directives.length > 0) sentences.push(`(Writer note: following the directive "${brief.directives[0]}".)`)
   return sentences.join(' ')
 }
 
-/** Talking head: the presenter speaks every beat. Otherwise the screens as always, the sponsor demo as its own screen. */
-function shotPlanFor(brief: ScriptBrief, script: { hook: string; body: string; sponsor: string }): ScriptDraft['shotPlan'] {
-  if (brief.format.delivery === 'talking_head') {
-    return [
-      { title: 'The hook', voiceover: script.hook, tool: PRESENTER_TOOL, url: '' },
-      { title: 'The fix', voiceover: script.body, tool: PRESENTER_TOOL, url: '' },
-      ...(brief.sponsorSegment === 'demo'
-        ? [{ title: `${brief.sponsorName} demo`, voiceover: script.sponsor, tool: PRESENTER_TOOL, url: '' }]
-        : []),
-    ]
-  }
-  return [
-    { title: 'The problem', voiceover: script.hook, tool: 'browser', url: 'https://news.ycombinator.com' },
-    { title: 'The fix', voiceover: script.body, tool: 'n8n', url: 'http://localhost:5678' },
-    ...(brief.sponsorSegment === 'demo'
-      ? [{ title: `${brief.sponsorName} demo`, voiceover: script.sponsor, tool: brief.sponsorName, url: 'https://formstep.io' }]
-      : []),
-  ]
+function bodySentence(setup: string[], index: number): string {
+  const sentence = setup[index]
+  if (sentence !== undefined) return sentence
+  const extra = index - setup.length
+  const more = MORE_STEPS[extra % MORE_STEPS.length]
+  if (!more) throw new Error('the mock writer ran out of steps')
+  return `Step ${extra + 3}, ${more.charAt(0).toLowerCase()}${more.slice(1)}`
 }
 
 function wordCount(text: string): number {

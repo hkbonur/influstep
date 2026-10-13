@@ -1,5 +1,5 @@
 import { v } from 'convex/values'
-import { readsAsDirective } from '@influstep/shared'
+import { readsAsDirective, waitsOnOperator } from '@influstep/shared'
 import { internal } from '../_generated/api'
 import type { Doc } from '../_generated/dataModel'
 import { mutation, query } from '../_generated/server'
@@ -35,6 +35,8 @@ const personaFields = {
   sponsorRampEpisodes: v.number(),
   episodesPerWeek: v.number(),
   autoApprove: v.boolean(),
+  // Off, each rendered episode waits for the operator as a publish package; on, it is scheduled at once.
+  autoPublish: v.boolean(),
   timezone: v.string(),
 }
 
@@ -53,21 +55,35 @@ export const list = query({
         .query('checklistItems')
         .withIndex('by_persona_status', (q) => q.eq('personaId', persona._id).eq('status', 'open'))
         .collect()
+      const waiting = episodes.filter((episode) => waitsOnOperator(episode.status))
       out.push({
         ...persona,
         working: working.has(persona._id),
         counts: {
           episodes: episodes.length,
           published: episodes.filter((episode) => episode.status === 'published' || episode.status === 'measured').length,
-          needsApproval: episodes.filter((episode) => episode.status === 'scripted').length,
+          // A script to approve, a sign-in, a publish package (shared waitsOnOperator); failed has its own count.
+          waitsOnOperator: waiting.length,
           failed: episodes.filter((episode) => episode.status === 'failed').length,
           checklist: open.length,
+          // The sidebar's mark (slice 3): each thing that waits on the operator, counted once.
+          waitingTotal: open.length + waiting.filter((episode) => !heldByOpenItem(episode, open)).length,
         },
       })
     }
     return out.sort((a, b) => a.createdAt - b.createdAt)
   },
 })
+
+/**
+ * An episode held by a sign-in waits for exactly its open checklist items:
+ * doing them releases it, so the mark counts the items and not the episode as
+ * well. A script or a package to approve is a wait of its own.
+ */
+function heldByOpenItem(episode: Doc<'episodes'>, open: Doc<'checklistItems'>[]): boolean {
+  if (episode.status !== 'waiting_on_you') return false
+  return open.some((item) => item.episodeId === episode._id)
+}
 
 export const get = query({
   args: { personaId: v.id('personas') },

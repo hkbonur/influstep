@@ -3,24 +3,26 @@ import {
   DEFAULT_FORMATS,
   X_IMAGE_ASPECT,
   formatAspects,
+  hookOf,
   postHook,
   postLengthOf,
   postSlotHours,
   resolveEpisodeFormat,
   voiceStats,
+  type Beat,
   type EpisodePost,
   type ImportedPost,
   type Platform,
   type PlatformFormat,
   type PostIntent,
   type PostKind,
+  type SponsorSegment,
   type VoiceEdit,
 } from '@influstep/shared'
 import { internal } from '../_generated/api'
 import type { Id, TableNames } from '../_generated/dataModel'
 import { internalAction, internalMutation } from '../_generated/server'
 import { insertAccountPosts, topOriginalsOf } from '../core/account'
-import { describePublication } from '../core/attribution'
 import { openXChecklist } from '../core/checklist'
 import { addDays, dayKey, instantAt, weekStart } from '../core/dates'
 import { createIdea, createPostPublication, createTrackedLink, shotsFromDraft } from '../core/episodes'
@@ -29,7 +31,7 @@ import { enqueueJob } from '../jobs/queue'
 import type { FoundConversion } from '../providers/analytics'
 import { mockAnalytics } from '../providers/analytics/mock'
 import { mockDiscounts } from '../providers/discounts/mock'
-import { PRESENTER_TOOL, type ScriptDraft } from '../providers/llm'
+import { PRESENTER_TOOL } from '../providers/llm'
 
 /**
  * The demo workspace: two personas, a planned week, a running experiment,
@@ -58,6 +60,46 @@ const MAX_FORMATS: PlatformFormat[] = [
     publishHour: 17,
   },
 ]
+
+/** Where Ada's screen beats record: the n8n she runs in docker. */
+const N8N_URL = 'http://localhost:5678'
+
+/**
+ * The beats of a seeded video, as the writer leaves them: the hook opens the
+ * first beat, the fix is shown in n8n, the sponsor comes in as the segment
+ * asks (a sponsored sentence for a mention, a beat on its own screen for a
+ * demo, nothing otherwise), and the call to action closes the last beat.
+ */
+function seededBeats(args: {
+  hook: string
+  opener: Omit<Beat, 'voiceover'>
+  fix: string
+  sponsorSegment: SponsorSegment
+  sponsorName: string
+  sponsorUrl: string
+}): Beat[] {
+  const mention = `This one is sponsored by ${args.sponsorName}: when the workflow needs something from a customer, ${args.sponsorName} collects it.`
+  const beats: Beat[] = [
+    { ...args.opener, voiceover: `${args.hook} Here is the setup.` },
+    { title: 'The fix', voiceover: args.sponsorSegment === 'mention' ? `${args.fix} ${mention}` : args.fix, tool: 'n8n', url: N8N_URL },
+  ]
+  if (args.sponsorSegment === 'demo') {
+    beats.push({
+      title: `${args.sponsorName} demo`,
+      voiceover: `Here is ${args.sponsorName}, who sponsored this video, collecting the answer from the customer and handing it back to n8n.`,
+      tool: args.sponsorName,
+      url: args.sponsorUrl,
+    })
+  }
+  return beats.map((beat, index) =>
+    index === beats.length - 1 ? { ...beat, voiceover: `${beat.voiceover} Follow Ada for the next one.` } : beat
+  )
+}
+
+/** The writer's description of a seeded video: what it shows, in Ada's voice, with no link, code or disclosure. */
+function seededDescription(concept: string): string {
+  return `${concept}, shown in n8n from the failing node to the fix. No plugins you do not need.`
+}
 
 /** The card title of the seeded image post; the seeded card image shows the same words. */
 const SEEDED_CARD_TITLE = 'Set an error workflow first'
@@ -385,8 +427,8 @@ function seededCardSvg(): string {
 export const run = internalAction({
   args: { appUrl: v.optional(v.string()) },
   handler: async (ctx, args): Promise<{ workspaceId: Id<'workspaces'> }> => {
-    // A tiny placeholder file stands in for the seeded video renders; the runner
-    // uploads real (mock) videos for anything it produces from here on.
+    // A tiny placeholder file stands in for every seeded video render, the rendered episode's publish package
+    // included. It is not a playable video. The runner uploads real (mock) videos for anything it produces.
     const storageId = await ctx.storage.store(new Blob([new Uint8Array([0, 0, 0, 0x1c, 0x66, 0x74, 0x79, 0x70])], { type: 'video/mp4' }))
     const cardStorageId = await ctx.storage.store(new Blob([seededCardSvg()], { type: 'image/svg+xml' }))
     return ctx.runMutation(internal.internal.seed.write, { storageId, cardStorageId, appUrl: args.appUrl ?? 'http://localhost:3300' })
@@ -427,6 +469,8 @@ export const write = internalMutation({
       sponsorRampEpisodes: 10,
       episodesPerWeek: 5,
       autoApprove: false,
+      // Ada's rendered episodes wait as publish packages, so the demo shows one to approve.
+      autoPublish: false,
       paused: false,
       timezone: TIMEZONE,
       createdAt: now - 40 * 86_400_000,
@@ -448,6 +492,7 @@ export const write = internalMutation({
       sponsorRampEpisodes: 10,
       episodesPerWeek: 3,
       autoApprove: true,
+      autoPublish: true,
       paused: false,
       timezone: TIMEZONE,
       createdAt: now - 10 * 86_400_000,
@@ -633,16 +678,15 @@ export const write = internalMutation({
       const scheduledAt = earliestPublishAt(ada, adaPlatforms, plannedFor)
       // Live once the last platform went out.
       const publishedAt = Math.max(...adaFormats.map((format) => platformInstant(plannedFor, format)))
-      const hook =
-        variantKey === 'wrong' ? `I was wrong about ${concept.toLowerCase()}.` : `How to ${concept.toLowerCase()} in under a minute.`
-      const body = `Here is the setup. ${concept}. Step one, open n8n and find the node that fails. Step two, add an error workflow and a retry.`
-      const draft: Pick<ScriptDraft, 'hook' | 'shotPlan'> = {
-        hook,
-        shotPlan: [
-          { title: 'The hook', voiceover: hook, tool: PRESENTER_TOOL, url: '' },
-          { title: 'The fix', voiceover: body, tool: 'n8n', url: 'http://localhost:5678' },
-        ],
-      }
+      const shotPlan = seededBeats({
+        hook: variantKey === 'wrong' ? `I was wrong about ${concept.toLowerCase()}.` : `How to ${concept.toLowerCase()} in under a minute.`,
+        opener: { title: 'The hook', tool: PRESENTER_TOOL, url: '' },
+        fix: 'Step one, open n8n and find the node that fails. Step two, add an error workflow and a retry.',
+        sponsorSegment,
+        sponsorName: workspace.sponsorName,
+        sponsorUrl: workspace.sponsorUrl,
+      })
+      const description = seededDescription(concept)
       const episodeId = await ctx.db.insert('episodes', {
         personaId: adaId,
         slug: `${concept
@@ -654,18 +698,13 @@ export const write = internalMutation({
         status: index === historyConcepts.length - 1 ? 'published' : 'measured',
         concept,
         title: concept,
-        hook,
-        script: {
-          hook,
-          body,
-          sponsor: sponsorSegment === 'none' ? '' : 'And when the workflow needs something from a customer, I use Formstep.',
-          cta: 'Follow Ada for the next one.',
-        },
+        hook: hookOf(shotPlan),
+        description,
         sponsorSegment,
         platforms: adaPlatforms,
         format: adaFormat,
-        shotPlan: draft.shotPlan,
-        shots: shotsFromDraft(draft, workspace.sponsorName, adaFormat.delivery),
+        shotPlan,
+        shots: shotsFromDraft({ shotPlan }, workspace.sponsorName, adaFormat.delivery),
         renders: adaRenders(58),
         plannedFor,
         scheduledAt,
@@ -688,6 +727,7 @@ export const write = internalMutation({
         const link = await ctx.db.get(linkId)
         if (!link) throw new Error('link vanished')
         const externalId = `mock-${platform}-${index}`
+        // Off X each went out with Ada's description and her code, stamped at dispatch; X took the title alone.
         const publicationId = await ctx.db.insert('publications', {
           episodeId,
           personaId: adaId,
@@ -695,7 +735,8 @@ export const write = internalMutation({
           aspect: format.aspect,
           status: 'live',
           title: concept,
-          ...describePublication({ workspace, episode, platform, linkSlug: link.slug, discountCode: adaCode }),
+          body: platform === 'x' ? undefined : description,
+          discountCodeId: platform === 'x' ? undefined : adaCode._id,
           linkId,
           scheduledAt: liveAt,
           externalId,
@@ -792,14 +833,9 @@ export const write = internalMutation({
     }
 
     // This week: one episode at each of the remaining statuses, so the calendar shows the whole pipeline.
-    // Every one is scripted or later, so it carries Ada's resolved format and the beats its shots came from.
+    // Every one is scripted or later, so it carries Ada's resolved format, her description and the beats
+    // its shots came from. The rendered one waits two days out as a publish package, its drafts unsent.
     const monday = weekStart(today)
-    const mkScript = (concept: string) => ({
-      hook: `How to ${concept.toLowerCase()} in under a minute.`,
-      body: `Here is the setup. ${concept}. Step one, open the tool. Step two, fix it the plain way.`,
-      sponsor: '',
-      cta: 'Follow Ada for the next one.',
-    })
     const thisWeek = [
       {
         day: addDays(monday, 0),
@@ -811,17 +847,21 @@ export const write = internalMutation({
       { day: addDays(monday, 2), status: 'waiting_on_you', concept: 'Error workflows that page you only once' },
       { day: addDays(monday, 3), status: 'recording', concept: 'An agent that drafts the reply and waits for you' },
       { day: addDays(monday, 4), status: 'scheduled', concept: 'Pause a workflow until the customer signs off' },
+      { day: addDays(today, 2), status: 'rendered', concept: 'Send the quote and wait for the customer in n8n' },
     ] as const
     for (const [index, item] of thisWeek.entries()) {
-      const script = mkScript(item.concept)
       const scheduledAt = earliestPublishAt(ada, adaPlatforms, item.day)
-      const draft: Pick<ScriptDraft, 'hook' | 'shotPlan'> = {
-        hook: script.hook,
-        shotPlan: [
-          { title: 'The problem', voiceover: script.hook, tool: 'browser', url: 'https://news.ycombinator.com' },
-          { title: 'The fix', voiceover: script.body, tool: 'n8n', url: 'http://localhost:5678' },
-        ],
-      }
+      const sponsorSegment = index === 4 ? 'mention' : 'none'
+      // Two beats, the problem in a browser and the fix in n8n, so the shots are Ada and then her screen.
+      const shotPlan = seededBeats({
+        hook: `How to ${item.concept.toLowerCase()} in under a minute.`,
+        opener: { title: 'The problem', tool: 'browser', url: 'https://news.ycombinator.com' },
+        fix: 'Step one, open the tool. Step two, fix it the plain way.',
+        sponsorSegment,
+        sponsorName: workspace.sponsorName,
+        sponsorUrl: workspace.sponsorUrl,
+      })
+      const description = seededDescription(item.concept)
       const episodeId = await ctx.db.insert('episodes', {
         personaId: adaId,
         slug: `${item.concept
@@ -832,14 +872,14 @@ export const write = internalMutation({
         status: item.status,
         concept: item.concept,
         title: item.concept,
-        hook: script.hook,
-        script,
-        sponsorSegment: index === 4 ? 'mention' : 'none',
+        hook: hookOf(shotPlan),
+        description,
+        sponsorSegment,
         platforms: adaPlatforms,
         format: adaFormat,
-        shotPlan: draft.shotPlan,
-        shots: shotsFromDraft(draft, workspace.sponsorName, adaFormat.delivery),
-        renders: item.status === 'scheduled' ? adaRenders(55) : [],
+        shotPlan,
+        shots: shotsFromDraft({ shotPlan }, workspace.sponsorName, adaFormat.delivery),
+        renders: item.status === 'scheduled' || item.status === 'rendered' ? adaRenders(55) : [],
         plannedFor: item.day,
         scheduledAt,
         experimentId,
@@ -862,22 +902,22 @@ export const write = internalMutation({
           createdAt: now - 3_600_000,
         })
       }
-      if (item.status === 'scheduled') {
+      if (item.status === 'scheduled' || item.status === 'rendered') {
         const episode = await ctx.db.get(episodeId)
         if (!episode) throw new Error('episode vanished')
+        // The scheduled episode's package was approved, so its publications are queued; the rendered one's
+        // wait as drafts. Either way the footer and Ada's code are added at dispatch, never stored here.
         for (const format of adaFormats) {
           const { platform } = format
           const linkId = await createTrackedLink(ctx, { persona: ada, episode, platform, target: workspace.sponsorUrl })
-          const link = await ctx.db.get(linkId)
-          if (!link) throw new Error('link vanished')
           await ctx.db.insert('publications', {
             episodeId,
             personaId: adaId,
             platform,
             aspect: format.aspect,
-            status: 'queued',
+            status: item.status === 'scheduled' ? 'queued' : 'draft',
             title: item.concept,
-            ...describePublication({ workspace, episode, platform, linkSlug: link.slug, discountCode: adaCode }),
+            body: platform === 'x' ? undefined : description,
             linkId,
             scheduledAt: platformInstant(item.day, format),
             mock: true,
@@ -928,7 +968,6 @@ export const write = internalMutation({
         concept: post.concept,
         title: post.concept,
         hook: postHook(post.written.parts),
-        script: { hook: '', body: '', sponsor: '', cta: '' },
         post: post.written,
         sponsorSegment: post.sponsorSegment,
         platforms: ['x'],
@@ -978,7 +1017,7 @@ export const write = internalMutation({
         ],
       },
     })
-    const threadPublicationId = await createPostPublication(ctx, thread, ada, { mock: true })
+    const threadPublicationId = await createPostPublication(ctx, thread, ada, { mock: true, status: 'queued' })
     const threadExternalId = 'mock-x-thread'
     await ctx.db.patch(threadPublicationId, {
       status: 'live',
@@ -1019,7 +1058,8 @@ export const write = internalMutation({
         cardTitle: SEEDED_CARD_TITLE,
       },
     })
-    await createPostPublication(ctx, image, ada, { mock: true })
+    // The image post sits at "scheduled", so its package was approved and its publication is queued.
+    await createPostPublication(ctx, image, ada, { mock: true, status: 'queued' })
 
     // Ada took over an X account that already had a history: 40 hand-written posts (ADA_X_ORIGINALS and the
     // replies), and the voice the analyst learned from them, with her five most engaging originals as the

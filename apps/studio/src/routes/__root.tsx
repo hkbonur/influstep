@@ -270,8 +270,14 @@ function RosterSkeleton(props: { collapsed: boolean }) {
   )
 }
 
+/**
+ * What waits on the operator, each thing once: open checklist items, and the
+ * episodes the shared waitsOnOperator rule names (a script or a publish
+ * package to approve), an episode held by a sign-in counted through its
+ * checklist item. Failed has its own mark, the red dot.
+ */
 function personaMark(persona: PersonaRow): PersonaMark {
-  const waiting = persona.counts.checklist + persona.counts.needsApproval
+  const waiting = persona.counts.waitingTotal
   if (waiting > 0) return { kind: 'waiting', count: waiting }
   if (persona.counts.failed > 0) return { kind: 'failed' }
   return { kind: 'none' }

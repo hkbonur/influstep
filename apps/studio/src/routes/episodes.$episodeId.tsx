@@ -19,25 +19,13 @@ import { useMutation, useQuery } from 'convex/react'
 import type { FunctionReturnType } from 'convex/server'
 import React from 'react'
 import { PostEditor } from '@/components/post-editor'
-import { PostParts } from '@/components/post-parts'
+import { type DraftEdit, type DraftEdits, PublicationsSection, unsavedPlatforms } from '@/components/publish-package'
 import { ScriptEditor } from '@/components/script-editor'
 import { JobDot, PlatformGlyphs, PostKindIcon, PostShape, SponsorPill, StatusPill } from '@/components/status'
-import {
-  AttributionNote,
-  Button,
-  ErrorLine,
-  Eyebrow,
-  type FormState,
-  Input,
-  MockNote,
-  Mono,
-  PageHeader,
-  Pill,
-  Skeleton,
-} from '@/components/ui'
+import { AttributionNote, Button, ErrorLine, Eyebrow, type FormState, Input, MockNote, Mono, PageHeader, Skeleton } from '@/components/ui'
 import { cn } from '@/lib/cn'
 import { errorMessage } from '@/lib/errors'
-import { formatCount, formatDateTime, formatDay, formatMoney, relativeTime } from '@/lib/format'
+import { formatCount, formatDay, formatMoney, relativeTime } from '@/lib/format'
 
 export const Route = createFileRoute('/episodes/$episodeId')({ component: EpisodePage })
 
@@ -51,12 +39,29 @@ const APPROVE_LABEL: Record<EpisodeKind, string> = {
   thread: 'Approve and schedule',
 }
 
-/** Where publications come from before there are any: text posts and threads skip rendering. */
-const NO_PUBLICATIONS: Record<EpisodeKind, string> = {
-  video: 'Queued when the episode is approved and rendered.',
-  image: 'Queued when the card is rendered.',
-  text: 'Queued when the post is approved.',
-  thread: 'Queued when the post is approved.',
+/**
+ * Where publications come from before there are any. A render makes a video's
+ * or an image post's publications, which wait as a publish package unless the
+ * persona publishes on its own; text posts and threads skip rendering and are
+ * queued by their approval.
+ */
+function noPublicationsLine(kind: EpisodeKind, autoPublish: boolean): string {
+  if (kind === 'text' || kind === 'thread') return 'Queued when the post is approved.'
+  const rendered = kind === 'video' ? 'the episode is rendered' : 'the card is rendered'
+  if (autoPublish) return `Queued when ${rendered}.`
+  return `Waits for you as a publish package once ${rendered}.`
+}
+
+/**
+ * Where the header's Approve and schedule stands. It is never disabled while
+ * it runs, since that drops focus; a second click is ignored instead. Once it
+ * went through, the count of publications it queued is said in the package's
+ * live line, for the episode it was approved on.
+ */
+type ApprovalState = { status: 'idle' } | { status: 'approving' } | { status: 'approved'; episodeId: Id<'episodes'>; queued: number }
+
+function queuedLine(queued: number): string {
+  return queued === 1 ? '1 publication queued.' : `${queued} publications queued.`
 }
 
 function EpisodePage() {
@@ -69,8 +74,13 @@ function EpisodePage() {
   const retry = useMutation(api.private.episodes.retry)
   const reschedule = useMutation(api.private.episodes.reschedule)
   const retryJob = useMutation(api.private.jobs.retry)
+  const approvePackage = useMutation(api.private.publications.approvePackage)
   const [error, setError] = React.useState<string | null>(null)
   const [day, setDay] = React.useState<string | null>(null)
+  // Here rather than in the package: the header's Approve and schedule must not publish the saved text over an unsaved edit.
+  const [draftEdits, setDraftEdits] = React.useState<DraftEdits>({})
+  const [approval, setApproval] = React.useState<ApprovalState>({ status: 'idle' })
+  const packageLineId = React.useId()
 
   if (data === undefined) return <Skeleton className="h-96" />
   if (data === null) return <p className="text-ash">This episode does not exist.</p>
@@ -89,6 +99,26 @@ function EpisodePage() {
   const openItems = data.checklist.filter((item) => item.status === 'open')
   const showValue = episode.status === 'published' || episode.status === 'measured' || data.value.clicks > 0
   const carriesCode = !isPost(episode.kind) && episode.platforms.some((platform) => platform !== 'x')
+  const packageWaits = episode.status === 'rendered' && data.publications.some((publication) => publication.status === 'draft')
+  const unsaved = unsavedPlatforms(data.publications, draftEdits)
+  const editDraft = (publicationId: Id<'publications'>, edit: DraftEdit | null) =>
+    setDraftEdits((current) => ({ ...current, [publicationId]: edit === null ? undefined : edit }))
+  const approveAndSchedule = async () => {
+    // A second click while the first is out would be refused as already scheduled, and that refusal would read as a failure.
+    if (approval.status === 'approving') return
+    setError(null)
+    setApproval({ status: 'approving' })
+    try {
+      const queued = await approvePackage({ episodeId })
+      setApproval({ status: 'approved', episodeId, queued })
+      // The button leaves with the package's wait; focus goes to the line that says what happened, not to the top of the page.
+      document.getElementById(packageLineId)?.focus()
+    } catch (caught) {
+      setApproval({ status: 'idle' })
+      setError(errorMessage(caught))
+    }
+  }
+  const packageNotice = approval.status === 'approved' && approval.episodeId === episodeId ? queuedLine(approval.queued) : null
 
   return (
     <>
@@ -126,6 +156,16 @@ function EpisodePage() {
                 {APPROVE_LABEL[episode.kind]}
               </Button>
             )}
+            {packageWaits && (
+              <Button
+                variant="primary"
+                disabled={unsaved.length > 0}
+                aria-busy={approval.status === 'approving'}
+                onClick={approveAndSchedule}
+              >
+                Approve and schedule
+              </Button>
+            )}
             {episode.status === 'failed' && (
               <Button variant="primary" onClick={run(() => retry({ episodeId }))}>
                 Retry
@@ -153,11 +193,14 @@ function EpisodePage() {
           locked={!platformsOpen(episode.status)}
         />
       )}
-      {error && (
-        <div className="mb-4">
-          <ErrorLine>{error}</ErrorLine>
-        </div>
-      )}
+      {/* Stays mounted, so a refused header action is announced where it appears, above the content. */}
+      <div aria-live="polite">
+        {error && (
+          <div className="mb-4">
+            <ErrorLine>{error}</ErrorLine>
+          </div>
+        )}
+      </div>
       {episode.error && (
         <div className="mb-6">
           <ErrorLine>{episode.error}</ErrorLine>
@@ -183,6 +226,22 @@ function EpisodePage() {
 
       <div className="grid gap-8 lg:grid-cols-[1.4fr_1fr]">
         <div className="space-y-8">
+          {/* Once there are publications they lead the page: at "Ready to publish" they are what the operator acts on. */}
+          {data.publications.length > 0 && (
+            <PublicationsSection
+              kind={episode.kind}
+              episodeStatus={episode.status}
+              timezone={persona.timezone}
+              publications={data.publications}
+              links={data.links}
+              appUrl={data.appUrl}
+              codesSent={data.codesSent}
+              edits={draftEdits}
+              onEdit={editDraft}
+              notice={packageNotice}
+              statusId={packageLineId}
+            />
+          )}
           <section>
             <Eyebrow className="mb-3">{isPost(episode.kind) ? 'Post' : 'Script'}</Eyebrow>
             <p className="mb-3 text-ash">
@@ -199,16 +258,9 @@ function EpisodePage() {
                 card={cardOf(data)}
               />
             ) : (
-              // Keyed on the text it edits: a saved or rewritten script remounts it, a platform change or a move does not.
+              // Keyed on the beats it edits: saved or rewritten beats remount it, a platform change or a move does not.
               <ScriptEditor
-                key={[
-                  episode.title,
-                  episode.hook,
-                  episode.script.hook,
-                  episode.script.body,
-                  episode.script.sponsor,
-                  episode.script.cta,
-                ].join('\u0000')}
+                key={[episode.title, ...(episode.shotPlan ?? []).flatMap((beat) => [beat.title, beat.voiceover])].join('\u0000')}
                 episode={episode}
                 sponsorName={data.sponsorName}
               />
@@ -219,73 +271,21 @@ function EpisodePage() {
         </div>
 
         <div className="space-y-8">
-          {/* An image post's one render is its card, shown in the post editor; a picture does not belong in a video player. */}
-          {!isPost(episode.kind) && <RendersSection renders={data.renders} />}
-
-          <section>
-            <Eyebrow className="mb-3">Publications</Eyebrow>
-            {data.publications.length === 0 && <p className="text-ash">{NO_PUBLICATIONS[episode.kind]}</p>}
-            {/* Nothing is appended on X, posts and videos alike, so the code line speaks only for a video's other platforms. */}
-            {carriesCode && (
-              <DescriptionCode
-                codesInDescriptions={data.codesInDescriptions}
-                nextCode={data.discountCode}
-                written={data.publications.length > 0}
-              />
-            )}
-            {data.publications.length > 0 && (
-              <ul className="divide-y divide-mist border-y border-mist">
-                {data.publications.map((publication) => {
-                  const link = data.links.find((candidate) => candidate._id === publication.linkId)
-                  return (
-                    <li key={publication._id} className="grid gap-0.5 py-2 text-sm">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">{PLATFORM_LABELS[publication.platform]}</span>
-                        {publication.aspect && <Mono className="text-ash">{publication.aspect}</Mono>}
-                        <Pill
-                          tint={
-                            publication.status === 'live'
-                              ? 'field-green'
-                              : publication.status === 'failed'
-                                ? 'signal-red'
-                                : publication.status === 'uploading'
-                                  ? 'note-blue'
-                                  : 'fog'
-                          }
-                        >
-                          {publication.status}
-                        </Pill>
-                        <span className="tabular ml-auto font-mono text-[11px] text-ash">
-                          {publication.publishedAt
-                            ? formatDateTime(publication.publishedAt)
-                            : `due ${relativeTime(publication.scheduledAt)}`}
-                        </span>
-                      </div>
-                      {/* A post publication as X receives it: the parts exactly as written. */}
-                      {publication.parts && <PostParts parts={publication.parts} className="my-1 text-xs text-graphite" />}
-                      {publication.url && (
-                        <a
-                          href={publication.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="truncate font-mono text-[11px] text-graphite hover:underline"
-                        >
-                          {publication.url}
-                        </a>
-                      )}
-                      {/* Nothing is appended on X, so its tracked link never reaches a reader; showing it would suggest it does. */}
-                      {link && publication.platform !== 'x' && (
-                        <span className="font-mono text-[11px] text-ash">
-                          {data.appUrl}/go/{link.slug} · {link.clicks} clicks
-                        </span>
-                      )}
-                      {publication.error && <ErrorLine>{publication.error}</ErrorLine>}
-                    </li>
-                  )
-                })}
-              </ul>
-            )}
-          </section>
+          {/*
+            Before there are publications: a video's renders, if any, and where its publications will come from. Once they
+            exist the package shows each render in its block. An image post's one render is its card, shown in the post editor.
+          */}
+          {data.publications.length === 0 && (
+            <section>
+              <Eyebrow className="mb-3">Publications</Eyebrow>
+              <p className="text-ash">{noPublicationsLine(episode.kind, persona.autoPublish)}</p>
+              {/* Nothing is appended on X, posts and videos alike, so the code line speaks only for a video's other platforms. */}
+              {carriesCode && <CodeInForce code={data.discountCode} />}
+            </section>
+          )}
+          {data.publications.length === 0 && episode.kind === 'video' && data.renders.length > 0 && (
+            <RendersSection renders={data.renders} />
+          )}
 
           {showValue && (
             <section className="space-y-3">
@@ -443,33 +443,17 @@ function PlatformsSection(props: { episodeId: Id<'episodes'>; platforms: Platfor
 }
 
 /**
- * Which code the viewer sees. Written descriptions carry the code they were
- * built with, whatever is in force now; an episode without descriptions yet
- * gets the code in force at its next render.
+ * The code every description carries when it goes out, since the lines
+ * around a description are composed at dispatch: the code in force then, not
+ * at render. Shown before there are publications; after that each block of
+ * the package shows its own lines.
  */
-function DescriptionCode(props: {
-  codesInDescriptions: { code: string; offer: string }[]
-  nextCode: { code: string; offer: string } | null
-  written: boolean
-}) {
-  if (!props.written) {
-    if (!props.nextCode) return <p className="mb-2 text-sm text-ash">No discount code for the next render.</p>
-    return (
-      <p className="mb-2 text-sm">
-        Next render gets code <Mono>{props.nextCode.code}</Mono> <span className="text-ash">({props.nextCode.offer})</span>
-      </p>
-    )
-  }
-  if (props.codesInDescriptions.length === 0) return <p className="mb-2 text-sm text-ash">No discount code in the descriptions.</p>
+function CodeInForce(props: { code: { code: string; offer: string } | null }) {
+  if (props.code === null) return <p className="mt-2 text-sm text-ash">No discount code in force.</p>
   return (
-    <p className="mb-2 text-sm">
-      Code in descriptions:{' '}
-      {props.codesInDescriptions.map((code, index) => (
-        <React.Fragment key={code.code}>
-          {index > 0 && ', '}
-          <Mono>{code.code}</Mono> <span className="text-ash">({code.offer})</span>
-        </React.Fragment>
-      ))}
+    <p className="mt-2 text-sm">
+      Code in force: <Mono>{props.code.code}</Mono> <span className="text-ash">({props.code.offer})</span>. A description carries the code
+      in force when it goes out.
     </p>
   )
 }
@@ -557,7 +541,6 @@ function RendersSection(props: { renders: EpisodeData['renders'] }) {
   return (
     <section>
       <Eyebrow className="mb-3">Renders</Eyebrow>
-      {props.renders.length === 0 && <p className="text-ash">Nothing rendered yet.</p>}
       <div className="flex flex-wrap gap-3">
         {props.renders.map((render) => (
           <figure key={render.aspect} className="w-40">

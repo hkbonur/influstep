@@ -2,15 +2,20 @@ import { v, type Infer } from 'convex/values'
 import {
   MEASUREMENT_WINDOW_MS,
   POST_LENGTH_LABELS,
+  PUBLICATION_BODY_MAX,
+  PUBLICATION_TITLE_MAX,
   SIGNAL_SOURCES,
   X_POST_LIMIT,
   decideExperiment,
+  hookOf,
   isPost,
+  lengthProblem,
   METRIC_DENOMINATOR,
   normalizeDiscountCode,
   postLengthOf,
   postProblems,
   resolveEpisodeFormat,
+  scriptProblems,
   voiceStatsOf,
   type EpisodePost,
   type PostKind,
@@ -42,7 +47,14 @@ import { providersMode } from '../lib/env'
 import { analyticsProvider } from '../providers/analytics'
 import { platformProvider } from '../providers/comments'
 import { discountsProvider } from '../providers/discounts'
-import { POST_LENGTH_TARGETS, llmProvider, type AccountPostSample, type PostBrief } from '../providers/llm'
+import {
+  POST_LENGTH_TARGETS,
+  llmProvider,
+  type AccountPostSample,
+  type PostBrief,
+  type ScriptBrief,
+  type ScriptDraft,
+} from '../providers/llm'
 import { signalSourceHasRealAdapter, signalsProvider } from '../providers/signals'
 import { timelineProvider } from '../providers/timeline'
 import {
@@ -50,7 +62,6 @@ import {
   episodePostValidator,
   importedPostValidator,
   platformValidator,
-  scriptValidator,
   shotPlanValidator,
   signalSourceValidator,
   voiceValidator,
@@ -274,6 +285,15 @@ export const planWeekMutation = internalMutation({
   },
 })
 
+/**
+ * The writer's video path. One script for every platform the episode goes
+ * to: the writer gets the resolved length and delivery, and the hook
+ * convention of each platform, in PLATFORMS order. The beats are the script,
+ * held to the shared rules (`scriptProblems`, `lengthProblem`) and the
+ * description to what a publication can carry; a draft that misses goes back
+ * to the model once with the problems named, and a second miss fails the
+ * episode with them.
+ */
 export const writeScript = internalAction({
   args: { episodeId: v.string() },
   handler: async (ctx, args): Promise<{ title: string }> => {
@@ -283,11 +303,9 @@ export const writeScript = internalAction({
     if (isPost(kind)) return writePost(ctx, context, kind)
     const { episode, persona, workspace, directives, signals, experiment } = context
     const variant = experiment?.variants.find((candidate) => candidate.key === episode.variantKey)
-    // One script for every platform the episode goes to: the writer gets the resolved length and
-    // delivery, and the hook convention of each platform, in PLATFORMS order.
     const formats = formatsFor(persona, episode.platforms)
     const format = resolveEpisodeFormat(formats)
-    const draft = await llmProvider().writeScript({
+    const brief: ScriptBrief = {
       persona: {
         name: persona.name,
         handle: persona.handle,
@@ -300,16 +318,23 @@ export const writeScript = internalAction({
       pillar: episode.pillar ?? persona.pillars[0] ?? '',
       sponsorSegment: episode.sponsorSegment,
       sponsorName: workspace.sponsorName,
+      sponsorUrl: workspace.sponsorUrl,
       variant: variant ? { key: variant.key, description: variant.description } : undefined,
       directives: directives.map((directive) => directive.text),
       signals: signals.map((signal) => ({ title: signal.title, summary: signal.summary, url: signal.url })),
       format: { lengthSec: format.lengthSec, delivery: format.delivery, hookNotes: formats.map((candidate) => candidate.hookNote) },
-    })
+      problems: [],
+    }
+    const llm = llmProvider()
+    const first = await llm.writeScript(brief)
+    const firstProblems = scriptDraftProblems(brief, first)
+    const draft = firstProblems.length === 0 ? first : await llm.writeScript({ ...brief, problems: firstProblems })
+    const problems = scriptDraftProblems(brief, draft)
+    if (problems.length > 0) throw new Error(`The writer missed the script's rules twice: ${problems.join(' ')}`)
     await ctx.runMutation(internal.internal.agents.storeScript, {
       episodeId,
       title: draft.title,
-      hook: draft.hook,
-      script: draft.script,
+      description: draft.description,
       shotPlan: draft.shotPlan,
       autoApprove: persona.autoApprove,
     })
@@ -318,16 +343,48 @@ export const writeScript = internalAction({
 })
 
 /**
- * The draft becomes the episode's script, beats, format and shots. The format
- * is fixed here, from the persona's formats at this moment, so a later
- * settings change does not alter a written script.
+ * The shared beat rules for the sponsor segment, the format's length, then
+ * what a publication takes: a title every platform accepts (YouTube's limit
+ * is the strictest, and any title inside it fits X too) and a description the
+ * operator can save as it is, without the link the footer adds when it goes
+ * out.
+ */
+function scriptDraftProblems(brief: ScriptBrief, draft: ScriptDraft): string[] {
+  const problems = scriptProblems(draft.shotPlan, { sponsorSegment: brief.sponsorSegment, sponsorName: brief.sponsorName })
+  const length = lengthProblem(draft.shotPlan, brief.format.lengthSec)
+  return [...problems, ...(length === null ? [] : [length]), ...titleProblems(draft.title), ...descriptionProblems(draft.description)]
+}
+
+function titleProblems(title: string): string[] {
+  if (title.trim().length === 0) return ['The title is empty.']
+  const length = Array.from(title).length
+  if (length > PUBLICATION_TITLE_MAX) return [`The title is ${length} characters; keep it within ${PUBLICATION_TITLE_MAX}.`]
+  return []
+}
+
+const LINK = /https?:\/\/|www\./i
+
+function descriptionProblems(description: string): string[] {
+  if (description.trim().length === 0) return ['The description is empty; write one to three sentences about what the video shows.']
+  const problems: string[] = []
+  const length = Array.from(description).length
+  if (length > PUBLICATION_BODY_MAX) problems.push(`The description is ${length} characters; it holds ${PUBLICATION_BODY_MAX}.`)
+  if (LINK.test(description)) problems.push('The description carries a link; the tracked link is added when it goes out.')
+  return problems
+}
+
+/**
+ * The draft becomes the episode's title, description, beats, format and
+ * shots, and its hook is the first sentence of the first beat (shared
+ * `hookOf`), the line the recording opens with. The format is fixed here,
+ * from the persona's formats at this moment, so a later settings change does
+ * not alter a written script.
  */
 export const storeScript = internalMutation({
   args: {
     episodeId: v.id('episodes'),
     title: v.string(),
-    hook: v.string(),
-    script: scriptValidator,
+    description: v.string(),
     shotPlan: shotPlanValidator,
     autoApprove: v.boolean(),
   },
@@ -340,13 +397,13 @@ export const storeScript = internalMutation({
     const { format, shots } = formatAndShots({
       persona,
       platforms: episode.platforms,
-      draft: { hook: args.hook, shotPlan: args.shotPlan },
+      draft: { shotPlan: args.shotPlan },
       sponsorName: workspace.sponsorName,
     })
     await ctx.db.patch(args.episodeId, {
       title: args.title,
-      hook: args.hook,
-      script: args.script,
+      description: args.description,
+      hook: hookOf(args.shotPlan),
       shotPlan: args.shotPlan,
       format,
       shots,

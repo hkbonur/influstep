@@ -69,6 +69,7 @@ async function xPersona(t: Test, options: { kinds: PostKind[]; voice?: Voice }):
       sponsorRampEpisodes: 0,
       episodesPerWeek: 1,
       autoApprove: false,
+      autoPublish: false,
       paused: false,
       timezone: TIMEZONE,
       ...(options.voice ? { voice: options.voice } : {}),

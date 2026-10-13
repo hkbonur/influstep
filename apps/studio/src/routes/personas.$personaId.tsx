@@ -18,6 +18,7 @@ import { PersonaChat } from '@/components/persona-chat'
 import { JobDot, PlatformGlyphs, PostKindIcon, SponsorPill, StatusPill } from '@/components/status'
 import {
   Button,
+  CheckboxField,
   ErrorLine,
   Eyebrow,
   ExternalLinkButton,
@@ -211,6 +212,8 @@ function PersonaPage() {
               <dd>{persona.pillars.join(', ')}</dd>
               <dt className="text-ash">Approval</dt>
               <dd>{persona.autoApprove ? 'Automatic' : 'You approve each script'}</dd>
+              <dt className="text-ash">Publishing</dt>
+              <dd>{persona.autoPublish ? 'Publishes on its own' : 'You approve each package'}</dd>
               <dt className="text-ash">Discount codes</dt>
               <dd className="space-y-1">
                 {data.discountCodes.length === 0 && (
@@ -379,6 +382,7 @@ function SettingsForm(props: { persona: Doc<'personas'>; onDone: () => void }) {
         sponsorRampEpisodes: Number(form.get('sponsorRampEpisodes')),
         episodesPerWeek: Number(form.get('episodesPerWeek')),
         autoApprove: form.get('autoApprove') === 'on',
+        autoPublish: form.get('autoPublish') === 'on',
         timezone: text('timezone'),
       })
       props.onDone()
@@ -428,10 +432,17 @@ function SettingsForm(props: { persona: Doc<'personas'>; onDone: () => void }) {
         <Field label="Voice id">
           <Input name="voiceId" defaultValue={p.voiceId} />
         </Field>
-        <label className="flex items-center gap-2 self-end text-sm">
-          <input type="checkbox" name="autoApprove" defaultChecked={p.autoApprove} />
+        <CheckboxField label="Approval" name="autoApprove" defaultChecked={p.autoApprove}>
           Approve scripts automatically
-        </label>
+        </CheckboxField>
+        <CheckboxField
+          label="Publishing"
+          name="autoPublish"
+          defaultChecked={p.autoPublish}
+          hint="Off: each rendered episode waits for you as a publish package."
+        >
+          Publishes on its own
+        </CheckboxField>
         <FormatFields value={formats} onChange={setFormats} className="sm:col-span-2 lg:col-span-3" />
         {state.status === 'error' && (
           <div className="sm:col-span-2 lg:col-span-3">
@@ -451,8 +462,8 @@ function SettingsForm(props: { persona: Doc<'personas'>; onDone: () => void }) {
         <div className="sm:col-span-2 lg:col-span-3">
           <Eyebrow>Discount code</Eyebrow>
           <p className="mt-1 text-xs text-ash">
-            Create the code in Polar first. The persona puts it into every video description from the next publication on; X posts carry no
-            code.
+            Create the code in Polar first. Every video description that has not gone out yet carries it, publish packages included; X posts
+            carry no code.
           </p>
         </div>
         <Field label="Code">

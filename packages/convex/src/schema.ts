@@ -26,8 +26,8 @@ import {
   platformValidator,
   postIntentValidator,
   postLengthValidator,
+  publicationStatusValidator,
   renderValidator,
-  scriptValidator,
   shotPlanValidator,
   shotValidator,
   signalSourceValidator,
@@ -77,6 +77,8 @@ export default defineSchema({
     sponsorRampEpisodes: v.number(),
     episodesPerWeek: v.number(),
     autoApprove: v.boolean(),
+    // On, a rendered episode is scheduled straight away; off, it waits as a publish package for the operator.
+    autoPublish: v.boolean(),
     paused: v.boolean(),
     timezone: v.string(),
     // How the X account this persona took over writes, learned from its imported posts (accountPosts) and
@@ -90,15 +92,18 @@ export default defineSchema({
   episodes: defineTable({
     personaId: v.id('personas'),
     slug: v.string(),
-    // A video, or a post that goes only to X (shared EPISODE_KINDS). A post never has a format, a shot plan
-    // or shots, its script stays empty, and its renders hold at most the one card of an image post.
+    // A video, or a post that goes only to X (shared EPISODE_KINDS). A post never has a format, a shot plan,
+    // shots or a description, and its renders hold at most the one card of an image post.
     kind: episodeKindValidator,
     status: episodeStatusValidator,
     concept: v.string(),
     title: v.string(),
-    // A video's first sentence; a post's first line (shared postHook). Either way the experiments' hook unit.
+    // A video's first sentence of its first beat (shared hookOf); a post's first line (shared postHook). Either
+    // way the experiments' hook unit, written only through those two functions.
     hook: v.string(),
-    script: scriptValidator,
+    // The writer's description of a video, in the persona's voice: the default body of every publication off X.
+    // Absent on a post and until the video is written.
+    description: v.optional(v.string()),
     // A post's parts and card title, exactly what X receives. Set once the post is written; never on a video.
     post: v.optional(episodePostValidator),
     // What a post sets out to do and how long it runs (shared post-mix.ts), set by the planner for every post
@@ -111,7 +116,8 @@ export default defineSchema({
     // Set when the episode is scripted, from the persona's formats for its platforms at that moment,
     // so a later settings change does not alter a written script.
     format: v.optional(episodeFormatValidator),
-    // The writer's beats, kept so the shots can be derived again when the platforms change.
+    // The beats, the only script (shared Beat): the writer writes them, the operator edits their titles and
+    // spoken lines, and the shots, the voice track and the hook are derived from them.
     shotPlan: v.optional(shotPlanValidator),
     shots: v.array(shotValidator),
     renders: v.array(renderValidator),
@@ -135,19 +141,25 @@ export default defineSchema({
     .index('by_day', ['plannedFor']),
 
   // One episode on one platform. A video publication has `aspect` (the render it uploads, the cut the episode
-  // was scripted to for its platform) and `description`. A post publication goes to X and has `parts`, the post
-  // exactly as written (no footer), and `aspect` only for an image post (its card's).
+  // was scripted to for its platform), and off X a `body`. A post publication goes to X and has `parts`, the
+  // post exactly as written (no footer), and `aspect` only for an image post (its card's). A rendered episode's
+  // publications wait as drafts until the operator approves the package (shared PUBLICATION_STATUSES); only a
+  // queued one is ever dispatched.
   publications: defineTable({
     episodeId: v.id('episodes'),
     personaId: v.id('personas'),
     platform: platformValidator,
     aspect: v.optional(aspectRatioValidator),
-    status: v.union(v.literal('queued'), v.literal('uploading'), v.literal('live'), v.literal('failed')),
+    status: publicationStatusValidator,
     title: v.string(),
-    description: v.optional(v.string()),
+    // The persona's own description text of a video off X, the only part of the description the operator
+    // edits; the footer (disclosure, sponsor line, code, link) is composed around it at dispatch
+    // (core/attribution.ts). Absent on X: a video's X text is its title, and a post has `parts`.
+    body: v.optional(v.string()),
     parts: v.optional(v.array(v.string())),
-    // The code the description was written with, so a page shows what viewers see, not the code in force now.
-    // Absent on X: a post and a video's X text carry no code.
+    // The code the description went out with, stamped when the publication is handed to the runner, so a page
+    // shows what viewers got, not the code in force now. Absent before dispatch, on X, and when no code was in force;
+    // cleared when a failed publication is armed again (a retry or a new render), since that attempt reached no one.
     discountCodeId: v.optional(v.id('discountCodes')),
     linkId: v.id('links'),
     scheduledAt: v.number(),
@@ -256,7 +268,8 @@ export default defineSchema({
 
   // Discount codes the operator created in Polar and handed to a persona, in
   // chat or in its settings. A code bound to an episode goes into that
-  // episode's descriptions; a persona code goes into every other one.
+  // episode's descriptions; a persona code goes into every other one. The
+  // code in force is read when a publication is dispatched.
   discountCodes: defineTable({
     personaId: v.id('personas'),
     episodeId: v.optional(v.id('episodes')),

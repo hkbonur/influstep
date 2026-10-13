@@ -15,8 +15,8 @@ import {
 import { useMutation } from 'convex/react'
 import React from 'react'
 import { cn } from '@/lib/cn'
-import { counterTone } from '@/lib/counter'
 import { errorMessage } from '@/lib/errors'
+import { CharacterCounter } from './character-counter'
 import { Button, ErrorLine, Field, type FormState, Input, Textarea } from './ui'
 
 /** One part as the editor holds it: the id keeps a textarea's focus and undo with its text when a part above it is removed. */
@@ -222,7 +222,7 @@ function PartField(props: {
           {props.label}
         </label>
         <span className="flex items-center gap-2">
-          <Counter id={counterId} length={xLength(props.text)} limit={X_POST_LIMIT} />
+          <CharacterCounter id={counterId} length={xLength(props.text)} limit={X_POST_LIMIT} />
           {props.action}
         </span>
       </div>
@@ -237,35 +237,6 @@ function PartField(props: {
         className="min-h-24"
       />
     </div>
-  )
-}
-
-/**
- * `len / limit` in 11px mono: ash under 90 percent, amber up to the limit, red
- * past it (DESIGN.md, Character counter). The field it counts points to it,
- * and it is a polite live region that says near or over the limit in words,
- * since a screen reader does not get the color.
- */
-function Counter(props: { id: string; length: number; limit: number }) {
-  const tone = counterTone(props.length, props.limit)
-  return (
-    <span
-      id={props.id}
-      aria-live="polite"
-      aria-atomic="true"
-      className={cn('tabular font-mono text-[11px]', {
-        'text-ash': tone === 'quiet',
-        'text-alert-amber-deep': tone === 'near',
-        'text-signal-red-deep': tone === 'over',
-      })}
-    >
-      {props.length} / {props.limit}
-      <span className="sr-only">
-        {' characters'}
-        {tone === 'near' && ', near the limit'}
-        {tone === 'over' && ', over the limit'}
-      </span>
-    </span>
   )
 }
 
@@ -291,7 +262,7 @@ function CardFields(props: {
         <label htmlFor={id} className="text-xs font-medium text-graphite">
           Card title
         </label>
-        <Counter id={counterId} length={Array.from(props.cardTitle).length} limit={CARD_TITLE_MAX} />
+        <CharacterCounter id={counterId} length={Array.from(props.cardTitle).length} limit={CARD_TITLE_MAX} />
       </div>
       <Input
         id={id}

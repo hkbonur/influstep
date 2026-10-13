@@ -1,9 +1,9 @@
-import type { Infer } from 'convex/values'
 import {
   SHORT_POST_MAX,
   THREAD_PARTS_MAX,
   THREAD_PARTS_MIN,
   X_POST_LIMIT,
+  type Beat,
   type Delivery,
   type EpisodePost,
   type PostIntent,
@@ -13,7 +13,6 @@ import {
   type Voice,
   type VoiceStats,
 } from '@influstep/shared'
-import type { shotPlanValidator } from '../../lib/validators'
 
 /**
  * What the writer asks of a language model. Both adapters return the same
@@ -25,27 +24,35 @@ export interface ScriptBrief {
   pillar: string
   sponsorSegment: SponsorSegment
   sponsorName: string
+  /** Where a demo beat opens the sponsor on screen. */
+  sponsorUrl: string
   variant?: { key: string; description: string }
   directives: string[]
   signals: { title: string; summary: string; url: string }[]
   /** The episode's format: how long, who is on camera, and the hook convention of every platform it goes to. */
   format: { lengthSec: number; delivery: Delivery; hookNotes: string[] }
+  /** What was wrong with the previous draft, on the one retry; empty on the first try. */
+  problems: string[]
 }
-
-/** Spoken pace the length budget is written for. */
-export const WORDS_PER_SECOND = 2.4
 
 /** The "tool" of a beat the presenter speaks to camera: no screen, no URL, an avatar take whatever the delivery. */
 export const PRESENTER_TOOL = 'presenter'
 
 export interface ScriptDraft {
   title: string
-  hook: string
-  script: { hook: string; body: string; sponsor: string; cta: string }
-  /** The beats the producer records: a named tool and what to show, or the presenter (tool PRESENTER_TOOL, no URL). */
-  shotPlan: Infer<typeof shotPlanValidator>
-  /** Short labels the researcher later matches comments and signals against. */
-  topics: string[]
+  /**
+   * One to three sentences in the persona's voice about what the video shows:
+   * the default body of every video publication. No link, no code, no
+   * disclosure: the footer adds those when it goes out.
+   */
+  description: string
+  /**
+   * The beats are the script: each voiceover is exactly what is spoken over
+   * its beat, the first sentence of the first one is the hook, and the call
+   * to action closes the last. A beat names the tool on screen and the URL
+   * to open, or the presenter (tool PRESENTER_TOOL, no URL).
+   */
+  shotPlan: Beat[]
 }
 
 /**
