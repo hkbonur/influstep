@@ -16,6 +16,7 @@ import { api, internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import { addDays, dayKey, instantAt, weekStart } from './core/dates'
 import { completeProduction, createIdea } from './core/episodes'
+import { writeScriptsDueBefore } from '../test/scripts'
 import { setup } from '../test/setup'
 
 const TIMEZONE = 'Europe/Oslo'
@@ -106,14 +107,15 @@ describe('episode pipeline', () => {
     expect(byPlatform.get('instagram')?.scheduledAt).toBe(instantAt(scripted.plannedFor, 12, TIMEZONE))
     expect(byPlatform.get('x')?.scheduledAt).toBe(instantAt(scripted.plannedFor, 15, TIMEZONE))
     expect(rendered?.episode.scheduledAt).toBe(instantAt(scripted.plannedFor, 12, TIMEZONE))
-    // Off X each draft carries the writer's description and previews the footer dispatch adds: the seeded code and the link.
+    // Off X each draft carries the writer's description and previews the footer dispatch adds: the link, then the
+    // seeded code under it, since link first is what Ada does while no description format test says otherwise.
     const description = rendered?.episode.description
     if (!description) throw new Error('the writer left no description')
     expect(byPlatform.get('youtube')?.body).toBe(description)
     expect(byPlatform.get('youtube')?.renderUrl).toContain('http')
     expect(byPlatform.get('youtube')?.footer?.below.slice(-2)).toEqual([
-      'Code ADA20: 20% off Pro for 3 months.',
       `http://localhost:3300/go/${rendered?.links.find((link) => link.platform === 'youtube')?.slug}`,
+      'Code ADA20: 20% off Pro for 3 months.',
     ])
     // On X the video's text is its title and nothing else: no body, no footer, no link, no code.
     expect(byPlatform.get('x')?.body).toBeUndefined()
@@ -188,15 +190,34 @@ describe('episode pipeline', () => {
     if (!max) throw new Error('seed has no Max')
     expect(max.formats.map((format) => format.platform)).toEqual(['tiktok'])
 
-    // The writer plans next week and scripts every idea; Max auto-approves, and with no screen to record
-    // there is no sign-in to wait on, so the producer starts right away.
+    // The planner fills next week with ideas and writes none of them yet: a script is written the day before
+    // its episode goes out.
     const nextMonday = addDays(weekStart(dayKey(Date.now(), max.timezone)), 7)
     await t.mutation(api.private.personas.planWeek, { personaId: max._id, weekStart: nextMonday })
     await t.finishAllScheduledFunctions(() => {})
+    const planned = (await t.query(api.private.personas.get, { personaId: max._id }))?.episodes
+      .filter((candidate) => candidate.plannedFor >= nextMonday)
+      .sort((a, b) => a.plannedFor.localeCompare(b.plannedFor))
+    const [first] = planned ?? []
+    if (!first) throw new Error('the planner left Max nothing')
+    expect(planned?.every((candidate) => candidate.status === 'idea')).toBe(true)
+    const writeJobs = await t.run(async (ctx) =>
+      (await ctx.db.query('jobs').collect()).filter(
+        (job) => job.kind === 'write_script' && planned?.some((candidate) => candidate._id === job.episodeId)
+      )
+    )
+    expect(writeJobs).toEqual([])
+
+    // The morning before the first one goes out, the due-script pass writes it, and only it. Max auto-approves,
+    // and with no screen to record there is no sign-in to wait on, so the producer starts right away.
+    await writeScriptsDueBefore(t, max._id, first.plannedFor)
     const page = await t.query(api.private.personas.get, { personaId: max._id })
-    const episode = page?.episodes.find((candidate) => candidate.plannedFor >= nextMonday)
-    if (!episode) throw new Error('the planner left Max nothing')
+    const episode = page?.episodes.find((candidate) => candidate._id === first._id)
+    if (!episode) throw new Error('the first planned episode vanished')
     expect(episode.status).toBe('recording')
+    const later = page?.episodes.filter((candidate) => candidate.plannedFor > first.plannedFor)
+    expect(later?.length).toBeGreaterThan(0)
+    expect(later?.every((candidate) => candidate.status === 'idea')).toBe(true)
     expect(episode.platforms).toEqual(['tiktok'])
     expect(episode.format).toEqual({ lengthSec: 35, delivery: 'talking_head', cuts: [{ platform: 'tiktok', aspect: '9:16' }] })
     expect(episode.shots.length).toBeGreaterThan(0)
@@ -555,14 +576,19 @@ describe('episode pipeline', () => {
     expect(live?.codesSent).toEqual([{ code: 'ADA20', offer }])
     expect(live?.publications.find((publication) => publication.platform === 'youtube')?.footer?.below).toContain(`Code ADA20: ${offer}.`)
 
-    // The writer plans next week (this week is full from the seed) and scripts every idea.
+    // The writer plans next week (this week is full from the seed); the first video of it is scripted the
+    // morning before it goes out.
     const nextMonday = addDays(weekStart(dayKey(Date.now(), ada.timezone)), 7)
     await t.mutation(api.private.personas.planWeek, { personaId: ada._id, weekStart: nextMonday })
     await t.finishAllScheduledFunctions(() => {})
+    const ideas = (await t.query(api.private.personas.get, { personaId: ada._id }))?.episodes
+      .filter((episode) => episode.kind === 'video' && episode.plannedFor >= nextMonday)
+      .sort((a, b) => a.plannedFor.localeCompare(b.plannedFor))
+    const [firstVideo] = ideas ?? []
+    if (!firstVideo) throw new Error('the planner left Ada no video next week')
+    await writeScriptsDueBefore(t, ada._id, firstVideo.plannedFor)
     const planned = await t.query(api.private.personas.get, { personaId: ada._id })
-    const scripted = planned?.episodes.find(
-      (episode) => episode.status === 'scripted' && episode.kind === 'video' && episode.plannedFor >= nextMonday
-    )
+    const scripted = planned?.episodes.find((episode) => episode._id === firstVideo._id && episode.status === 'scripted')
     if (!scripted) throw new Error('the planner left Ada nothing to approve')
 
     // Approval blocks on the n8n sign-in; done, the producer records.
@@ -689,7 +715,7 @@ describe('episode pipeline', () => {
     expect(draftOn('youtube').body).toBe(waiting.description)
     expect(draftOn('youtube').footer?.above).toEqual(['This video features an AI-generated presenter.'])
     expect(draftOn('youtube').footer?.below).toContain('Code ADA20: 20% off Pro for 3 months.')
-    expect(draftOn('tiktok').footer?.below.at(-1)).toBe('Link in bio.')
+    expect(draftOn('tiktok').footer?.below.slice(-2)).toEqual(['Link in bio.', 'Code ADA20: 20% off Pro for 3 months.'])
     expect(draftOn('x').body).toBeUndefined()
     expect(draftOn('x').footer).toBeNull()
 

@@ -2,16 +2,24 @@ import { v } from 'convex/values'
 import { EPISODE_STATUS_LABELS, hookOf, isPost, scriptProblems, textEditable } from '@influstep/shared'
 import type { Doc } from '../_generated/dataModel'
 import { mutation, query, type QueryCtx } from '../_generated/server'
-import { assertXTitleFits, publicationFooter, type DescriptionFooter } from '../core/attribution'
+import { assertXTitleFits, descriptionFormatOf, publicationFooter, type DescriptionFooter } from '../core/attribution'
 import { activeDiscountCodeFor } from '../core/discounts'
-import { approveEpisode, formatAndShots, killEpisode, rescheduleEpisode, setEpisodePlatforms, startProduction } from '../core/episodes'
-import { episodeEffectiveVariant } from '../core/experiments'
+import {
+  approveEpisode,
+  formatAndShots,
+  killEpisode,
+  queueScriptIfDue,
+  rescheduleEpisode,
+  scriptBeingWritten,
+  setEpisodePlatforms,
+  startProduction,
+} from '../core/episodes'
+import { episodeEffectiveVariant, episodeVariant } from '../core/experiments'
 import { platformsOf } from '../core/formats'
 import { savePost } from '../core/posts'
 import { countConversions } from '../core/report'
 import { workspaceOf } from '../core/workspace'
 import { applyEvent } from '../internal/data'
-import { enqueueJob } from '../jobs/queue'
 import { beatEditValidator, episodePostValidator, platformValidator } from '../lib/validators'
 import { refusal } from '../lib/errors'
 
@@ -52,6 +60,10 @@ export const get = query({
     // The code in force now: what every publication that has not gone out will carry, a failed one included.
     const discountCode = await activeDiscountCodeFor(ctx, persona._id, episode._id)
     // The publish package: each publication with the render it uploads and the footer dispatch adds around its body.
+    const descriptionFormat = descriptionFormatOf(
+      { variant: episodeVariant(episode, experiment), sponsorSegment: episode.sponsorSegment },
+      persona.strategy?.defaults
+    )
     const packaged: PackagedPublication[] = []
     for (const publication of publications) {
       const render = renders.find((candidate) => candidate.aspect === publication.aspect)
@@ -62,7 +74,7 @@ export const get = query({
       packaged.push({
         ...publication,
         renderUrl: render?.url ?? null,
-        footer: publicationFooter({ workspace, episode, publication, linkSlug: link.slug, discountCode: footerCode }),
+        footer: publicationFooter({ workspace, episode, publication, linkSlug: link.slug, discountCode: footerCode, descriptionFormat }),
         sent,
       })
     }
@@ -104,6 +116,8 @@ export const get = query({
       links,
       checklist,
       jobs,
+      // An idea the writer is on now (core `scriptBeingWritten`, as the calendar and the persona page read it).
+      writing: episode.status === 'idea' && (await scriptBeingWritten(ctx, episode._id)),
       signals,
       experiment,
       renders,
@@ -229,24 +243,32 @@ export const kill = mutation({
   handler: async (ctx, args) => killEpisode(ctx, args.episodeId),
 })
 
-/** Send the episode back to the writer. */
+/**
+ * Send the episode back to the writer. It is an idea again, so it is written
+ * the day before it goes out like any idea (core `queueScriptIfDue`): at once
+ * when that day has come, else on its script day.
+ */
 export const rewrite = mutation({
   args: { episodeId: v.id('episodes') },
   handler: async (ctx, args) => {
     const episode = await ctx.db.get(args.episodeId)
     if (!episode) throw new Error('episode not found')
+    const persona = await ctx.db.get(episode.personaId)
+    if (!persona) throw new Error('persona not found')
     await applyEvent(ctx, args.episodeId, { type: 'rewrite' })
     // An image post's rendered card locks its card title (core/posts.ts). The rewrite gets a new card title, and approval
     // renders it again, so the old card goes and the title opens for the writer and the operator.
     if (episode.kind === 'image') await ctx.db.patch(args.episodeId, { renders: [] })
-    await enqueueJob(ctx, {
-      kind: 'write_script',
-      payload: { episodeId: episode._id },
-      personaId: episode.personaId,
-      episodeId: episode._id,
-    })
+    await queueScriptIfDue(ctx, persona, await rewritten(ctx, args.episodeId), Date.now())
   },
 })
+
+/** The episode as an event left it, for the rule that reads its new status. */
+async function rewritten(ctx: QueryCtx, episodeId: Doc<'episodes'>['_id']): Promise<Doc<'episodes'>> {
+  const episode = await ctx.db.get(episodeId)
+  if (!episode) throw new Error(`episode ${episodeId} not found`)
+  return episode
+}
 
 /** Retry a failed episode from the step that failed. */
 export const retry = mutation({
@@ -284,12 +306,7 @@ export const retry = mutation({
       return
     }
     await applyEvent(ctx, args.episodeId, { type: 'retry' }, 'idea')
-    await enqueueJob(ctx, {
-      kind: 'write_script',
-      payload: { episodeId: episode._id },
-      personaId: episode.personaId,
-      episodeId: episode._id,
-    })
+    await queueScriptIfDue(ctx, persona, await rewritten(ctx, args.episodeId), Date.now())
   },
 })
 

@@ -17,6 +17,9 @@ describe('knownVariants', () => {
   it('carries the length factor of a length variant', () => {
     expect(knownVariants('length', undefined).map((variant) => variant.lengthFactor)).toEqual([1, 0.7, 1.3])
   })
+  it('carries the hour offset of a publish time variant', () => {
+    expect(knownVariants('publish_time', undefined).map((variant) => variant.hourOffset)).toEqual([0, -3, 3])
+  })
 })
 
 describe('parseVariants', () => {
@@ -39,6 +42,21 @@ describe('parseVariants', () => {
     expect(parsed).toEqual([
       { key: 'cold-open', label: 'Cold open', description: 'start mid-action', isControl: true },
       { key: 'no-colon-here', label: 'No colon here', description: '', isControl: false },
+    ])
+  })
+  it('keeps the hour offset of a known publish time variant, which the line cannot say', () => {
+    const known = [
+      { key: 'usual', label: 'Usual hour', description: "Publish at the platform's usual hour.", hourOffset: 0 },
+      {
+        key: 'earlier',
+        label: 'Three hours earlier',
+        description: "Publish three hours before the platform's usual hour.",
+        hourOffset: -3,
+      },
+    ]
+    expect(parseVariants('Usual hour: as before\nthree hours earlier: before lunch', known)).toEqual([
+      { key: 'usual', label: 'Usual hour', description: 'as before', isControl: true, hourOffset: 0 },
+      { key: 'earlier', label: 'three hours earlier', description: 'before lunch', isControl: false, hourOffset: -3 },
     ])
   })
   it('splits on the first colon only, so a description may hold one', () => {

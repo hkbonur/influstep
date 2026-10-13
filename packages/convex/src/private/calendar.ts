@@ -3,6 +3,7 @@ import type { Platform } from '@influstep/shared'
 import type { Doc } from '../_generated/dataModel'
 import { query } from '../_generated/server'
 import { addDays } from '../core/dates'
+import { scriptBeingWritten } from '../core/episodes'
 
 export interface CalendarEpisode {
   _id: Doc<'episodes'>['_id']
@@ -22,6 +23,8 @@ export interface CalendarEpisode {
   plannedFor: string
   variantKey?: string
   error?: string
+  /** An idea the writer is on now (core `scriptBeingWritten`); false for every other status. */
+  writing: boolean
   persona: { _id: Doc<'personas'>['_id']; name: string; handle: string }
 }
 
@@ -56,6 +59,7 @@ export const week = query({
           plannedFor: episode.plannedFor,
           variantKey: episode.variantKey,
           error: episode.error,
+          writing: episode.status === 'idea' && (await scriptBeingWritten(ctx, episode._id)),
           persona: { _id: persona._id, name: persona.name, handle: persona.handle },
         })
       }

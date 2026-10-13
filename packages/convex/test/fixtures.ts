@@ -6,6 +6,8 @@ import {
   type JobKind,
   type JobStatus,
   type Platform,
+  type SignalSource,
+  type SignalStatus,
   type SponsorSegment,
 } from '@influstep/shared'
 import type { Doc, Id } from '../src/_generated/dataModel'
@@ -243,4 +245,40 @@ export async function insertMeasuredVideo(
   const episode = await ctx.db.get(episodeId)
   if (!episode) throw new Error('episode vanished')
   return episode
+}
+
+/**
+ * A signal the researcher found `foundAt`, posted `publishedAt` when the
+ * source says so. Score 70 and status new unless the test names them.
+ */
+export async function insertSignal(
+  ctx: MutationCtx,
+  persona: Doc<'personas'>,
+  fields: {
+    title: string
+    foundAt: number
+    publishedAt?: number
+    source?: SignalSource
+    score?: number
+    status?: SignalStatus
+    summary?: string
+  }
+): Promise<Doc<'signals'>> {
+  const signalId = await ctx.db.insert('signals', {
+    personaId: persona._id,
+    source: fields.source ?? 'reddit',
+    externalId: Math.random().toString(36).slice(2, 10),
+    title: fields.title,
+    url: 'https://example.com',
+    summary: fields.summary ?? '',
+    score: fields.score ?? 70,
+    topics: [],
+    status: fields.status ?? 'new',
+    foundAt: fields.foundAt,
+    ...(fields.publishedAt === undefined ? {} : { publishedAt: fields.publishedAt }),
+    mock: true,
+  })
+  const signal = await ctx.db.get(signalId)
+  if (!signal) throw new Error('signal vanished')
+  return signal
 }

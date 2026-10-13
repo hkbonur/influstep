@@ -1,4 +1,5 @@
 import { api } from '@influstep/convex/_generated/api'
+import { POLLED_SIGNAL_SOURCES, SIGNAL_SOURCE_LABELS } from '@influstep/shared'
 import { createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
 import React from 'react'
@@ -9,6 +10,11 @@ import { relativeTime } from '@/lib/format'
 import { useRunnerOnline } from '@/lib/use-runner-online'
 
 export const Route = createFileRoute('/providers')({ component: ProvidersPage })
+
+/** The sources the researcher polls, as one English list: the signal rows above are these, and only these. */
+const POLLED_SOURCES = new Intl.ListFormat('en', { style: 'long', type: 'conjunction' }).format(
+  POLLED_SIGNAL_SOURCES.map((source) => SIGNAL_SOURCE_LABELS[source])
+)
 
 function ProvidersPage() {
   const status = useQuery(api.private.providers.status, {})
@@ -67,6 +73,10 @@ function ProvidersPage() {
               </tbody>
             </table>
             <p className="mt-3 text-xs text-ash">
+              The researcher polls {POLLED_SOURCES}. Comments come from the publisher, which reads them on each platform, and problems from
+              each persona's problem log.
+            </p>
+            <p className="mt-1.5 text-xs text-ash">
               Keys live in the Convex deployment's environment (backend) and in apps/runner/.env.local (voice, avatar, uploads). Voice,
               avatar and the publishers run on the runner, so the backend cannot see their keys.
             </p>

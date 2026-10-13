@@ -5,6 +5,7 @@ import { internalMutation, internalQuery, type MutationCtx } from '../_generated
 import { internal } from '../_generated/api'
 import { deleteHistoryPage as deleteHistoryPageRule, examplePostsOf } from '../core/account'
 import { transition, type PipelineEvent } from '../core/pipeline'
+import { researchFor } from '../core/research'
 import { workspaceOf } from '../core/workspace'
 import { episodeStatusValidator } from '../lib/validators'
 
@@ -41,6 +42,12 @@ export interface EpisodeContext {
   examples: Doc<'accountPosts'>[]
   /** The persona's active learnings, newest first, at most WRITER_LEARNINGS_MAX, for the writer's prompt. */
   learnings: string[]
+  /**
+   * What the researcher found (core/research.ts): the morning brief while it
+   * has not expired, else null, and the open problems' texts, newest first, at
+   * most five.
+   */
+  research: { brief: string | null; problems: string[] }
 }
 
 /** How many learnings the writer reads, so its prompt stays short; one active learning per dimension keeps it well under. */
@@ -74,7 +81,8 @@ export const getEpisodeContext = internalQuery({
       .sort((a, b) => b.createdAt - a.createdAt)
       .slice(0, WRITER_LEARNINGS_MAX)
       .map((memory) => memory.text)
-    return { episode, persona, workspace, directives, signals, experiment, examples, learnings }
+    const research = await researchFor(ctx, persona._id, Date.now())
+    return { episode, persona, workspace, directives, signals, experiment, examples, learnings, research }
   },
 })
 

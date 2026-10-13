@@ -1,5 +1,6 @@
 import {
   AUTO_MIN_CONFIDENCE,
+  EXPERIMENT_KINDS,
   EXPERIMENT_KIND_LABELS,
   GOAL_MIN_SUCCESSES,
   METRIC_DENOMINATOR,
@@ -25,8 +26,8 @@ import {
 } from '@influstep/shared'
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
-import { dayKey, hourAt } from './dates'
-import { grouped, rateNumber, rateText, startExperiment, variantStatsSince } from './experiments'
+import { dayKey, hourAt, hourText } from './dates'
+import { dimensionApplies, grouped, rateNumber, rateText, startExperiment, variantStatsSince } from './experiments'
 import { latestPerPublication } from './report'
 import { workspaceOf } from './workspace'
 
@@ -61,10 +62,6 @@ export interface ReviewOutcome {
 /** One change of the review: the journal entry is written; the phrase goes into the one chat message. */
 interface Change {
   phrase: string
-}
-
-function hourText(hour: number): string {
-  return `${String(hour).padStart(2, '0')}:00`
 }
 
 function percent(weight: number): number {
@@ -189,6 +186,7 @@ async function reviewPillars(
     reason: upScore.score === downScore.score ? onClicks : onValue,
     evidence: {
       episodeIds: [...upScore.episodeIds, ...downScore.episodeIds],
+      signalIds: [],
       numbers: [
         { label: `"${up}" value per video (${workspace.currency})`, value: Math.round(upScore.score) },
         { label: `"${down}" value per video (${workspace.currency})`, value: Math.round(downScore.score) },
@@ -267,6 +265,7 @@ async function reviewPublishHours(ctx: MutationCtx, persona: Doc<'personas'>, ep
         `${hourText(format.publishHour)}. Publications already scheduled keep their time.`,
       evidence: {
         episodeIds: [...bestGroup.episodeIds, ...currentGroup.episodeIds],
+        signalIds: [],
         numbers: [
           { label: `Median views at ${hourText(best)}`, value: Math.round(bestRow.medianViews) },
           { label: `Median views at ${hourText(format.publishHour)}`, value: Math.round(currentRow.medianViews) },
@@ -306,6 +305,9 @@ async function findContradictions(
   const out: Contradiction[] = []
   for (const entry of strategy.defaults) {
     if (entry.experimentId === undefined) continue
+    // A decided publish time moves the formats' hours and stores no default; were one ever here, the re-test
+    // branch of shared `pickNextExperiment` would look for a default the hours replaced.
+    if (entry.kind === 'publish_time') continue
     const source = experiments.find((experiment) => experiment._id === entry.experimentId)
     if (!source) throw new Error(`the ${entry.kind} default came from experiment ${entry.experimentId}, which the persona does not have`)
     const decision = source.decision
@@ -420,7 +422,8 @@ function startReason(args: {
  * The next experiment step: only when none is running and the persona has a
  * video platform (posts carry no variant). Every dimension applies, except
  * the sponsor placement before the persona carries a sponsor (a zero dial,
- * or still within the ramp).
+ * or still within the ramp), and the description format without a discount
+ * code in force (core experiments `dimensionApplies`).
  */
 async function startNextExperiment(
   ctx: MutationCtx,
@@ -436,7 +439,12 @@ async function startNextExperiment(
   if (!persona.formats.some((format) => format.platform !== 'x')) return null
   const live = episodes.filter((episode) => episode.status !== 'killed').length
   const sponsors = persona.sponsorDial > 0 && live >= persona.sponsorRampEpisodes
-  const kinds: ExperimentKind[] = sponsors ? ['hook', 'concept', 'sponsor', 'length', 'cta'] : ['hook', 'concept', 'length', 'cta']
+  const kinds: ExperimentKind[] = []
+  for (const kind of EXPERIMENT_KINDS) {
+    if (kind === 'sponsor' && !sponsors) continue
+    if (!(await dimensionApplies(ctx, persona, kind))) continue
+    kinds.push(kind)
+  }
   const window = await goalWindow(ctx, persona, conversions, now)
   const metric = pickGoalMetric(window)
   const history = historyOf(experiments)
@@ -478,7 +486,9 @@ async function startNextExperiment(
 
 /**
  * The weekly review, in order: pillar weights, publish hours, contradicted
- * defaults, the next experiment. Each change writes its journal entry; the
+ * defaults, the next experiment. The publish hours stay while a publish time
+ * experiment runs: moving the hour under it would change what its variants
+ * are offsets from. Each change writes its journal entry; the
  * review then stamps `strategy.reviewedAt` and, when anything changed, posts
  * one chat message naming the changes. Nothing changed: no message and no
  * journal entry, only the stamp.
@@ -505,7 +515,8 @@ export async function reviewStrategy(ctx: MutationCtx, persona: Doc<'personas'>,
     strategy = pillars.strategy
     changes.push(pillars.change)
   }
-  changes.push(...(await reviewPublishHours(ctx, persona, episodes, now)))
+  const testingHours = experiments.some((experiment) => experiment.status === 'running' && experiment.kind === 'publish_time')
+  if (!testingHours) changes.push(...(await reviewPublishHours(ctx, persona, episodes, now)))
   const contradictions = await findContradictions(ctx, persona, strategy, experiments)
   const started = await startNextExperiment(ctx, persona, strategy, episodes, experiments, conversions, contradictions, now)
   if (started) changes.push(started.change)
@@ -524,14 +535,20 @@ export async function reviewStrategy(ctx: MutationCtx, persona: Doc<'personas'>,
 
 /**
  * What the strategy page reads: the persona's learnings, active and
- * superseded, the newest journal entries, and its newest strategy review job,
+ * superseded, the newest journal entries with the titles of the signals they
+ * name, and its newest strategy review job,
  * read by its own index: the hourly signal polls and the daily pulls bury a
  * weekly review among the persona's newest jobs within days.
  */
 export async function strategyView(
   ctx: Reader,
   persona: Doc<'personas'>
-): Promise<{ learnings: Doc<'memories'>[]; journal: Doc<'journal'>[]; reviewJob: Doc<'jobs'> | null }> {
+): Promise<{
+  learnings: Doc<'memories'>[]
+  journal: Doc<'journal'>[]
+  signals: Pick<Doc<'signals'>, '_id' | 'title'>[]
+  reviewJob: Doc<'jobs'> | null
+}> {
   const memories = await ctx.db
     .query('memories')
     .withIndex('by_persona_status', (q) => q.eq('personaId', persona._id))
@@ -546,5 +563,13 @@ export async function strategyView(
     .withIndex('by_persona_kind', (q) => q.eq('personaId', persona._id).eq('kind', 'review_strategy'))
     .order('desc')
     .first()
-  return { learnings: memories.filter((memory) => memory.kind === 'learning'), journal, reviewJob }
+  // The signals the journal's evidence names (a swapped concept's old and new signal), so the page can say
+  // them by title. A used signal never ages out (internal/schedule.ts), so one that is gone was deleted by
+  // hand, and its entry names it no more.
+  const signals: Pick<Doc<'signals'>, '_id' | 'title'>[] = []
+  for (const signalId of new Set(journal.flatMap((entry) => entry.evidence.signalIds))) {
+    const signal = await ctx.db.get(signalId)
+    if (signal) signals.push({ _id: signal._id, title: signal.title })
+  }
+  return { learnings: memories.filter((memory) => memory.kind === 'learning'), journal, signals, reviewJob }
 }

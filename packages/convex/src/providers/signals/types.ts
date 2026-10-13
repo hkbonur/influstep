@@ -1,4 +1,4 @@
-import type { SignalSource } from '@influstep/shared'
+import type { PolledSignalSource, SignalSource } from '@influstep/shared'
 
 export interface FoundSignal {
   source: SignalSource
@@ -8,6 +8,11 @@ export interface FoundSignal {
   summary: string
   score: number
   topics: string[]
+  /**
+   * When the source says the item was posted, in ms. Freshness decays from
+   * it (shared `signalFreshness`); without it, from when it was found.
+   */
+  publishedAt?: number
 }
 
 export interface SignalsQuery {
@@ -19,7 +24,7 @@ export interface SignalsQuery {
 }
 
 export interface SignalsProvider {
-  readonly source: SignalSource
+  readonly source: PolledSignalSource
   readonly name: string
   find(query: SignalsQuery): Promise<FoundSignal[]>
 }

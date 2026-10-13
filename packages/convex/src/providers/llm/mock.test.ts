@@ -34,6 +34,7 @@ function scriptBrief(args: {
   lengthSec: number
   style: ScriptBrief['style']
   variant?: ScriptBrief['variant']
+  research?: ScriptBrief['research']
 }): ScriptBrief {
   return {
     persona: {
@@ -55,6 +56,7 @@ function scriptBrief(args: {
     styleLines: [],
     directives: [],
     signals: [{ title: 'n8n webhooks that retry', summary: 'People ask how.', url: 'https://news.ycombinator.com/item?id=1' }],
+    research: args.research ?? { brief: null, problems: [] },
     format: { lengthSec: args.lengthSec, delivery: args.delivery, hookNotes: ['Hook in the first two seconds.'] },
     problems: [],
   }
@@ -144,5 +146,22 @@ describe('the mock writer follows the style in force', () => {
       scriptBrief({ delivery: 'screen_only', sponsorSegment: 'none', lengthSec: 60, style: CONTROL_STYLE })
     )
     expect(control.shotPlan.at(-1)?.voiceover.endsWith('Follow Ada Automates for more n8n tutorials.')).toBe(true)
+  })
+})
+
+describe('the mock writer and the research', () => {
+  it('writes the same script with or without a morning brief and a problem log', async () => {
+    const args = { delivery: 'screen_only' as const, sponsorSegment: 'mention' as const, lengthSec: 60, style: CONTROL_STYLE }
+    const without = await mockLlm.writeScript(scriptBrief(args))
+    const withResearch = await mockLlm.writeScript(
+      scriptBrief({
+        ...args,
+        research: {
+          brief: 'Hacker News found 3 items. The strongest: "n8n 2.0 is out" (Hacker News, freshness 91).',
+          problems: ['Viewers keep asking: "How do I retry a failed webhook?" (3 times under my videos).'],
+        },
+      })
+    )
+    expect(withResearch).toEqual(without)
   })
 })

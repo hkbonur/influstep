@@ -1,9 +1,22 @@
-import { PLATFORMS, SIGNAL_SOURCES } from '@influstep/shared'
+import { PLATFORMS, POLLED_SIGNAL_SOURCES, type PolledSignalSource } from '@influstep/shared'
 import { query } from '../_generated/server'
 import { latestRunner } from '../core/jobs'
 import { hasEnv, providersMode } from '../lib/env'
 import { platformHasRealAdapter } from '../providers/comments'
 import { signalSourceHasRealAdapter } from '../providers/signals'
+
+/**
+ * What each polled signal source's real adapter reads. Comments come from the
+ * platform providers below and problems from the problem log, so neither is a
+ * signal provider of its own.
+ */
+const SIGNAL_SOURCE_REAL: Record<PolledSignalSource, string> = {
+  hackernews: 'HN Algolia',
+  reddit: 'Reddit JSON',
+  google_trends: 'none yet',
+  youtube_search: 'none yet',
+  search: 'Google autocomplete (unofficial)',
+}
 
 /** The Providers page: what runs mock, what runs real, which keys are set, and whether the runner is alive. */
 export const status = query({
@@ -34,9 +47,9 @@ export const status = query({
           hasReal: true,
           needs: ['POLAR_API_BASE', 'POLAR_ACCESS_TOKEN', 'POLAR_ORGANIZATION_ID'],
         },
-        ...SIGNAL_SOURCES.map((source) => ({
+        ...POLLED_SIGNAL_SOURCES.map((source) => ({
           name: `signals: ${source}`,
-          real: source === 'hackernews' ? 'HN Algolia' : source === 'reddit' ? 'Reddit JSON' : 'none yet',
+          real: SIGNAL_SOURCE_REAL[source],
           hasReal: signalSourceHasRealAdapter(source),
           needs: [] as string[],
         })),

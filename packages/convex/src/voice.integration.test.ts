@@ -19,6 +19,7 @@ import { DELETE_PAGE_SIZE, HISTORY_BEING_DELETED } from './core/account'
 import { addDays, dayKey, weekStart } from './core/dates'
 import { enqueueJob } from './jobs/queue'
 import { MOCK_HISTORY_SIZE, X_TIMELINE_NEEDS_OAUTH, mockXHistory } from './providers/timeline'
+import { writeScriptsDueBefore } from '../test/scripts'
 import { setup } from '../test/setup'
 
 const TIMEZONE = 'Europe/Oslo'
@@ -345,6 +346,8 @@ describe('taking over an X account', () => {
     const posts = await planAndList(t, personaId)
     expect(posts.map((post) => post.length)).toEqual(pickLengths(learned.lengthMix, 14))
     await t.finishAllScheduledFunctions(() => {})
+    // Each day's posts are written the morning before it.
+    for (const day of new Set(posts.map((post) => post.plannedFor))) await writeScriptsDueBefore(t, personaId, day)
 
     const written = await postsOf(t, personaId)
     expect(written.length).toBe(14)

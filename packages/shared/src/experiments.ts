@@ -3,11 +3,11 @@ import type { MetricKey } from './metrics'
 import type { StrategyDefault } from './strategy'
 
 /**
- * The dimensions an experiment can vary (docs/plan.md, v0.2 item 8), each with
- * its catalog of variants below. Publish time and description format join in
- * slice 9; the X post dimensions (intent, length, reply style) in slice 11.
+ * The dimensions an experiment can vary (docs/plan.md, v0.2 items 8 and 9),
+ * each with its catalog of variants below. The X post dimensions (intent,
+ * length, reply style) join in slice 11.
  */
-export const EXPERIMENT_KINDS = ['hook', 'concept', 'sponsor', 'length', 'cta'] as const
+export const EXPERIMENT_KINDS = ['hook', 'concept', 'sponsor', 'length', 'cta', 'publish_time', 'description_format'] as const
 export type ExperimentKind = (typeof EXPERIMENT_KINDS)[number]
 
 export const EXPERIMENT_KIND_LABELS: Record<ExperimentKind, string> = {
@@ -16,6 +16,20 @@ export const EXPERIMENT_KIND_LABELS: Record<ExperimentKind, string> = {
   sponsor: 'Sponsor placement',
   length: 'Episode length',
   cta: 'Call to action',
+  publish_time: 'Publish time',
+  description_format: 'Description format',
+}
+
+/**
+ * The dimensions the writer scripts. Publish time moves the publication's
+ * hour and description format orders the description's footer; the script
+ * reads the same under either, so the writer gets no line for them.
+ */
+export const SCRIPT_KINDS = ['hook', 'concept', 'sponsor', 'length', 'cta'] as const satisfies readonly ExperimentKind[]
+export type ScriptKind = (typeof SCRIPT_KINDS)[number]
+
+export function isScriptKind(kind: ExperimentKind): kind is ScriptKind {
+  return SCRIPT_KINDS.some((entry) => entry === kind)
 }
 
 export const EXPERIMENT_STATUSES = ['running', 'decided', 'stopped'] as const
@@ -24,7 +38,9 @@ export type ExperimentStatus = (typeof EXPERIMENT_STATUSES)[number]
 /**
  * One arm of an experiment, as the catalog lists it and as an experiment row
  * stores it. `description` is the instruction the writer follows. A length
- * variant scales the format's length by `lengthFactor`; no other kind has one.
+ * variant scales the format's length by `lengthFactor`, and a publish time
+ * variant moves the platform's usual hour by `hourOffset`; no other kind has
+ * either.
  */
 export interface CatalogVariant {
   key: string
@@ -32,6 +48,7 @@ export interface CatalogVariant {
   description: string
   isControl: boolean
   lengthFactor?: number
+  hourOffset?: number
 }
 
 /**
@@ -80,6 +97,37 @@ export const EXPERIMENT_CATALOG: Record<ExperimentKind, readonly CatalogVariant[
     { key: 'follow', label: 'Follow', description: 'End by asking the viewer to follow for the next one.', isControl: true },
     { key: 'comment', label: 'Comment', description: 'End with a question for the comments.', isControl: false },
     { key: 'link', label: 'Link', description: 'End by pointing at the link in the description.', isControl: false },
+  ],
+  publish_time: [
+    { key: 'usual', label: 'Usual hour', description: "Publish at the platform's usual hour.", isControl: true, hourOffset: 0 },
+    {
+      key: 'earlier',
+      label: 'Three hours earlier',
+      description: "Publish three hours before the platform's usual hour.",
+      isControl: false,
+      hourOffset: -3,
+    },
+    {
+      key: 'later',
+      label: 'Three hours later',
+      description: "Publish three hours after the platform's usual hour.",
+      isControl: false,
+      hourOffset: 3,
+    },
+  ],
+  description_format: [
+    {
+      key: 'link',
+      label: 'Link first',
+      description: 'Put the tracked link first in the description, the code under it.',
+      isControl: true,
+    },
+    {
+      key: 'code',
+      label: 'Code first',
+      description: 'Put the discount code and its offer first in the description, the link under it.',
+      isControl: false,
+    },
   ],
 }
 
@@ -258,9 +306,16 @@ function decidedRows(history: readonly ExperimentHistoryRow[], kind: ExperimentK
 }
 
 /** A default as the control of a new experiment: what the persona did before. */
-function asControl(variant: { key: string; label: string; description: string; lengthFactor?: number }): CatalogVariant {
+function asControl(variant: {
+  key: string
+  label: string
+  description: string
+  lengthFactor?: number
+  hourOffset?: number
+}): CatalogVariant {
   const control: CatalogVariant = { key: variant.key, label: variant.label, description: variant.description, isControl: true }
   if (variant.lengthFactor !== undefined) control.lengthFactor = variant.lengthFactor
+  if (variant.hourOffset !== undefined) control.hourOffset = variant.hourOffset
   return control
 }
 

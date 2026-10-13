@@ -6,6 +6,7 @@ import {
   LENGTH_SEC_MIN,
   PLATFORM_LABELS,
   PLATFORMS,
+  type EffectiveVariant,
   type Platform,
   type PlatformFormat,
   type PostKind,
@@ -39,9 +40,42 @@ export function formatsFor(persona: FormatOwner, platforms: Platform[]): Platfor
   return PLATFORMS.filter((platform) => platforms.includes(platform)).map((platform) => formatFor(persona, platform))
 }
 
-/** The first publish instant of an episode on `day`: the earliest publish hour among its platforms. */
-export function earliestPublishAt(persona: FormatOwner & Pick<Doc<'personas'>, 'timezone'>, platforms: Platform[], day: string): number {
-  const instants = formatsFor(persona, platforms).map((format) => instantAt(day, format.publishHour, persona.timezone))
+/**
+ * How many hours a video's publications move from each platform's usual hour:
+ * the hour offset of its publish time variant (shared `effectiveVariant` over
+ * 'publish_time'). No publish time default is ever stored, since a decided
+ * test moves `formats[].publishHour` itself, so anything but the episode's own
+ * variant reads 0.
+ */
+export function publishOffset(variant: EffectiveVariant | undefined): number {
+  if (variant === undefined) return 0
+  if (variant.kind !== 'publish_time') throw new Error(`a ${variant.kind} variant moves no publish hour`)
+  return variant.hourOffset ?? 0
+}
+
+/**
+ * The hour a video goes out on a platform: the format's hour moved by the
+ * offset, kept within the day so a publication never changes day. A video's X
+ * publication keeps X's own hour, as posts keep their slots: publish time is
+ * tested on the video platforms only. The one place a video's publish hour is
+ * computed.
+ */
+export function publishHourFor(format: Pick<PlatformFormat, 'platform' | 'publishHour'>, offset: number): number {
+  if (format.platform === 'x') return format.publishHour
+  return Math.min(23, Math.max(0, format.publishHour + offset))
+}
+
+/**
+ * The first publish instant of an episode on `day`: the earliest publish hour
+ * among its platforms, each moved by the episode's publish offset.
+ */
+export function earliestPublishAt(
+  persona: FormatOwner & Pick<Doc<'personas'>, 'timezone'>,
+  platforms: Platform[],
+  day: string,
+  offset: number
+): number {
+  const instants = formatsFor(persona, platforms).map((format) => instantAt(day, publishHourFor(format, offset), persona.timezone))
   if (instants.length === 0) throw new Error('an episode needs at least one platform')
   return Math.min(...instants)
 }

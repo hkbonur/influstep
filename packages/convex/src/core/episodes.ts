@@ -3,11 +3,13 @@ import {
   PLATFORM_LABELS,
   X_IMAGE_ASPECT,
   canTransition,
+  effectiveVariant,
   formatAspects,
   isPost,
   makeSlug,
   platformsOpen,
   resolveEpisodeFormat,
+  scriptDayOf,
   slugify,
   variantLength,
   type Delivery,
@@ -24,15 +26,15 @@ import {
   type Shot,
 } from '@influstep/shared'
 import type { Doc, Id } from '../_generated/dataModel'
-import type { MutationCtx } from '../_generated/server'
-import { applyEvent } from '../internal/data'
+import type { MutationCtx, QueryCtx } from '../_generated/server'
+import { applyEvent, failEpisodeIfPossible } from '../internal/data'
 import { enqueueJob, markFailed } from '../jobs/queue'
 import { providersMode } from '../lib/env'
 import { PRESENTER_TOOL } from '../providers/llm'
 import { assertXTitleFits } from './attribution'
-import { hourAt, instantAt } from './dates'
-import { episodeEffectiveVariant } from './experiments'
-import { earliestPublishAt, formatFor, formatsFor, platformsOf } from './formats'
+import { dayKey, hourAt, instantAt } from './dates'
+import { episodeEffectiveVariant, episodeVariant, plannedVariant } from './experiments'
+import { earliestPublishAt, formatFor, formatsFor, platformsOf, publishHourFor, publishOffset } from './formats'
 import { assertLengthFitsKind, assertPostFits, findXPublication } from './posts'
 import { workspaceOf } from './workspace'
 import { refusal } from '../lib/errors'
@@ -63,13 +65,16 @@ export type PlannedEpisodeInput = {
   variantKey?: string
 } & ({ kind: 'video'; platforms?: Platform[] } | { kind: PostKind; publishHour: number; intent: PostIntent; length: PostLength })
 
-/** Where a new idea goes and when: a video everywhere the persona publishes, a post on X at its slot. */
-function placement(persona: Doc<'personas'>, input: PlannedEpisodeInput): { platforms: Platform[]; scheduledAt: number } {
+/**
+ * Where a new idea goes and when: a video everywhere the persona publishes,
+ * at its platforms' hours moved by its publish offset; a post on X at its slot.
+ */
+function placement(persona: Doc<'personas'>, input: PlannedEpisodeInput, offset: number): { platforms: Platform[]; scheduledAt: number } {
   if (input.kind === 'video') {
     // formatsFor refuses a platform the persona does not have, and keeps PLATFORMS order.
     const platforms =
       input.platforms === undefined ? platformsOf(persona) : formatsFor(persona, input.platforms).map((format) => format.platform)
-    return { platforms, scheduledAt: earliestPublishAt(persona, platforms, input.plannedFor) }
+    return { platforms, scheduledAt: earliestPublishAt(persona, platforms, input.plannedFor, offset) }
   }
   // Refuses by name when the persona has no X format.
   formatFor(persona, 'x')
@@ -83,10 +88,26 @@ function postShape(input: PlannedEpisodeInput): { intent?: PostIntent; length?: 
   return { intent: input.intent, length: input.length }
 }
 
-/** A new idea, queued for the writer. The operator narrows a video's platforms per episode; a post stays on X. */
+/**
+ * A new idea. The writer gets it the day before it goes out (`queueScriptIfDue`),
+ * so an idea for today or tomorrow is queued at once and a later one waits.
+ * The operator narrows a video's platforms per episode; a post stays on X.
+ */
 export async function createIdea(ctx: MutationCtx, persona: Doc<'personas'>, input: PlannedEpisodeInput): Promise<Id<'episodes'>> {
   const now = Date.now()
-  const { platforms, scheduledAt } = placement(persona, input)
+  // The planner assigns variants of the running experiment only, so a new idea never carries one of a decided
+  // test, whose offset `videoPublishOffset` drops.
+  const offset =
+    input.kind === 'video'
+      ? publishOffset(
+          effectiveVariant(
+            'publish_time',
+            { variant: await plannedVariant(ctx, input), sponsorSegment: input.sponsorSegment },
+            persona.strategy?.defaults
+          )
+        )
+      : 0
+  const { platforms, scheduledAt } = placement(persona, input, offset)
   const shape = postShape(input)
   const episodeId = await ctx.db.insert('episodes', {
     personaId: input.personaId,
@@ -111,8 +132,108 @@ export async function createIdea(ctx: MutationCtx, persona: Doc<'personas'>, inp
     updatedAt: now,
   })
   for (const signalId of input.signalIds) await ctx.db.patch(signalId, { status: 'used' })
-  await enqueueJob(ctx, { kind: 'write_script', payload: { episodeId }, personaId: input.personaId, episodeId })
+  await queueScriptIfDue(ctx, persona, { _id: episodeId, status: 'idea', plannedFor: input.plannedFor }, now)
   return episodeId
+}
+
+/**
+ * Whether the writer is on the episode now: a write of its script is queued
+ * or running. The studio's "Writing now" and the chat's "The writer is on it"
+ * read it, and `queueScriptIfDue` never queues a second write beside one.
+ */
+export async function scriptBeingWritten(ctx: { db: QueryCtx['db'] }, episodeId: Id<'episodes'>): Promise<boolean> {
+  const jobs = await ctx.db
+    .query('jobs')
+    .withIndex('by_episode', (q) => q.eq('episodeId', episodeId))
+    .collect()
+  return jobs.some((job) => {
+    if (job.kind !== 'write_script') return false
+    return job.status === 'queued' || job.status === 'running'
+  })
+}
+
+/** What `queueScriptIfDue` did: queued the write, found it already queued, or left the idea waiting for its day. */
+export type ScriptQueueOutcome = 'queued' | 'waiting' | 'already'
+
+/**
+ * The one place a script is queued (docs/plan.md, v0.2 item 9). A script is
+ * written the day before its episode goes out (shared `scriptDayOf`), after
+ * that morning's sweep, so the writer reads what moved and the last check can
+ * swap a concept that went cold. An idea on or after its script day with no
+ * write already queued or running is queued now; anything else waits. Today
+ * is the persona's own calendar day.
+ */
+export async function queueScriptIfDue(
+  ctx: MutationCtx,
+  persona: Pick<Doc<'personas'>, '_id' | 'timezone'>,
+  episode: Pick<Doc<'episodes'>, '_id' | 'status' | 'plannedFor'>,
+  now: number
+): Promise<ScriptQueueOutcome> {
+  if (episode.status !== 'idea') return 'waiting'
+  if (await scriptBeingWritten(ctx, episode._id)) return 'already'
+  if (dayKey(now, persona.timezone) < scriptDayOf(episode.plannedFor)) return 'waiting'
+  await enqueueJob(ctx, { kind: 'write_script', payload: { episodeId: episode._id }, personaId: persona._id, episodeId: episode._id })
+  return 'queued'
+}
+
+/** Why the morning's due-script pass fails an idea nobody wrote in time. */
+export const DAY_PASSED = 'Its day passed before the script was written.'
+
+/**
+ * The persona's ideas on the morning's due-script pass (internal/schedule.ts
+ * `writeDueScripts`, after the sweep): an idea whose day is already past
+ * fails, since a script for it would go out late or never; every other idea
+ * goes through `queueScriptIfDue`, so tomorrow's are written now, after the
+ * last check. Videos and posts alike.
+ */
+export async function queueDueScripts(
+  ctx: MutationCtx,
+  persona: Pick<Doc<'personas'>, '_id' | 'timezone'>,
+  now: number
+): Promise<{ queued: number; failed: number }> {
+  const today = dayKey(now, persona.timezone)
+  const episodes = await ctx.db
+    .query('episodes')
+    .withIndex('by_persona', (q) => q.eq('personaId', persona._id))
+    .collect()
+  let queued = 0
+  let failed = 0
+  for (const episode of episodes) {
+    if (episode.status !== 'idea') continue
+    if (episode.plannedFor < today) {
+      await failEpisodeIfPossible(ctx, episode._id, DAY_PASSED)
+      failed += 1
+      continue
+    }
+    if ((await queueScriptIfDue(ctx, persona, episode, now)) === 'queued') queued += 1
+  }
+  return { queued, failed }
+}
+
+/**
+ * How many hours a video's publications move from its platforms' usual hours:
+ * its publish time variant's offset while its test is not decided, or 0
+ * outside a publish time test.
+ */
+async function videoPublishOffset(
+  ctx: MutationCtx,
+  episode: Pick<Doc<'episodes'>, '_id' | 'variantKey' | 'experimentId' | 'sponsorSegment'>,
+  persona: Pick<Doc<'personas'>, 'strategy'>
+): Promise<number> {
+  const experiment = episode.experimentId === undefined ? null : await ctx.db.get(episode.experimentId)
+  // A decided publish time test moved formats[].publishHour by the winner's offset (applyExperimentDecision), so
+  // the variant an episode of it still carries would move the hour a second time: a "Three hours later" video
+  // rendered after that variant won would go out six hours late. A decided test of any other dimension moves no
+  // hour either, since no publish time default is ever stored. A stopped test moved no hours, so its episodes
+  // keep their variant's offset.
+  if (experiment?.status === 'decided') return 0
+  return publishOffset(
+    effectiveVariant(
+      'publish_time',
+      { variant: episodeVariant(episode, experiment), sponsorSegment: episode.sponsorSegment },
+      persona.strategy?.defaults
+    )
+  )
 }
 
 /** A video's beats as the writer or the beat editor leaves them: the only script (shared `Beat`). */
@@ -196,7 +317,8 @@ export async function setEpisodePlatforms(ctx: MutationCtx, episodeId: Id<'episo
   if (!persona) throw new Error(`persona ${episode.personaId} not found`)
   const chosen = formatsFor(persona, platforms).map((format) => format.platform)
   if (chosen.length === 0) throw refusal('An episode needs at least one platform.')
-  const base = { platforms: chosen, scheduledAt: earliestPublishAt(persona, chosen, episode.plannedFor), updatedAt: Date.now() }
+  const offset = await videoPublishOffset(ctx, episode, persona)
+  const base = { platforms: chosen, scheduledAt: earliestPublishAt(persona, chosen, episode.plannedFor, offset), updatedAt: Date.now() }
   if (episode.status === 'idea') {
     await ctx.db.patch(episodeId, base)
     return
@@ -430,6 +552,7 @@ export async function completeProduction(ctx: MutationCtx, episodeId: Id<'episod
   }
   if (!episode.format) throw new Error(`episode ${episodeId} has no format: it cannot be scheduled before it is scripted`)
 
+  const offset = await videoPublishOffset(ctx, episode, persona)
   for (const cut of episode.format.cuts) {
     const platform = cut.platform
     const existing = await ctx.db
@@ -437,7 +560,7 @@ export async function completeProduction(ctx: MutationCtx, episodeId: Id<'episod
       .withIndex('by_episode', (q) => q.eq('episodeId', episodeId))
       .filter((q) => q.eq(q.field('platform'), platform))
       .first()
-    const scheduledAt = instantAt(episode.plannedFor, formatFor(persona, platform).publishHour, persona.timezone)
+    const scheduledAt = instantAt(episode.plannedFor, publishHourFor(formatFor(persona, platform), offset), persona.timezone)
     const text = { title: episode.title, body: publicationBody(episode, platform) }
     if (existing) {
       // A publication that failed before goes out again from this render, with today's text and hour; a draft
@@ -468,7 +591,7 @@ export async function completeProduction(ctx: MutationCtx, episodeId: Id<'episod
       mock,
     })
   }
-  await ctx.db.patch(episodeId, { scheduledAt: earliestPublishAt(persona, episode.platforms, episode.plannedFor) })
+  await ctx.db.patch(episodeId, { scheduledAt: earliestPublishAt(persona, episode.platforms, episode.plannedFor, offset) })
   if (persona.autoPublish) await applyEvent(ctx, episodeId, { type: 'scheduled' })
   return 'stored'
 }
@@ -647,8 +770,10 @@ function waitsForDispatch(publication: Doc<'publications'>): boolean {
  * Moves an episode to another calendar day, on the calendar or in chat. An
  * episode moves for as long as it could still be killed, so never once it is
  * published, measured or killed. A video takes its platforms' hours on the new
- * day; a post keeps its slot's hour. Every publication not yet handed to the
- * runner, a package's drafts included, moves with it.
+ * day (moved by its publish offset); a post keeps its slot's hour. Every
+ * publication not yet handed to the runner, a package's drafts included,
+ * moves with it. An idea moved to tomorrow or today gets its script queued; a
+ * scripted episode moved later keeps its script.
  */
 export async function rescheduleEpisode(ctx: MutationCtx, episodeId: Id<'episodes'>, plannedFor: string): Promise<void> {
   const episode = await ctx.db.get(episodeId)
@@ -666,15 +791,18 @@ export async function rescheduleEpisode(ctx: MutationCtx, episodeId: Id<'episode
     for (const publication of publications) {
       if (waitsForDispatch(publication)) await ctx.db.patch(publication._id, { scheduledAt })
     }
+    await queueScriptIfDue(ctx, persona, { _id: episode._id, status: episode.status, plannedFor }, Date.now())
     return
   }
-  const scheduledAt = earliestPublishAt(persona, episode.platforms, plannedFor)
+  const offset = await videoPublishOffset(ctx, episode, persona)
+  const scheduledAt = earliestPublishAt(persona, episode.platforms, plannedFor, offset)
   await ctx.db.patch(episodeId, { plannedFor, scheduledAt, updatedAt: Date.now() })
   for (const publication of publications) {
     if (!waitsForDispatch(publication)) continue
-    const hour = formatFor(persona, publication.platform).publishHour
+    const hour = publishHourFor(formatFor(persona, publication.platform), offset)
     await ctx.db.patch(publication._id, { scheduledAt: instantAt(plannedFor, hour, persona.timezone) })
   }
+  await queueScriptIfDue(ctx, persona, { _id: episode._id, status: episode.status, plannedFor }, Date.now())
 }
 
 /** Local tools (n8n in docker, a dev server) answer on http; everything else on https. */

@@ -12,6 +12,10 @@ crons.interval('poll signals for every persona', { hours: 1 }, internal.internal
 crons.interval('dispatch publications whose time has come', { minutes: 5 }, internal.internal.runner.dispatchDuePublications, {})
 crons.daily('pull metrics and decide experiments', { hourUTC: 5, minuteUTC: 0 }, internal.internal.schedule.pullMetrics, {})
 crons.daily('read comments back as signals', { hourUTC: 6, minuteUTC: 0 }, internal.internal.schedule.pollComments, {})
+// After the comments are read, so the brief and the problem log see this morning's.
+crons.daily('morning sweep: signals, brief, problem log', { hourUTC: 6, minuteUTC: 15 }, internal.internal.schedule.morningSweep, {})
+// After the sweep, so each script's last check and the writer read this morning's research.
+crons.daily("write tomorrow's scripts", { hourUTC: 7, minuteUTC: 30 }, internal.internal.schedule.writeDueScripts, {})
 // The review runs half an hour before planning, so next week's plan follows its pillar weights and defaults.
 crons.weekly('review every strategy', STRATEGY_REVIEW_SLOT, internal.internal.schedule.reviewStrategies, {})
 crons.weekly('plan next week', { dayOfWeek: 'monday', hourUTC: 7, minuteUTC: 0 }, internal.internal.schedule.planNextWeek, {})

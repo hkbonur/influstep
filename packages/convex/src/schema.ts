@@ -305,6 +305,9 @@ export default defineSchema({
     topics: v.array(v.string()),
     status: signalStatusValidator,
     foundAt: v.number(),
+    // When the source says the item was posted. Freshness (shared `signalFreshness`) decays from it, and from
+    // foundAt when a source does not say.
+    publishedAt: v.optional(v.number()),
     mock: v.boolean(),
   })
     .index('by_persona_status', ['personaId', 'status'])
@@ -343,13 +346,16 @@ export default defineSchema({
     evidence: v.object({
       experimentId: v.optional(v.id('experiments')),
       episodeIds: v.array(v.id('episodes')),
+      // The signals a last check swapped between (core/research.ts); empty on every other entry.
+      signalIds: v.array(v.id('signals')),
       numbers: v.array(journalNumberValidator),
     }),
     createdAt: v.number(),
   }).index('by_persona_time', ['personaId', 'createdAt']),
 
-  // What a persona has learned. Today only learnings from decided experiments, which the writer reads; a newer
-  // learning on the same dimension supersedes the older one, which stays so the page can show what changed.
+  // What a persona knows, all of which the writer reads: learnings from decided experiments, the morning's
+  // research brief, and the problems it met (core/research.ts). A newer learning on the same dimension, or the
+  // next morning's brief, supersedes the older one, which stays so the page can show what changed.
   memories: defineTable({
     personaId: v.id('personas'),
     kind: memoryKindValidator,
@@ -358,13 +364,22 @@ export default defineSchema({
     evidence: v.object({
       experimentId: v.optional(v.id('experiments')),
       episodeIds: v.array(v.id('episodes')),
+      // The signals a brief names or a problem was logged from; empty on a learning.
+      signalIds: v.array(v.id('signals')),
     }),
-    // 0..1: the decision's confidence, or 1 for the operator's own verdict.
-    confidence: v.number(),
+    // A learning's 0..1: the decision's confidence, or 1 for the operator's own verdict. A brief and a problem
+    // have none.
+    confidence: v.optional(v.number()),
+    // A brief's: the writer never reads it after this.
+    expiresAt: v.optional(v.number()),
+    // A problem's dedup key: `question:<tokens>` or `tool:<tool lowercased>`.
+    key: v.optional(v.string()),
     status: memoryStatusValidator,
     supersededBy: v.optional(v.id('memories')),
     createdAt: v.number(),
-  }).index('by_persona_status', ['personaId', 'status']),
+  })
+    .index('by_persona_status', ['personaId', 'status'])
+    .index('by_persona_kind_status', ['personaId', 'kind', 'status']),
 
   directives: defineTable({
     personaId: v.id('personas'),

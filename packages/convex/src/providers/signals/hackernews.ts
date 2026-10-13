@@ -36,6 +36,7 @@ export const hackerNewsSignals: SignalsProvider = {
           summary: `${hit.points ?? 0} points, ${hit.num_comments ?? 0} comments`,
           score: (hit.points ?? 0) + (hit.num_comments ?? 0) * 2,
           topics: [term],
+          publishedAt: hit.created_at_i * 1000,
         })
       }
     }

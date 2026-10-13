@@ -39,7 +39,9 @@ import {
  * length, the sponsor in a beat when the slot carries one, and the call to
  * action closing the last beat. A format too short for the full sponsor
  * lines gets compact ones, so every sponsor segment fits from the shortest
- * format up. The beats follow the delivery.
+ * format up. The beats follow the delivery. The research (the morning brief
+ * and the problem log) is left unread, for scripts and posts alike: the
+ * templates have no place to weave it in.
  *
  * A post opens with its topic too, follows its intent and length, and every
  * part is cut to the limit the brief gives it, so a mock post always passes

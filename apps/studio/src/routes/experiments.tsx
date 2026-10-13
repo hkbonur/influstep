@@ -117,10 +117,10 @@ function ExperimentCard(props: { experiment: ExperimentRow }) {
           </h2>
           <p className="mt-0.5 text-ash">{experiment.hypothesis}</p>
           <p className="mt-1 text-xs text-ash">
-            {/* Who chose to run it: the persona's own strategy review, or the operator on this page. */}
-            {experiment.createdBy === 'analyst'
-              ? `Picked by ${experiment.personaName}`
-              : `Set up by you for ${experiment.personaName}`}{' '}
+            {/* Who chose to run it: the operator on this page, or the persona's own strategy review. */}
+            {experiment.createdBy === 'operator'
+              ? `Set up by you for ${experiment.personaName}`
+              : `Picked by ${experiment.personaName}`}{' '}
             <Mono>@{experiment.personaHandle}</Mono> · {EXPERIMENT_KIND_LABELS[experiment.kind]} on{' '}
             {METRIC_LABELS[experiment.metric].toLowerCase()}
             {LINK_ATTRIBUTED_METRICS.has(experiment.metric) && ' (link-attributed only; code redemptions do not count)'} · decides at{' '}

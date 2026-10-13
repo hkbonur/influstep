@@ -19,6 +19,7 @@ import { addDays, dayKey, weekStart } from './core/dates'
 import { createIdea } from './core/episodes'
 import type { ScriptBrief } from './providers/llm'
 import { mockLlm } from './providers/llm/mock'
+import { writeScriptsDueBefore } from '../test/scripts'
 import { setup } from '../test/setup'
 
 const TIMEZONE = 'Europe/Oslo'
@@ -55,6 +56,8 @@ function scriptBrief(args: { delivery: Delivery; sponsorSegment: SponsorSegment;
     signals: [{ title: 'n8n webhooks that retry', summary: 'People ask how.', url: 'https://news.ycombinator.com/item?id=1' }],
     format: { lengthSec: args.lengthSec, delivery: args.delivery, hookNotes: ['Hook in the first two seconds.'] },
     problems: [],
+    // No morning sweep has run for this persona yet.
+    research: { brief: null, problems: [] },
   }
 }
 
@@ -95,14 +98,15 @@ async function persona(t: Test, format: PlatformFormat): Promise<Id<'personas'>>
   })
 }
 
-/** One video idea for next week, through the writer's job as the planner queues it. */
+/** One video idea for next week, through the writer's job as the due-script pass queues it the morning before. */
 async function writtenVideo(t: Test, personaId: Id<'personas'>, sponsorSegment: SponsorSegment): Promise<Doc<'episodes'>> {
+  const plannedFor = addDays(weekStart(dayKey(Date.now(), TIMEZONE)), 7)
   const episodeId = await t.run(async (ctx) => {
     const owner = await ctx.db.get(personaId)
     if (!owner) throw new Error('the persona is gone')
     return createIdea(ctx, owner, {
       personaId,
-      plannedFor: addDays(weekStart(dayKey(Date.now(), TIMEZONE)), 7),
+      plannedFor,
       concept: 'n8n webhooks that retry',
       pillar: 'n8n tutorials',
       sponsorSegment,
@@ -111,6 +115,8 @@ async function writtenVideo(t: Test, personaId: Id<'personas'>, sponsorSegment: 
     })
   })
   await t.finishAllScheduledFunctions(() => {})
+  expect((await t.run((ctx) => ctx.db.get(episodeId)))?.status).toBe('idea')
+  await writeScriptsDueBefore(t, personaId, plannedFor)
   const episode = await t.run((ctx) => ctx.db.get(episodeId))
   if (!episode) throw new Error('the episode is gone')
   expect(episode.status).toBe('scripted')

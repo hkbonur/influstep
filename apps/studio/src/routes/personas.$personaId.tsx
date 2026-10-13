@@ -11,6 +11,7 @@ import {
 } from '@influstep/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
+import type { FunctionReturnType } from 'convex/server'
 import React from 'react'
 import { FormatFields } from '@/components/format-fields'
 import { PersonaColorSwatches, PersonaMascot, personaAvatarState } from '@/components/persona-avatar'
@@ -36,6 +37,9 @@ import {
 import { cn } from '@/lib/cn'
 import { errorMessage } from '@/lib/errors'
 import { formatDate, formatDateTime, formatDay, formatHour, languageName, relativeTime } from '@/lib/format'
+import { ideaLine } from '@/lib/ideas'
+import { PROBLEMS_SHOWN, briefTime, splitBrief } from '@/lib/research'
+import { useNow } from '@/lib/use-now'
 
 export const Route = createFileRoute('/personas/$personaId')({ component: PersonaPage })
 
@@ -136,7 +140,9 @@ function PersonaPage() {
                       {isPost(episode.kind) && <PostKindIcon kind={episode.kind} className="shrink-0 text-graphite" />}
                       <span className="line-clamp-1">{episode.title}</span>
                     </Link>
-                    <p className="line-clamp-1 text-xs text-ash">{episode.hook || episode.concept}</p>
+                    <p className="line-clamp-1 text-xs text-ash">
+                      {episode.status === 'idea' ? ideaLine(episode, episode.writing) : episode.hook || episode.concept}
+                    </p>
                     {episode.error && <p className="mt-0.5 line-clamp-1 font-mono text-[11px] text-signal-red-deep">{episode.error}</p>}
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
                       <PlatformGlyphs platforms={episode.platforms} />
@@ -258,6 +264,8 @@ function PersonaPage() {
 
           <StrategySummary persona={persona} />
 
+          <ResearchSummary personaId={personaId} />
+
           <section>
             <Eyebrow className="mb-3">Recent jobs</Eyebrow>
             <ul className="space-y-1 font-mono text-[11px]">
@@ -298,6 +306,86 @@ function StrategySummary(props: { persona: Doc<'personas'> }) {
         <span className="block text-ash">{reviewedAt === undefined ? 'Not reviewed yet' : `Reviewed ${formatDate(reviewedAt)}`}</span>
       </Link>
     </section>
+  )
+}
+
+type Research = FunctionReturnType<typeof api.private.research.get>
+
+/** A brief's expiry only matters to the minute, so the section reads the clock once a minute. */
+const RESEARCH_CLOCK_MS = 60_000
+
+/**
+ * What the researcher found this morning and the problems the persona keeps
+ * meeting, in the Strategy summary's type (DESIGN.md, Persona page). Short on
+ * purpose: three lines of the brief and three problems, the rest folded away.
+ */
+function ResearchSummary(props: { personaId: Id<'personas'> }) {
+  const research = useQuery(api.private.research.get, { personaId: props.personaId })
+  const now = useNow(RESEARCH_CLOCK_MS)
+  return (
+    <section>
+      <Eyebrow className="mb-3">Research</Eyebrow>
+      {research === undefined && <Skeleton className="h-4 w-40" />}
+      {research !== undefined && (
+        <div className="space-y-3 text-xs">
+          <MorningBrief brief={research.brief} now={now} />
+          <ProblemLog problems={research.problems} />
+        </div>
+      )}
+    </section>
+  )
+}
+
+/**
+ * The newest brief, unless it expired: an expired brief says nothing about
+ * today, and the writer skips it too. Judged against the page's clock, since
+ * the query does not re-run when a brief runs out.
+ */
+function MorningBrief(props: { brief: Research['brief']; now: number }) {
+  const brief = props.brief
+  if (brief === null || brief.expiresAt <= props.now)
+    return <p className="text-ash">No brief yet. The researcher writes one every morning.</p>
+  const lines = splitBrief(brief.text)
+  return (
+    <div className="space-y-0.5">
+      <p className="text-ash">Morning brief, {briefTime(brief.createdAt, props.now)}</p>
+      {lines.head.map((line, index) => (
+        // The brief's lines never move, so their place keys them; a line can repeat.
+        <p key={`${index}:${line}`}>{line}</p>
+      ))}
+      {lines.rest.length > 0 && (
+        <details>
+          <summary className="cursor-pointer text-ash hover:text-ink">Whole brief</summary>
+          <div className="mt-0.5 space-y-0.5">
+            {lines.rest.map((line, index) => (
+              <p key={`${index}:${line}`}>{line}</p>
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  )
+}
+
+/** The open problems, newest first. With none, the part is left out, heading and all. */
+function ProblemLog(props: { problems: Research['problems'] }) {
+  if (props.problems.length === 0) return null
+  const shown = props.problems.slice(0, PROBLEMS_SHOWN)
+  const more = props.problems.length - shown.length
+  return (
+    <div className="space-y-0.5">
+      <p className="text-ash">Problem log</p>
+      <ul className="space-y-0.5">
+        {shown.map((problem) => (
+          <li key={problem._id}>{problem.text}</li>
+        ))}
+      </ul>
+      {more > 0 && (
+        <p className="text-ash">
+          and <span className="tabular">{more}</span> more
+        </p>
+      )}
+    </div>
   )
 }
 

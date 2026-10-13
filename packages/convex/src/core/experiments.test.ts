@@ -111,6 +111,107 @@ describe('startExperiment', () => {
       )
     })
   })
+
+  it('refuses a description format test without a discount code, a publish time test on X alone, and an hour offset elsewhere', async () => {
+    const t = setup()
+    await t.run(async (ctx) => {
+      const persona = await insertPersona(ctx)
+      await expect(startExperiment(ctx, persona, catalogExperiment('description_format', ['link', 'code']))).rejects.toThrow(
+        'Ada Automates has no discount code in force, so a description format test would compare nothing.'
+      )
+      await expect(startExperiment(ctx, persona, catalogExperiment('cta', ['follow', 'comment'], { hourOffset: 3 }))).rejects.toThrow(
+        'Only a publish time experiment moves the hour; "Comment" has an hour offset.'
+      )
+
+      const xOnly = await insertPersona(ctx, { name: 'Xavier', handle: 'xavier' })
+      await ctx.db.patch(xOnly._id, { formats: xOnly.formats.filter((format) => format.platform === 'x') })
+      const reloaded = await ctx.db.get(xOnly._id)
+      if (!reloaded) throw new Error('persona vanished')
+      await expect(startExperiment(ctx, reloaded, catalogExperiment('publish_time', ['usual', 'earlier']))).rejects.toThrow(
+        'Xavier publishes only on X, which keeps its own hours and prints no footer, so a publish time test would compare nothing.'
+      )
+
+      await ctx.db.insert('discountCodes', {
+        personaId: persona._id,
+        code: 'ADA20',
+        offer: '20% off',
+        active: true,
+        redemptions: 0,
+        createdAt: Date.now(),
+      })
+      const unknown = catalogExperiment('description_format', ['link', 'code'])
+      await expect(
+        startExperiment(ctx, persona, {
+          ...unknown,
+          variants: unknown.variants.map((variant) => (variant.isControl ? variant : { ...variant, key: 'emoji', label: 'Emoji first' })),
+        })
+      ).rejects.toThrow('"Emoji first" is no description format; the footer puts either the link or the code first.')
+      const experimentId = await startExperiment(ctx, persona, catalogExperiment('description_format', ['link', 'code']))
+      expect((await experimentOf(ctx, experimentId)).kind).toBe('description_format')
+    })
+  })
+})
+
+/** An experiment on two catalog variants of `kind`, the first the control; `challenger` overrides the second's fields. */
+function catalogExperiment(
+  kind: StartExperimentInput['kind'],
+  keys: [string, string],
+  challenger: { hourOffset?: number } = {}
+): StartExperimentInput {
+  const variants = keys.map((key, index) => {
+    const variant = EXPERIMENT_CATALOG[kind].find((candidate) => candidate.key === key)
+    if (!variant) throw new Error(`the ${kind} catalog has no "${key}"`)
+    return index === 0 ? { ...variant, isControl: true } : { ...variant, ...challenger, isControl: false }
+  })
+  return {
+    name: `${kind} test`,
+    hypothesis: 'One of them is better.',
+    kind,
+    metric: 'follows',
+    variants,
+    minExposures: 2000,
+    minConfidence: 0.9,
+    createdBy: 'operator',
+    reason: 'A test.',
+  }
+}
+
+describe('a decided publish time', () => {
+  it('moves the video hours, keeps X at its own, stores no default, and says the new hours', async () => {
+    const t = setup()
+    await t.run(async (ctx) => {
+      const persona = await insertPersona(ctx)
+      const experimentId = await startExperiment(ctx, persona, catalogExperiment('publish_time', ['usual', 'earlier']))
+      await applyExperimentDecision(
+        ctx,
+        await experimentOf(ctx, experimentId),
+        { winnerKey: 'earlier', lift: 0, confidence: 0 },
+        'operator',
+        ''
+      )
+      const after = await ctx.db.get(persona._id)
+      expect(after?.formats.map((format) => [format.platform, format.publishHour])).toEqual([
+        ['youtube', 13],
+        ['x', persona.formats[1]?.publishHour],
+      ])
+      expect(after?.strategy?.defaults ?? []).toEqual([])
+      const decided = (await journalOf(ctx, persona)).find((entry) => entry.kind === 'experiment_decided')
+      expect(decided?.text).toBe('"Three hours earlier" won. Video hours now: YouTube 13:00 (was 16:00).')
+      const messages = await ctx.db
+        .query('messages')
+        .withIndex('by_persona', (q) => q.eq('personaId', persona._id))
+        .collect()
+      expect(messages.map((message) => message.text)).toEqual([
+        'Experiment "publish_time test" is decided: you picked "Three hours earlier". From now on I publish YouTube videos at 13:00.',
+      ])
+      const learnings = await ctx.db
+        .query('memories')
+        .withIndex('by_persona_kind_status', (q) => q.eq('personaId', persona._id).eq('kind', 'learning').eq('status', 'active'))
+        .collect()
+      expect(learnings).toHaveLength(1)
+      expect(learnings[0]).toMatchObject({ dimension: 'publish_time', confidence: 1, evidence: { experimentId, signalIds: [] } })
+    })
+  })
 })
 
 describe('analystDecisionNote', () => {
@@ -133,7 +234,7 @@ describe('applyExperimentDecision', () => {
         kind: 'learning',
         text: 'Call to action: "Link" beat "Follow".',
         dimension: 'cta',
-        evidence: { episodeIds: [] },
+        evidence: { episodeIds: [], signalIds: [] },
         confidence: 0.92,
         status: 'active',
         createdAt: Date.now() - 90 * DAY,
@@ -143,7 +244,7 @@ describe('applyExperimentDecision', () => {
         kind: 'learning',
         text: 'Hook style: "Question" beat "How to".',
         dimension: 'hook',
-        evidence: { episodeIds: [] },
+        evidence: { episodeIds: [], signalIds: [] },
         confidence: 0.95,
         status: 'active',
         createdAt: Date.now() - 80 * DAY,

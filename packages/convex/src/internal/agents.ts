@@ -2,17 +2,19 @@ import { ConvexError, v, type Infer } from 'convex/values'
 import {
   EPISODE_STATUS_LABELS,
   MEASUREMENT_WINDOW_MS,
+  POLLED_SIGNAL_SOURCES,
   POST_LENGTH_LABELS,
   PUBLICATION_BODY_MAX,
   PUBLICATION_TITLE_MAX,
-  SIGNAL_SOURCES,
   X_POST_LIMIT,
   chatIntentSchema,
   decideExperiment,
   effectiveStyle,
   hookOf,
   isChatTask,
+  isCold,
   isPost,
+  isScriptKind,
   lengthProblem,
   normalizeDiscountCode,
   pillarWeights,
@@ -20,6 +22,7 @@ import {
   postProblems,
   resolveEpisodeFormat,
   scriptProblems,
+  signalFreshness,
   styleLines,
   variantLength,
   variantRate,
@@ -48,11 +51,19 @@ import { applyChatIntent, changeablePlan } from '../core/chat'
 import { addDays, dayKey } from '../core/dates'
 import { discountCodesFor as discountCodesRule, redemptionOwner } from '../core/discounts'
 import { approveEpisode, createIdea, formatAndShots } from '../core/episodes'
-import { analystDecisionNote, applyExperimentDecision, episodeEffectiveVariant, episodeVariant, variantStatsFor } from '../core/experiments'
+import {
+  analystDecisionNote,
+  applyExperimentDecision,
+  episodeEffectiveVariant,
+  episodeVariant,
+  variantStatsFor,
+  type EpisodeVariant,
+} from '../core/experiments'
 import { formatFor, formatsFor } from '../core/formats'
 import { PILLAR_HISTORY_DAYS, planPostSlots, planWeek as planWeekRule } from '../core/planner'
 import { savePost } from '../core/posts'
 import { reportWindow } from '../core/report'
+import { lastCheck, logRepeatedQuestions, writeDailyBrief } from '../core/research'
 import { reviewStrategy as reviewStrategyRule, type ReviewOutcome } from '../core/strategy'
 import { workspaceOf } from '../core/workspace'
 import { providersMode } from '../lib/env'
@@ -96,26 +107,76 @@ import { applyEvent, type EpisodeContext } from './data'
 
 export const pollSignals = internalAction({
   args: { personaId: v.string() },
-  handler: async (ctx, args): Promise<{ found: number; skipped: SignalSource[] }> => {
-    const personaId = args.personaId as Id<'personas'>
-    const { persona } = await ctx.runQuery(internal.internal.data.getPersona, { personaId })
-    const terms = [...persona.pillars, persona.niche]
-    const since = Date.now() - 7 * 24 * 3_600_000
-    const skipped: SignalSource[] = []
-    let found = 0
-    for (const source of SIGNAL_SOURCES) {
-      if (source === 'comments') continue // the publisher reads comments from the persona's own publications
-      if (providersMode() === 'real' && !signalSourceHasRealAdapter(source)) {
-        skipped.push(source)
-        continue
-      }
-      const signals = await signalsProvider(source).find({ terms, since, limit: 5 })
-      found += await ctx.runMutation(internal.internal.agents.storeSignals, { personaId, signals, mock: providersMode() === 'mock' })
-    }
-    return { found, skipped }
+  handler: async (ctx, args): Promise<PollResult> => {
+    const { persona } = await ctx.runQuery(internal.internal.data.getPersona, { personaId: args.personaId as Id<'personas'> })
+    return pollSources(ctx, persona)
   },
 })
 
+/** How many signals a poll stored new, and the sources it skipped because real mode has no adapter for them yet. */
+type PollResult = { found: number; skipped: SignalSource[] }
+
+/**
+ * One poll of every source the researcher reads (shared
+ * `POLLED_SIGNAL_SOURCES`), for the hourly poll and the morning sweep alike.
+ * Comments and problems are not polled: the publisher and the problem log
+ * write those.
+ */
+async function pollSources(ctx: ActionCtx, persona: Doc<'personas'>): Promise<PollResult> {
+  const terms = [...persona.pillars, persona.niche]
+  const since = Date.now() - 7 * 24 * 3_600_000
+  const mock = providersMode() === 'mock'
+  const skipped: SignalSource[] = []
+  let found = 0
+  for (const source of POLLED_SIGNAL_SOURCES) {
+    if (!mock && !signalSourceHasRealAdapter(source)) {
+      skipped.push(source)
+      continue
+    }
+    const signals = await signalsProvider(source).find({ terms, since, limit: 5 })
+    found += await ctx.runMutation(internal.internal.agents.storeSignals, { personaId: persona._id, signals, mock })
+  }
+  return { found, skipped }
+}
+
+/**
+ * The morning sweep (docs/plan.md, v0.2 item 9): the researcher polls every
+ * source, then logs the questions viewers keep asking and writes the day's
+ * brief from what moved, in that order, so the brief lists today's new
+ * problems. It runs after the morning's comment poll, so the comments it
+ * groups are today's.
+ */
+export const morningSweep = internalAction({
+  args: { personaId: v.string() },
+  handler: async (ctx, args): Promise<PollResult & { briefId: Id<'memories'>; problems: number }> => {
+    const personaId = args.personaId as Id<'personas'>
+    const { persona } = await ctx.runQuery(internal.internal.data.getPersona, { personaId })
+    const poll = await pollSources(ctx, persona)
+    const sweep: { briefId: Id<'memories'>; problems: number } = await ctx.runMutation(internal.internal.agents.morningSweepMutation, {
+      personaId,
+    })
+    return { ...poll, ...sweep }
+  },
+})
+
+/** The sweep's writes in one transaction: the problem log first, then the brief that reads it. `problems` counts the new problems. */
+export const morningSweepMutation = internalMutation({
+  args: { personaId: v.id('personas') },
+  handler: async (ctx, args): Promise<{ briefId: Id<'memories'>; problems: number }> => {
+    const persona = await ctx.db.get(args.personaId)
+    if (!persona) throw new Error(`persona ${args.personaId} not found`)
+    const now = Date.now()
+    const problems = await logRepeatedQuestions(ctx, persona, now)
+    const briefId = await writeDailyBrief(ctx, persona, now)
+    return { briefId, problems: problems.length }
+  },
+})
+
+/**
+ * A re-found signal keeps its status and its first find; its score and
+ * summary follow the source, and its post time too when the source gives
+ * one, so a search suggestion people still type stays fresh.
+ */
 export const storeSignals = internalMutation({
   args: {
     personaId: v.id('personas'),
@@ -129,6 +190,7 @@ export const storeSignals = internalMutation({
         summary: v.string(),
         score: v.number(),
         topics: v.array(v.string()),
+        publishedAt: v.optional(v.number()),
       })
     ),
   },
@@ -142,7 +204,11 @@ export const storeSignals = internalMutation({
         )
         .first()
       if (existing) {
-        await ctx.db.patch(existing._id, { score: signal.score, summary: signal.summary })
+        await ctx.db.patch(existing._id, {
+          score: signal.score,
+          summary: signal.summary,
+          ...(signal.publishedAt === undefined ? {} : { publishedAt: signal.publishedAt }),
+        })
         continue
       }
       await ctx.db.insert('signals', { ...signal, personaId: args.personaId, status: 'new', foundAt: Date.now(), mock: args.mock })
@@ -221,17 +287,24 @@ export const planWeekMutation = internalMutation({
       .withIndex('by_persona', (q) => q.eq('personaId', persona._id))
       .collect()
     const live = all.filter((episode) => episode.status !== 'killed')
+    const now = Date.now()
     // Days already holding a video, plus days already gone: the planner never schedules into the past.
     // Posts have slots of their own, so a day of posts still takes a video.
-    const today = dayKey(Date.now(), persona.timezone)
+    const today = dayKey(now, persona.timezone)
     const takenDays = [
       ...live.filter((episode) => !isPost(episode.kind) && episode.plannedFor >= args.weekStart).map((episode) => episode.plannedFor),
       ...Array.from({ length: 7 }, (_, offset) => addDays(args.weekStart, offset)).filter((day) => day < today),
     ]
-    const signals = await ctx.db
-      .query('signals')
-      .withIndex('by_persona_status', (q) => q.eq('personaId', persona._id).eq('status', 'new'))
-      .collect()
+    // Both rankers read a signal's freshness as its score, so a story from last week loses to one from this
+    // morning, and a cold one is left out: it is too old to react to by the time the episode goes out.
+    const signals = (
+      await ctx.db
+        .query('signals')
+        .withIndex('by_persona_status', (q) => q.eq('personaId', persona._id).eq('status', 'new'))
+        .collect()
+    )
+      .map((signal) => ({ id: signal._id, title: signal.title, score: signalFreshness(signal, now), topics: signal.topics }))
+      .filter((signal) => !isCold(signal.score))
     const experiment = await ctx.db
       .query('experiments')
       .withIndex('by_persona_status', (q) => q.eq('personaId', persona._id).eq('status', 'running'))
@@ -262,7 +335,7 @@ export const planWeekMutation = internalMutation({
       },
       pillarWeights: pillarWeights(persona.pillars, persona.strategy?.pillarWeights),
       priorCounts,
-      signals: signals.map((signal) => ({ id: signal._id, title: signal.title, score: signal.score, topics: signal.topics })),
+      signals,
       experiment: experiment
         ? { id: experiment._id, kind: experiment.kind, variantKeys: experiment.variants.map((variant) => variant.key), assigned }
         : undefined,
@@ -291,10 +364,8 @@ export const planWeekMutation = internalMutation({
       format: xFormat,
       posts: live.filter((episode) => isPost(episode.kind)),
       episodeCount: live.length + plan.length,
-      signals: signals
-        .filter((signal) => !usedSignals.has(signal._id))
-        .map((signal) => ({ id: signal._id, title: signal.title, score: signal.score, topics: signal.topics })),
-      now: Date.now(),
+      signals: signals.filter((signal) => !usedSignals.has(signal.id)),
+      now,
     })
     for (const post of posts) {
       await createIdea(ctx, persona, {
@@ -315,12 +386,19 @@ export const planWeekMutation = internalMutation({
 })
 
 /**
- * The writer's video path. One script for every platform the episode goes
- * to: the writer gets the resolved delivery, the length scaled by the
- * episode-length variant in force, and the hook convention of each platform,
- * in PLATFORMS order. It also gets the persona's learnings and the style in
- * force on every dimension (shared `effectiveStyle`), so a decided experiment
- * changes the next script. The beats are the script, held to the shared rules
+ * The writer, for a video and a post alike. It writes the day before the
+ * publish day, so it first takes a last look at what moved (core
+ * `lastCheck`): a reactive concept whose signal went cold is swapped for the
+ * strongest fresh one before the context is read, and the writer writes the
+ * new concept. The writer then reads this morning's brief and the problem log
+ * with the rest of the context.
+ *
+ * The video path: one script for every platform the episode goes to. The
+ * writer gets the resolved delivery, the length scaled by the episode-length
+ * variant in force, and the hook convention of each platform, in PLATFORMS
+ * order. It also gets the persona's learnings and the style in force on every
+ * dimension (shared `effectiveStyle`), so a decided experiment changes the
+ * next script. The beats are the script, held to the shared rules
  * (`scriptProblems`, `lengthProblem`) and the description to what a
  * publication can carry; a draft that misses goes back to the model once with
  * the problems named, and a second miss fails the episode with them.
@@ -329,10 +407,11 @@ export const writeScript = internalAction({
   args: { episodeId: v.string() },
   handler: async (ctx, args): Promise<WriterResult> => {
     const episodeId = args.episodeId as Id<'episodes'>
+    await ctx.runMutation(internal.internal.agents.lastCheckMutation, { episodeId })
     const context: EpisodeContext = await ctx.runQuery(internal.internal.data.getEpisodeContext, { episodeId })
     const kind = context.episode.kind
     if (isPost(kind)) return writePost(ctx, context, kind)
-    const { episode, persona, workspace, directives, signals, experiment, learnings } = context
+    const { episode, persona, workspace, directives, signals, experiment, learnings, research } = context
     const variant = episodeVariant(episode, experiment)
     const style = effectiveStyle({ variant, sponsorSegment: episode.sponsorSegment }, persona.strategy?.defaults)
     const formats = formatsFor(persona, episode.platforms)
@@ -351,12 +430,13 @@ export const writeScript = internalAction({
       sponsorSegment: episode.sponsorSegment,
       sponsorName: workspace.sponsorName,
       sponsorUrl: workspace.sponsorUrl,
-      variant: variant ? { kind: variant.kind, key: variant.key, description: variant.description } : undefined,
+      variant: scriptVariantOf(variant),
       learnings,
       style,
       styleLines: styleLines(style, variant?.kind),
       directives: directives.map((directive) => directive.text),
       signals: signals.map((signal) => ({ title: signal.title, summary: signal.summary, url: signal.url })),
+      research,
       format: {
         lengthSec: variantLength(format.lengthSec, style.length),
         delivery: format.delivery,
@@ -379,6 +459,23 @@ export const writeScript = internalAction({
     })
   },
 })
+
+/** The last check's swap, or none, in one transaction; it runs before the writer reads the episode. */
+export const lastCheckMutation = internalMutation({
+  args: { episodeId: v.id('episodes') },
+  handler: async (ctx, args): ReturnType<typeof lastCheck> => lastCheck(ctx, args.episodeId, Date.now()),
+})
+
+/**
+ * The variant line of the writer's brief, for a dimension the writer
+ * scripts. A publish time or description format variant is applied after the
+ * script (the publish hour, the description footer), so the writer gets no
+ * variant line for it.
+ */
+function scriptVariantOf(variant: EpisodeVariant | undefined): ScriptBrief['variant'] {
+  if (!variant || !isScriptKind(variant.kind)) return undefined
+  return { kind: variant.kind, key: variant.key, description: variant.description }
+}
 
 /**
  * What the writer's job ends with: the title it wrote, or a skip when the
@@ -474,7 +571,7 @@ export const storeScript = internalMutation({
  * second miss fails the episode with them.
  */
 async function writePost(ctx: ActionCtx, context: EpisodeContext, kind: PostKind): Promise<WriterResult> {
-  const { episode, persona, workspace, directives, signals, examples } = context
+  const { episode, persona, workspace, directives, signals, examples, research } = context
   // A post planned before intents and lengths existed has neither and is written to its kind alone.
   const length = episode.length ?? null
   const brief: PostBrief = {
@@ -493,6 +590,7 @@ async function writePost(ctx: ActionCtx, context: EpisodeContext, kind: PostKind
     sponsorName: workspace.sponsorName,
     directives: directives.map((directive) => directive.text),
     signals: signals.map((signal) => ({ title: signal.title, summary: signal.summary, url: signal.url })),
+    research,
     hookNote: formatFor(persona, 'x').hookNote,
     partLimit: X_POST_LIMIT,
     intent: episode.intent ?? null,
@@ -1180,7 +1278,7 @@ function personaBriefOf(persona: Doc<'personas'>): ScriptBrief['persona'] {
 // Chat tasks: a report one agent writes and posts back in the persona's chat
 // ---------------------------------------------------------------------------
 
-/** How many unused signals a research brief reads, newest first. */
+/** How many unused signals a research brief reads, freshest first. */
 const RESEARCH_BRIEF_SIGNALS = 10
 /** How far back a comment digest and an analytics summary look. */
 const TASK_WINDOW_DAYS = 7
@@ -1231,7 +1329,7 @@ export const taskReading = internalQuery({
     const brief = personaBriefOf(persona)
     const now = Date.now()
     if (job.kind === 'research_brief') {
-      return { persona: brief, task: job.kind, topic, data: { signals: await unusedSignals(ctx, persona._id, topic) } }
+      return { persona: brief, task: job.kind, topic, data: { signals: await unusedSignals(ctx, persona._id, topic, now) } }
     }
     if (job.kind === 'comment_digest') {
       const comments = await commentsSince(ctx, persona._id, now - TASK_WINDOW_DAYS * 86_400_000)
@@ -1267,18 +1365,26 @@ function topicOf(payload: unknown): string | null {
   return payload.topic
 }
 
-/** The persona's newest signals nobody used yet, those that mention the topic when there is one. */
-async function unusedSignals(ctx: QueryCtx, personaId: Id<'personas'>, topic: string | null): Promise<TaskSignal[]> {
+/**
+ * The persona's freshest signals nobody used yet (shared `signalFreshness`),
+ * those that mention the topic when there is one. A cold signal still counts
+ * here, last: the operator asked what there is, and an old story is still an
+ * answer.
+ */
+async function unusedSignals(ctx: QueryCtx, personaId: Id<'personas'>, topic: string | null, now: number): Promise<TaskSignal[]> {
   const signals = await ctx.db
     .query('signals')
     .withIndex('by_persona_status', (q) => q.eq('personaId', personaId).eq('status', 'new'))
+    // Newest first, so two signals of the same freshness rank the newer one first.
     .order('desc')
     .collect()
   const terms = topic === null ? null : topicTerms(topic)
   return signals
     .filter((signal) => terms === null || mentionsAny(signal, terms))
+    .map((signal) => ({ signal, freshness: signalFreshness(signal, now) }))
+    .sort((a, b) => b.freshness - a.freshness)
     .slice(0, RESEARCH_BRIEF_SIGNALS)
-    .map(taskSignalOf)
+    .map((ranked) => taskSignalOf(ranked.signal))
 }
 
 /** Where a topic names more than one subject: "Make vs n8n", "Zapier, Make and n8n". */

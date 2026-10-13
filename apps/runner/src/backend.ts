@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import { runnerJobSchema, type RunnerJob } from '@influstep/shared'
 import { config, providersMode } from './config'
+import type { JobFailure } from './failure'
 
 /** The runner's HTTP client for packages/convex/src/http.ts. */
 
@@ -28,8 +29,9 @@ export const backend = {
   async complete(jobId: string, result: unknown): Promise<void> {
     await call('/runner/complete', { jobId, result })
   },
-  async fail(jobId: string, error: string): Promise<void> {
-    await call('/runner/fail', { jobId, error })
+  /** Fails the job with its error and, when a screen shot's recording broke, that shot's id. */
+  async fail(jobId: string, failure: JobFailure): Promise<void> {
+    await call('/runner/fail', { jobId, error: failure.error, shotId: failure.shotId })
   },
   /** Uploads a file to Convex storage and returns its storage id. */
   async upload(file: string, contentType: string): Promise<string> {

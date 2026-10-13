@@ -91,9 +91,12 @@ http.route({
   path: '/runner/fail',
   method: 'POST',
   handler: route(async (ctx, body) => {
+    // A recording that broke on a screen shot names the shot, so the tool becomes a problem (core/research.ts).
+    const shotId = optionalString(body, 'shotId')
     await ctx.runMutation(internal.internal.runner.fail, {
       jobId: requireString(body, 'jobId') as Id<'jobs'>,
       error: requireString(body, 'error'),
+      ...(shotId === null ? {} : { shotId }),
     })
     return { ok: true }
   }),

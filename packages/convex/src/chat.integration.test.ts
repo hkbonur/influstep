@@ -84,6 +84,16 @@ async function onlyReply(t: Harness, persona: Doc<'personas'>): Promise<Doc<'mes
   return reply
 }
 
+async function jobKindsOf(t: Harness, episodeId: Id<'episodes'>): Promise<string[]> {
+  const jobs = await t.run((ctx) =>
+    ctx.db
+      .query('jobs')
+      .withIndex('by_episode', (q) => q.eq('episodeId', episodeId))
+      .collect()
+  )
+  return jobs.map((job) => job.kind)
+}
+
 async function episode(t: Harness, episodeId: Id<'episodes'>): Promise<Doc<'episodes'>> {
   const row = await t.run((ctx) => ctx.db.get(episodeId))
   if (!row) throw new Error(`episode ${episodeId} not found`)
@@ -91,7 +101,7 @@ async function episode(t: Harness, episodeId: Id<'episodes'>): Promise<Doc<'epis
 }
 
 describe('chat changes the plan', () => {
-  it('replaces an episode: the old one is killed and a new idea takes its day, with the writer on it', async () => {
+  it('replaces an episode: the old one is killed and a new idea takes its day, written the day before', async () => {
     const t = setup()
     const { persona, tuesday } = await plan(t)
 
@@ -99,7 +109,7 @@ describe('chat changes the plan', () => {
 
     expect((await episode(t, tuesday._id)).status).toBe('killed')
     const reply = await onlyReply(t, persona)
-    expect(reply.text).toBe('Replaced Tuesday\'s "Retry an n8n webhook" with "Make". The writer is on it.')
+    expect(reply.text).toBe('Replaced Tuesday\'s "Retry an n8n webhook" with "Make". The writer writes it on Mon 19 Oct.')
     if (reply.episodeId === undefined) throw new Error('the reply links no episode')
     const replacement = await episode(t, reply.episodeId)
     expect([replacement.concept, replacement.plannedFor, replacement.kind, replacement.pillar]).toEqual([
@@ -109,13 +119,22 @@ describe('chat changes the plan', () => {
       'n8n tutorials',
     ])
     expect(replacement.platforms).toEqual(tuesday.platforms)
-    const jobs = await t.run((ctx) =>
-      ctx.db
-        .query('jobs')
-        .withIndex('by_episode', (q) => q.eq('episodeId', replacement._id))
-        .collect()
-    )
-    expect(jobs.map((job) => job.kind)).toEqual(['write_script'])
+    expect(await jobKindsOf(t, replacement._id)).toEqual([])
+  })
+
+  it("replaces tomorrow's episode with the writer on it at once", async () => {
+    const t = setup()
+    const { persona, thursday } = await plan(t)
+
+    await say(t, persona, "Replace Thursday's episode with one about Zapier")
+
+    expect((await episode(t, thursday._id)).status).toBe('killed')
+    const reply = await onlyReply(t, persona)
+    expect(reply.text).toBe('Replaced Thursday\'s "Error workflows that page you once" with "Zapier". The writer is on it.')
+    if (reply.episodeId === undefined) throw new Error('the reply links no episode')
+    const replacement = await episode(t, reply.episodeId)
+    expect([replacement.concept, replacement.plannedFor]).toEqual(['Zapier', THIS_THURSDAY])
+    expect(await jobKindsOf(t, replacement._id)).toEqual(['write_script'])
   })
 
   it('moves an episode within its week, its waiting drafts along', async () => {

@@ -5,12 +5,23 @@ import type { FunctionArgs } from 'convex/server'
 /** A variant as the new experiment form sends it: the backend's own validator, read from the mutation. */
 export type VariantInput = FunctionArgs<typeof api.private.experiments.create>['variants'][number]
 
-/** A variant the form already knows for a dimension. A line that names it keeps its key and length factor. */
+/**
+ * A variant the form already knows for a dimension. A line that names it keeps
+ * its key, its length factor (a length variant) and its hour offset (a publish
+ * time variant), which the operator's line has no way to say.
+ */
 export type KnownVariant = Omit<VariantInput, 'isControl'>
 
-function known(variant: { key: string; label: string; description: string; lengthFactor?: number }): KnownVariant {
-  if (variant.lengthFactor === undefined) return { key: variant.key, label: variant.label, description: variant.description }
-  return { key: variant.key, label: variant.label, description: variant.description, lengthFactor: variant.lengthFactor }
+/** The numbers a known variant carries beside its words: only the ones it has, so none is sent as undefined. */
+function numbersOf(variant: { lengthFactor?: number; hourOffset?: number }): Pick<KnownVariant, 'lengthFactor' | 'hourOffset'> {
+  const numbers: Pick<KnownVariant, 'lengthFactor' | 'hourOffset'> = {}
+  if (variant.lengthFactor !== undefined) numbers.lengthFactor = variant.lengthFactor
+  if (variant.hourOffset !== undefined) numbers.hourOffset = variant.hourOffset
+  return numbers
+}
+
+function known(variant: { key: string; label: string; description: string; lengthFactor?: number; hourOffset?: number }): KnownVariant {
+  return { key: variant.key, label: variant.label, description: variant.description, ...numbersOf(variant) }
 }
 
 /**
@@ -36,10 +47,10 @@ function slugKey(label: string): string {
 
 /**
  * The form's text as variants, the first line the control. A label that names
- * a known variant (case aside) keeps that variant's key and length factor, so
- * the analyst's learnings, the persona's defaults and the writer recognize it;
- * its description is the operator's, edited or not. Any other label is a new
- * variant keyed by its words.
+ * a known variant (case aside) keeps that variant's key, length factor and hour
+ * offset, so the analyst's learnings, the persona's defaults, the writer and the
+ * publish hour recognize it; its description is the operator's, edited or not.
+ * Any other label is a new variant keyed by its words.
  */
 export function parseVariants(text: string, knownList: readonly KnownVariant[]): VariantInput[] {
   return text
@@ -53,7 +64,6 @@ export function parseVariants(text: string, knownList: readonly KnownVariant[]):
       const isControl = index === 0
       const match = knownList.find((variant) => variant.label.toLowerCase() === label.toLowerCase())
       if (match === undefined) return { key: slugKey(label), label, description, isControl }
-      if (match.lengthFactor === undefined) return { key: match.key, label, description, isControl }
-      return { key: match.key, label, description, isControl, lengthFactor: match.lengthFactor }
+      return { key: match.key, label, description, isControl, ...numbersOf(match) }
     })
 }

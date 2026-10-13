@@ -36,7 +36,9 @@ import { openXChecklist } from '../core/checklist'
 import { addDays, dayKey, instantAt, weekStart } from '../core/dates'
 import { createIdea, createPostPublication, createTrackedLink, shotsFromDraft } from '../core/episodes'
 import { analystDecisionNote, applyExperimentDecision, startExperiment, variantStatsFor } from '../core/experiments'
-import { earliestPublishAt, formatFor, formatsFor, platformsOf } from '../core/formats'
+import { earliestPublishAt, formatFor, formatsFor, platformsOf, publishHourFor } from '../core/formats'
+import { signalConcept } from '../core/planner'
+import { logRepeatedQuestions, writeDailyBrief } from '../core/research'
 import { reviewStrategy } from '../core/strategy'
 import { enqueueJob } from '../jobs/queue'
 import type { FoundConversion } from '../providers/analytics'
@@ -57,6 +59,7 @@ import { PRESENTER_TOOL } from '../providers/llm'
 
 const TIMEZONE = 'Europe/Oslo'
 const DAY_MS = 86_400_000
+const HOUR_MS = 3_600_000
 
 /** A variant of the experiment catalog by key, so the seeded experiments use the catalog's own words. */
 function catalogVariant(kind: ExperimentKind, key: string): CatalogVariant {
@@ -552,15 +555,22 @@ export const write = internalMutation({
       createdAt: now - 3 * 86_400_000 + 5_000,
     })
 
-    // Signals the researcher would have found.
+    // Signals the researcher would have found, each with when it was found and, where its source says
+    // so, when it was posted (Google Trends does not), so freshness reads like a real feed. Ada's three
+    // comments ask one question in different words, so her problem log has one entry below; her search
+    // suggestions and the one fresh Reddit thread are this morning's, and one Reddit thread went cold
+    // under tomorrow's reactive idea. Max has no comments and no search suggestions.
     const seedSignals: {
       personaId: Id<'personas'>
-      source: 'hackernews' | 'reddit' | 'google_trends' | 'comments'
+      source: 'hackernews' | 'reddit' | 'google_trends' | 'comments' | 'search'
       title: string
       summary: string
       url: string
       score: number
       topics: string[]
+      foundHoursAgo: number
+      /** Absent where the source does not say when the item was posted. */
+      publishedHoursAgo?: number
     }[] = [
       {
         personaId: adaId,
@@ -570,6 +580,8 @@ export const write = internalMutation({
         url: 'https://www.reddit.com/r/n8n/comments/example1',
         score: 92,
         topics: ['n8n', 'webhooks', 'debugging'],
+        foundHoursAgo: 48,
+        publishedHoursAgo: 50,
       },
       {
         personaId: adaId,
@@ -579,6 +591,8 @@ export const write = internalMutation({
         url: 'https://news.ycombinator.com/item?id=1',
         score: 81,
         topics: ['workflows', 'approvals', 'customers'],
+        foundHoursAgo: 30,
+        publishedHoursAgo: 40,
       },
       {
         personaId: adaId,
@@ -588,6 +602,7 @@ export const write = internalMutation({
         url: 'https://trends.google.com/trends/explore?q=n8n%20vs%20make',
         score: 64,
         topics: ['n8n', 'make', 'comparison'],
+        foundHoursAgo: 10,
       },
       {
         personaId: adaId,
@@ -597,6 +612,8 @@ export const write = internalMutation({
         url: 'https://youtube.com/watch?v=mock',
         score: 70,
         topics: ['n8n', 'webhooks'],
+        foundHoursAgo: 118,
+        publishedHoursAgo: 120,
       },
       {
         personaId: maxId,
@@ -606,6 +623,8 @@ export const write = internalMutation({
         url: 'https://news.ycombinator.com/item?id=2',
         score: 95,
         topics: ['ai agents', 'mcp', 'claude'],
+        foundHoursAgo: 15,
+        publishedHoursAgo: 20,
       },
       {
         personaId: maxId,
@@ -615,19 +634,105 @@ export const write = internalMutation({
         url: 'https://trends.google.com/trends/explore?q=ai%20agents%20tutorial',
         score: 77,
         topics: ['ai agents', 'tutorial'],
+        foundHoursAgo: 25,
+      },
+      {
+        personaId: adaId,
+        source: 'comments',
+        title: 'How do I retry a failed webhook step in n8n?',
+        summary: 'Asked under "Error workflows that page you only once", 8 likes.',
+        url: 'https://youtube.com/watch?v=mock',
+        score: 64,
+        topics: ['n8n', 'webhooks'],
+        foundHoursAgo: 70,
+        publishedHoursAgo: 72,
+      },
+      {
+        personaId: adaId,
+        source: 'comments',
+        title: 'Is there a way to retry the failed webhook step?',
+        summary: 'Asked under "Debug a webhook that fails silently", 5 likes.',
+        url: 'https://tiktok.com/@ada.automates/video/mock',
+        score: 58,
+        topics: ['n8n', 'webhooks'],
+        foundHoursAgo: 18,
+        publishedHoursAgo: 20,
+      },
+      {
+        personaId: adaId,
+        source: 'search',
+        title: 'n8n error workflow',
+        summary: 'People type "n8n error workflow" into Google.',
+        url: 'https://www.google.com/search?q=n8n%20error%20workflow',
+        score: 70,
+        topics: ['n8n', 'error', 'workflow'],
+        foundHoursAgo: 2,
+        publishedHoursAgo: 2,
+      },
+      {
+        personaId: adaId,
+        source: 'search',
+        title: 'how to retry n8n webhook',
+        summary: 'People type "how to retry n8n webhook" into Google.',
+        url: 'https://www.google.com/search?q=how%20to%20retry%20n8n%20webhook',
+        score: 65,
+        topics: ['n8n', 'webhooks'],
+        foundHoursAgo: 2,
+        publishedHoursAgo: 2,
+      },
+      {
+        personaId: adaId,
+        source: 'search',
+        title: 'n8n vs zapier for agencies',
+        summary: 'People type "n8n vs zapier for agencies" into Google.',
+        url: 'https://www.google.com/search?q=n8n%20vs%20zapier%20for%20agencies',
+        score: 60,
+        topics: ['n8n', 'zapier', 'comparison'],
+        foundHoursAgo: 2,
+        publishedHoursAgo: 2,
+      },
+      {
+        personaId: adaId,
+        source: 'reddit',
+        title: 'n8n queue mode for webhooks: is it worth turning on?',
+        summary: 'r/n8n thread from this morning, 60 comments and climbing.',
+        url: 'https://www.reddit.com/r/n8n/comments/example2',
+        score: 88,
+        topics: ['n8n', 'webhooks'],
+        foundHoursAgo: 2,
+        publishedHoursAgo: 3,
+      },
+      {
+        personaId: adaId,
+        source: 'reddit',
+        title: 'n8n credentials vanished after the 1.0 upgrade',
+        summary: 'r/n8n thread from ten days ago; the fix shipped the day after.',
+        url: 'https://www.reddit.com/r/n8n/comments/example3',
+        score: 85,
+        topics: ['n8n', 'upgrades'],
+        foundHoursAgo: 238,
+        publishedHoursAgo: 240,
       },
     ]
     const signalIds: Id<'signals'>[] = []
     for (const [index, signal] of seedSignals.entries()) {
+      const { foundHoursAgo, publishedHoursAgo, ...row } = signal
       signalIds.push(
         await ctx.db.insert('signals', {
-          ...signal,
+          ...row,
           externalId: `seed-${index}`,
           status: 'new',
-          foundAt: now - index * 5 * 3_600_000,
+          foundAt: now - foundHoursAgo * HOUR_MS,
+          ...(publishedHoursAgo === undefined ? {} : { publishedAt: now - publishedHoursAgo * HOUR_MS }),
           mock: true,
         })
       )
+    }
+    /** A seeded signal by its place in the list above; a missing one is a bug in the seed. */
+    const seededSignal = (index: number): Id<'signals'> => {
+      const id = signalIds[index]
+      if (id === undefined) throw new Error(`the seed has no signal ${index}`)
+      return id
     }
 
     // The code the operator handed Ada a month ago: every description since carries it. Its redemptions
@@ -666,7 +771,8 @@ export const write = internalMutation({
     const adaFormats = formatsFor(ada, adaPlatforms)
     const adaFormat = resolveEpisodeFormat(adaFormats)
     const adaAspects = formatAspects(adaFormat)
-    const platformInstant = (day: string, format: PlatformFormat) => instantAt(day, format.publishHour, TIMEZONE)
+    // No seeded episode carries a publish time variant, so each platform goes out at its own hour (offset 0).
+    const platformInstant = (day: string, format: PlatformFormat) => instantAt(day, publishHourFor(format, 0), TIMEZONE)
     const adaRenders = (durationSec: number) => adaAspects.map((aspect) => ({ aspect, storageId: args.storageId, durationSec, mock: true }))
     const today = dayKey(now, TIMEZONE)
     /**
@@ -694,7 +800,8 @@ export const write = internalMutation({
       /** Hours after a publication went live of its snapshots; the seed never writes one after now. */
       snapshotHours: (liveAt: number) => number[]
     }): Promise<{ episodeId: Id<'episodes'>; scheduledAt: number; clicks: number }> => {
-      const scheduledAt = earliestPublishAt(ada, adaPlatforms, video.plannedFor)
+      // No seeded episode carries a publish time variant, so every one goes out at its platforms' own hours.
+      const scheduledAt = earliestPublishAt(ada, adaPlatforms, video.plannedFor, 0)
       // Live once the last platform went out.
       const publishedAt = Math.max(...adaFormats.map((format) => platformInstant(video.plannedFor, format)))
       const shotPlan = seededBeats({
@@ -983,10 +1090,17 @@ export const write = internalMutation({
 
     // This week: one episode at each of the remaining statuses, so the calendar shows the whole pipeline.
     // Every one is scripted or later, so it carries Ada's resolved format, her description and the beats
-    // its shots came from. The rendered one waits two days out as a publish package, its drafts unsent.
+    // its shots came from. A script is written the day before its episode goes out, so nothing scripted
+    // sits more than a day out: a status whose weekday is later this week moves to today (one the
+    // operator or the runner works on now) or tomorrow (one waiting to go out). The rendered one waits
+    // tomorrow as a publish package, its drafts unsent.
     const monday = weekStart(today)
+    const tomorrow = addDays(today, 1)
+    const notLaterThan = (day: string, latest: string) => (day > latest ? latest : day)
     // The publish package the chat below moved; its id links the persona's reply.
     let renderedEpisodeId: Id<'episodes'> | null = null
+    // The scripted retry episode, which answers the question the problem log records below.
+    let retryEpisodeId: Id<'episodes'> | null = null
     const thisWeek = [
       {
         day: addDays(monday, 0),
@@ -994,14 +1108,19 @@ export const write = internalMutation({
         concept: 'Debug a webhook that fails silently',
         error: 'produce: n8n at localhost:5678 did not answer within 30s',
       },
-      { day: addDays(monday, 1), status: 'scripted', concept: 'Retry a failed webhook step without losing the payload' },
-      { day: addDays(monday, 2), status: 'waiting_on_you', concept: 'Error workflows that page you only once' },
-      { day: addDays(monday, 3), status: 'recording', concept: 'An agent that drafts the reply and waits for you' },
-      { day: addDays(monday, 4), status: 'scheduled', concept: 'Pause a workflow until the customer signs off' },
-      { day: addDays(today, 2), status: 'rendered', concept: 'Send the quote and wait for the customer in n8n' },
+      {
+        day: notLaterThan(addDays(monday, 1), tomorrow),
+        status: 'scripted',
+        concept: 'Retry a failed webhook step without losing the payload',
+      },
+      { day: notLaterThan(addDays(monday, 2), today), status: 'waiting_on_you', concept: 'Error workflows that page you only once' },
+      { day: notLaterThan(addDays(monday, 3), today), status: 'recording', concept: 'An agent that drafts the reply and waits for you' },
+      { day: notLaterThan(addDays(monday, 4), tomorrow), status: 'scheduled', concept: 'Pause a workflow until the customer signs off' },
+      { day: tomorrow, status: 'rendered', concept: 'Send the quote and wait for the customer in n8n' },
     ] as const
+    const scheduledDay = thisWeek[4].day
     for (const [index, item] of thisWeek.entries()) {
-      const scheduledAt = earliestPublishAt(ada, adaPlatforms, item.day)
+      const scheduledAt = earliestPublishAt(ada, adaPlatforms, item.day, 0)
       const sponsorSegment = index === 4 ? 'mention' : 'none'
       // Two beats, the problem in a browser and the fix in n8n, so the shots are Ada and then her screen.
       const variantKey = index % 2 === 0 ? 'howto' : 'wrong'
@@ -1041,7 +1160,7 @@ export const write = internalMutation({
         scheduledAt,
         experimentId,
         variantKey,
-        signalIds: index === 1 ? [signalIds[0] as Id<'signals'>] : [],
+        signalIds: index === 1 ? [seededSignal(0)] : [],
         pillar: 'n8n tutorials',
         error: 'error' in item ? item.error : undefined,
         approvedAt: item.status === 'scripted' ? undefined : now - 3_600_000,
@@ -1049,6 +1168,7 @@ export const write = internalMutation({
         updatedAt: now - 3_600_000,
       })
       if (item.status === 'rendered') renderedEpisodeId = episodeId
+      if (item.status === 'scripted') retryEpisodeId = episodeId
       if (item.status === 'waiting_on_you') {
         await ctx.db.insert('checklistItems', {
           personaId: adaId,
@@ -1093,12 +1213,73 @@ export const write = internalMutation({
         })
       }
     }
-    if (signalIds[0]) await ctx.db.patch(signalIds[0], { status: 'used' })
+    await ctx.db.patch(seededSignal(0), { status: 'used' })
+
+    // Tomorrow's reactive idea, built on a Reddit thread ten days old: its signal went cold, so when
+    // `writeDueScripts` queues its script, the last check swaps the concept for the freshest new signal
+    // and journals why. Inserted as the planner left it, with no write job, so the swap waits for that run.
+    const coldSignal = await ctx.db.get(seededSignal(12))
+    if (!coldSignal) throw new Error('the cold signal vanished')
+    const coldConcept = signalConcept(coldSignal.title)
+    await ctx.db.insert('episodes', {
+      personaId: adaId,
+      slug: 'react-to-n8n-credentials-vanished-cold',
+      kind: 'video',
+      status: 'idea',
+      concept: coldConcept,
+      title: coldConcept,
+      hook: '',
+      sponsorSegment: 'none',
+      platforms: adaPlatforms,
+      shots: [],
+      renders: [],
+      plannedFor: tomorrow,
+      scheduledAt: earliestPublishAt(ada, adaPlatforms, tomorrow, 0),
+      signalIds: [coldSignal._id],
+      pillar: 'Automation fails',
+      createdAt: now - 6 * DAY_MS,
+      updatedAt: now - 6 * DAY_MS,
+    })
+    await ctx.db.patch(coldSignal._id, { status: 'used' })
+
+    // Later this week and next: ideas only, waiting for the day before they go out.
+    for (const [offset, concept, pillar] of [
+      [3, 'Catch a stuck execution before the customer does', 'Automation fails'],
+      [5, 'Let an agent sort the inbox, then ask before it replies', 'AI agent workflows'],
+    ] as const) {
+      await createIdea(ctx, ada, {
+        kind: 'video',
+        personaId: adaId,
+        plannedFor: addDays(today, offset),
+        concept,
+        pillar,
+        sponsorSegment: 'none',
+        signalIds: [],
+      })
+    }
+
+    // This morning's research: the repeated question first, so the brief lists it among the open problems.
+    // The scripted retry episode already answers that question, so it takes the candidate as one of its
+    // signals, and the candidate is used rather than a concept for a second episode on it: the last check
+    // before tomorrow's cold idea is written takes the fresh Reddit thread.
+    if (retryEpisodeId === null) throw new Error('the scripted retry episode was not seeded')
+    const retryEpisode = await ctx.db.get(retryEpisodeId)
+    if (!retryEpisode) throw new Error('the scripted retry episode vanished')
+    for (const problemId of await logRepeatedQuestions(ctx, ada, now)) {
+      const candidate = await ctx.db
+        .query('signals')
+        .withIndex('by_persona_external', (q) => q.eq('personaId', adaId).eq('source', 'problems').eq('externalId', problemId))
+        .unique()
+      if (!candidate) throw new Error(`problem ${problemId} has no candidate signal`)
+      await ctx.db.patch(candidate._id, { status: 'used' })
+      await ctx.db.patch(retryEpisode._id, { signalIds: [...retryEpisode.signalIds, candidate._id] })
+    }
+    await writeDailyBrief(ctx, ada, now)
 
     // Ada's chat since the directive: a plan change the persona made and a task the researcher answered,
     // so the chat shows a linked episode and a finished task, and the Agents page has a finished job.
     if (renderedEpisodeId === null) throw new Error('the rendered episode was not seeded')
-    const movedTo = addDays(today, 2)
+    const movedTo = tomorrow
     // A day of the same week, since a chat move stays in the episode's own week.
     const movedFrom = weekdayOf(movedTo) === 'monday' ? addDays(movedTo, 1) : addDays(movedTo, -1)
     const movedTitle = 'Send the quote and wait for the customer in n8n'
@@ -1145,7 +1326,7 @@ export const write = internalMutation({
     const briefId = await ctx.db.insert('messages', {
       personaId: adaId,
       author: 'persona',
-      text: "1 signal on customer sign-off: an Ask HN thread on getting customer sign-off inside an automated pipeline (score 81), mostly about pausing a workflow until the client approves a quote. That is Friday's episode; a follow-up on reminding a customer who has not signed would fit next week.",
+      text: `1 signal on customer sign-off: an Ask HN thread on getting customer sign-off inside an automated pipeline (score 81), mostly about pausing a workflow until the client approves a quote. That is ${WEEKDAY_LABELS[weekdayOf(scheduledDay)]}'s episode; a follow-up on reminding a customer who has not signed would fit next week.`,
       jobId: briefJobId,
       createdAt: askedAt + 40_000,
     })
@@ -1283,7 +1464,8 @@ export const write = internalMutation({
     for (const example of await topOriginalsOf(ctx, adaId, 5)) await ctx.db.patch(example._id, { example: true })
     await ctx.db.patch(adaId, { voice: { ...ADA_VOICE_TEXT, ...voiceStats(adaHistory), learnedAt: now - 3 * 86_400_000 } })
 
-    // Max: two ideas on the next two days so the writer has work on first run, whatever today is.
+    // Max: two ideas on the next two days. Tomorrow's is written at once, so the writer has work on first
+    // run whatever today is; the other waits for its script day.
     const max = await ctx.db.get(maxId)
     if (!max) throw new Error('persona vanished')
     for (const [offset, concept] of [
@@ -1298,7 +1480,7 @@ export const write = internalMutation({
         concept,
         pillar: 'MCP servers',
         sponsorSegment: 'none',
-        signalIds: offset === 1 ? [signalIds[4] as Id<'signals'>] : [],
+        signalIds: offset === 1 ? [seededSignal(4)] : [],
       })
     }
     await ctx.db.insert('checklistItems', {

@@ -14,6 +14,7 @@ import {
   type PostIntent,
   type PostKind,
   type PostLength,
+  type ScriptKind,
   type SignalSource,
   type SponsorSegment,
   type Voice,
@@ -21,6 +22,16 @@ import {
   type Weekday,
 } from '@influstep/shared'
 import type { Funnel } from '../../core/report'
+
+/**
+ * What the researcher has for the writer: this morning's brief, null when
+ * no sweep wrote one or it expired, and the persona's open problems, newest
+ * first. Both are the persona's own words.
+ */
+export interface WriterResearch {
+  brief: string | null
+  problems: string[]
+}
 
 /**
  * What the writer asks of a language model. Both adapters return the same
@@ -34,8 +45,8 @@ export interface ScriptBrief {
   sponsorName: string
   /** Where a demo beat opens the sponsor on screen. */
   sponsorUrl: string
-  /** The experiment variant this episode carries, with the dimension its experiment varies. */
-  variant?: { kind: ExperimentKind; key: string; description: string }
+  /** The experiment variant this episode carries, with the dimension its experiment varies, when that dimension is one the writer scripts. */
+  variant?: { kind: ScriptKind; key: string; description: string }
   /** The persona's active learnings, newest first: what its own experiments showed. */
   learnings: string[]
   /**
@@ -49,6 +60,7 @@ export interface ScriptBrief {
   styleLines: string[]
   directives: string[]
   signals: { title: string; summary: string; url: string }[]
+  research: WriterResearch
   /**
    * The episode's format: how long, who is on camera, and the hook convention
    * of every platform it goes to. The length is the format's, scaled by the
@@ -93,6 +105,7 @@ export interface PostBrief {
   sponsorName: string
   directives: string[]
   signals: ScriptBrief['signals']
+  research: WriterResearch
   /** The hook convention of the persona's X format; the first line of the first part follows it. */
   hookNote: string
   partLimit: number

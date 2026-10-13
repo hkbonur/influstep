@@ -28,6 +28,7 @@ import { AttributionNote, Button, ErrorLine, Eyebrow, type FormState, Input, Moc
 import { cn } from '@/lib/cn'
 import { errorMessage } from '@/lib/errors'
 import { formatCount, formatDay, formatMoney, relativeTime } from '@/lib/format'
+import { ideaExplanation, ideaLine } from '@/lib/ideas'
 
 export const Route = createFileRoute('/episodes/$episodeId')({ component: EpisodePage })
 
@@ -174,7 +175,8 @@ function EpisodePage() {
                 Retry
               </Button>
             )}
-            {(episode.status === 'scripted' || episode.status === 'idea' || episode.status === 'failed') && (
+            {/* An idea has no script to rewrite yet: its line under the header says when the writer gets to it. */}
+            {(episode.status === 'scripted' || episode.status === 'failed') && (
               <Button onClick={run(() => rewrite({ episodeId }))}>Rewrite</Button>
             )}
             {!terminal && (
@@ -185,6 +187,12 @@ function EpisodePage() {
           </>
         }
       />
+      {/* Said once, here: an idea waits for the day before it goes out, when the writer looks at what moved and writes it. */}
+      {episode.status === 'idea' && (
+        <p className="-mt-4 mb-6 text-xs text-ash">
+          {ideaLine(episode, data.writing)}. {ideaExplanation(episode.kind)}
+        </p>
+      )}
       {/* A post goes only to X, so it has nothing to choose here. */}
       {isPost(episode.kind) ? (
         <p className="mb-6 text-sm">Goes to {PLATFORM_LABELS.x}</p>
@@ -358,9 +366,14 @@ function EpisodePage() {
                 {data.signals.map((signal) => (
                   <li key={signal._id}>
                     <span className="text-xs text-ash">{SIGNAL_SOURCE_LABELS[signal.source]}</span>{' '}
-                    <a href={signal.url} target="_blank" rel="noreferrer" className="hover:underline">
-                      {signal.title}
-                    </a>
+                    {/* A problem comes from the persona's own problem log, so there is no page to open. */}
+                    {signal.source === 'problems' ? (
+                      <span>{signal.title}</span>
+                    ) : (
+                      <a href={signal.url} target="_blank" rel="noreferrer" className="hover:underline">
+                        {signal.title}
+                      </a>
+                    )}
                   </li>
                 ))}
               </ul>

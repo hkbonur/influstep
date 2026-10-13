@@ -205,6 +205,102 @@ describe('reviewStrategy', () => {
     })
   })
 
+  it('moves no publish hour while a publish time test runs, since that test is moving it', async () => {
+    const t = setup()
+    await t.run(async (ctx) => {
+      const persona = await insertPersona(ctx)
+      await startExperiment(ctx, persona, {
+        name: 'Publish time: Three hours earlier vs Usual hour',
+        hypothesis: 'Earlier finds more viewers.',
+        kind: 'publish_time',
+        metric: 'follows',
+        variants: variantsOf('publish_time', ['usual', 'earlier']),
+        minExposures: 2000,
+        minConfidence: 0.9,
+        createdBy: 'analyst',
+        reason: 'Publish time was never tested.',
+      })
+      const now = Date.now()
+      const today = dayKey(now, TIMEZONE)
+      const at = (daysAgo: number, hour: number) => instantAt(addDays(today, -daysAgo), hour, TIMEZONE)
+      // The same numbers that move YouTube to 18:00 when nothing tests the hour.
+      for (const [index, views] of [900, 1000, 1100].entries()) {
+        await insertMeasuredVideo(ctx, persona, { publishedAt: at(3 + index, 16), views, clicks: 10 })
+      }
+      for (const [index, views] of [1400, 1500, 1600].entries()) {
+        await insertMeasuredVideo(ctx, persona, { publishedAt: at(6 + index, 18), views, clicks: 10 })
+      }
+
+      expect(await reviewStrategy(ctx, persona, now)).toEqual({ changes: 0 })
+      expect((await reload(ctx, persona._id)).formats).toEqual(persona.formats)
+      expect((await journalOf(ctx, persona._id)).filter((entry) => entry.kind === 'publish_hour')).toEqual([])
+    })
+  })
+
+  it('never doubts a publish time as a default: its decision moved the hours instead', async () => {
+    const t = setup()
+    await t.run(async (ctx) => {
+      const persona = await insertPersona(ctx)
+      const now = Date.now()
+      const experimentId = await startExperiment(
+        ctx,
+        persona,
+        {
+          name: 'Publish time: Three hours earlier vs Usual hour',
+          hypothesis: 'Earlier finds more viewers.',
+          kind: 'publish_time',
+          metric: 'clicks',
+          variants: variantsOf('publish_time', ['usual', 'earlier']),
+          minExposures: 2000,
+          minConfidence: 0.9,
+          createdBy: 'analyst',
+          reason: 'Publish time was never tested.',
+        },
+        now - 60 * DAY
+      )
+      const experiment = await ctx.db.get(experimentId)
+      if (!experiment) throw new Error('experiment vanished')
+      await applyExperimentDecision(
+        ctx,
+        experiment,
+        { winnerKey: 'earlier', lift: 1, confidence: 0.99, winnerRate: 0.02, runnerUpRate: 0.01, runnerUpKey: 'usual' },
+        'analyst',
+        'Earlier leads.',
+        now - 30 * DAY
+      )
+      // A default as a publish time decision never writes one, with numbers since that would doubt any
+      // other dimension's: the scan passes it over instead of re-testing hours the formats already moved.
+      const decided = await reload(ctx, persona._id)
+      await ctx.db.patch(persona._id, {
+        strategy: {
+          pillarWeights: [],
+          defaults: [
+            {
+              kind: 'publish_time',
+              key: 'earlier',
+              label: 'Three hours earlier',
+              description: 'Publish three hours before the platform’s usual hour.',
+              hourOffset: -3,
+              experimentId,
+              since: now - 30 * DAY,
+            },
+          ],
+        },
+      })
+      for (const daysAgo of [20, 10]) {
+        await insertMeasuredVideo(ctx, persona, { publishedAt: now - daysAgo * DAY, views: 1500, clicks: 10 })
+      }
+
+      const outcome = await reviewStrategy(ctx, await reload(ctx, persona._id), now)
+
+      if (!outcome.startedExperimentId) throw new Error('the review started no experiment')
+      const started = await ctx.db.get(outcome.startedExperimentId)
+      expect(started?.retestOf).toBeUndefined()
+      expect(started?.kind).not.toBe('publish_time')
+      expect(decided.formats[0]?.publishHour).toBe(13)
+    })
+  })
+
   it('writes nothing but the review time when nothing changes', async () => {
     const t = setup()
     await t.run(async (ctx) => {
@@ -326,10 +422,12 @@ describe('reviewStrategy', () => {
     await t.run(async (ctx) => {
       const persona = await insertPersona(ctx)
       // Every other dimension was decided lately, so the sponsor placement is what the persona knows least about.
+      // The description format does not apply: the persona has no discount code, so its footer has one order.
       await decidedByOperator(ctx, persona, 'hook', ['howto', 'question'], 40)
       await decidedByOperator(ctx, persona, 'concept', ['tutorial', 'story'], 30)
       await decidedByOperator(ctx, persona, 'length', ['standard', 'shorter'], 20)
       await decidedByOperator(ctx, persona, 'cta', ['follow', 'comment'], 10)
+      await decidedByOperator(ctx, persona, 'publish_time', ['usual', 'earlier'], 5)
       const review = async () => {
         const outcome = await reviewStrategy(ctx, await reload(ctx, persona._id), Date.now())
         if (!outcome.startedExperimentId) throw new Error('the review started no experiment')

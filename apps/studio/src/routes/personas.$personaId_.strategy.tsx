@@ -7,8 +7,10 @@ import {
   METRIC_DENOMINATOR,
   METRIC_RATE_LABELS,
   PLATFORM_LABELS,
+  catalogControl,
   effectiveStyle,
   pillarWeights,
+  type JournalActor,
 } from '@influstep/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
@@ -32,8 +34,9 @@ export const Route = createFileRoute('/personas/$personaId_/strategy')({ compone
  * - private.experiments.list for the persona: the running experiment with its per-variant stats and createdBy, and
  *   the names of the experiments a learning or a journal entry points at. The Experiments page shows the same rows.
  * - private.strategy.get: `learnings` (the persona's memories rows, active and superseded) and `journal` (its
- *   journal rows), which the page orders itself, newest first, and `reviewJob`, the persona's newest review_strategy
- *   job (null before the first), for Review now.
+ *   journal rows), which the page orders itself, newest first, `reviewJob`, the persona's newest review_strategy
+ *   job (null before the first), for Review now, and `signals`, the id and title of each signal a journal entry
+ *   names as evidence (a swapped concept's two signals), so the entry can name them.
  * The pillar weights and the defaults in force are never read raw: they go through shared pillarWeights and
  * effectiveStyle, the one rule for each.
  */
@@ -42,6 +45,13 @@ type StrategyData = NonNullable<FunctionReturnType<typeof api.private.strategy.g
 type Learning = StrategyData['learnings'][number]
 type JournalEntry = StrategyData['journal'][number]
 type ExperimentRow = FunctionReturnType<typeof api.private.experiments.list>[number]
+
+/** Who made a journal entry, as its meta line says it. */
+const ACTOR_WORDS: Record<JournalActor, string> = {
+  analyst: 'by the analyst',
+  researcher: 'by the researcher',
+  operator: 'by you',
+}
 
 /** The names of the persona's experiments by id, for the links of its learnings and its journal. */
 type ExperimentNames = Map<Id<'experiments'>, string>
@@ -74,7 +84,7 @@ function StrategyPage() {
         <Pillars persona={persona} />
         <PublishHours persona={persona} />
         <Learnings learnings={strategy.learnings} names={names} />
-        <Journal entries={strategy.journal} episodes={data.episodes} names={names} />
+        <Journal entries={strategy.journal} episodes={data.episodes} signals={strategy.signals} names={names} />
       </div>
     </div>
   )
@@ -193,7 +203,7 @@ function NowTesting(props: { persona: Doc<'personas'>; running: ExperimentRow | 
       <SectionHeading>Now testing</SectionHeading>
       <h3 className="font-semibold">{running.name}</h3>
       <p className="mt-0.5 text-xs text-ash">
-        On {METRIC_RATE_LABELS[running.metric]} · {running.createdBy === 'analyst' ? `picked by ${props.persona.name}` : 'set up by you'} ·{' '}
+        On {METRIC_RATE_LABELS[running.metric]} · {running.createdBy === 'operator' ? 'set up by you' : `picked by ${props.persona.name}`} ·{' '}
         <Link to="/experiments" className="underline decoration-fog hover:text-ink hover:decoration-ink">
           Experiments
         </Link>
@@ -235,6 +245,9 @@ function NowTesting(props: { persona: Doc<'personas'>; running: ExperimentRow | 
  * What every episode does on each dimension unless its experiment varies it:
  * the persona's default from a decided experiment, or the catalog's control,
  * "as before". A default names the day it took over and the learning behind it.
+ * Publish time is the exception: a decided test moves the publish hours instead
+ * of storing a default, so its row always reads the usual hour and points at
+ * the hours.
  */
 function Defaults(props: { persona: Doc<'personas'>; learnings: Learning[]; runningKind: ExperimentRow['kind'] | undefined }) {
   const stored = props.persona.strategy?.defaults
@@ -244,6 +257,19 @@ function Defaults(props: { persona: Doc<'personas'>; learnings: Learning[]; runn
       <SectionHeading>Defaults</SectionHeading>
       <dl className="divide-y divide-mist border-y border-mist">
         {EXPERIMENT_KINDS.map((kind) => {
+          const testedNow = props.runningKind === kind
+          if (kind === 'publish_time') {
+            return (
+              <DefaultRow
+                key={kind}
+                label={EXPERIMENT_KIND_LABELS[kind]}
+                value={`${catalogControl(kind).label} (as before)`}
+                testedNow={testedNow}
+              >
+                Decided tests move the hours below.
+              </DefaultRow>
+            )
+          }
           const variant = style[kind]
           const decided = stored?.find((entry) => entry.kind === kind)
           const learning =
@@ -251,21 +277,36 @@ function Defaults(props: { persona: Doc<'personas'>; learnings: Learning[]; runn
               ? undefined
               : props.learnings.find((entry) => entry.status === 'active' && entry.evidence.experimentId === decided.experimentId)
           return (
-            <div key={kind} className="grid gap-x-6 gap-y-0.5 py-2.5 sm:grid-cols-[10rem_1fr]">
-              <dt className="text-xs text-graphite sm:pt-0.5">{EXPERIMENT_KIND_LABELS[kind]}</dt>
-              <dd className="min-w-0">
-                <p>
-                  {variant.isControl ? `${variant.label} (as before)` : variant.label}
-                  {decided && <span className="text-xs text-ash"> · since {formatDate(decided.since)}</span>}
-                  {props.runningKind === kind && <span className="text-xs text-ash"> · being tested now</span>}
-                </p>
-                {learning && <p className="text-xs text-ash">{learning.text}</p>}
-              </dd>
-            </div>
+            <DefaultRow
+              key={kind}
+              label={EXPERIMENT_KIND_LABELS[kind]}
+              value={variant.isControl ? `${variant.label} (as before)` : variant.label}
+              since={decided?.since}
+              testedNow={testedNow}
+            >
+              {learning?.text}
+            </DefaultRow>
           )
         })}
       </dl>
     </section>
+  )
+}
+
+/** One dimension's row: its label, the variant in force with when it took over, and an ash line under it. */
+function DefaultRow(props: { label: string; value: string; since?: number; testedNow: boolean; children: React.ReactNode }) {
+  return (
+    <div className="grid gap-x-6 gap-y-0.5 py-2.5 sm:grid-cols-[10rem_1fr]">
+      <dt className="text-xs text-graphite sm:pt-0.5">{props.label}</dt>
+      <dd className="min-w-0">
+        <p>
+          {props.value}
+          {props.since !== undefined && <span className="text-xs text-ash"> · since {formatDate(props.since)}</span>}
+          {props.testedNow && <span className="text-xs text-ash"> · being tested now</span>}
+        </p>
+        {props.children !== undefined && <p className="text-xs text-ash">{props.children}</p>}
+      </dd>
+    </div>
   )
 }
 
@@ -392,9 +433,15 @@ function ExperimentLink(props: { experimentId: Id<'experiments'>; names: Experim
  * numbers and the evidence it rests on, and who made it. Last on the page: it
  * explains the sections above it.
  */
-function Journal(props: { entries: JournalEntry[]; episodes: PersonaData['episodes']; names: ExperimentNames }) {
+function Journal(props: {
+  entries: JournalEntry[]
+  episodes: PersonaData['episodes']
+  signals: StrategyData['signals']
+  names: ExperimentNames
+}) {
   const newestFirst = [...props.entries].sort((a, b) => b.createdAt - a.createdAt)
   const titles = new Map(props.episodes.map((episode) => [episode._id, episode.title]))
+  const signalTitles = new Map(props.signals.map((signal) => [signal._id, signal.title]))
   return (
     <section>
       <SectionHeading>Journal</SectionHeading>
@@ -405,7 +452,7 @@ function Journal(props: { entries: JournalEntry[]; episodes: PersonaData['episod
             <li key={entry._id} className="py-3">
               <p className="text-[11px] text-ash">
                 <span className="tabular font-mono">{formatDate(entry.createdAt)}</span> · {JOURNAL_KIND_LABELS[entry.kind]} ·{' '}
-                {entry.actor === 'analyst' ? 'by the analyst' : 'by you'}
+                {ACTOR_WORDS[entry.actor]}
               </p>
               <p className="mt-0.5">{entry.text}</p>
               <p className="mt-0.5 text-xs text-ash">{entry.reason}</p>
@@ -419,7 +466,7 @@ function Journal(props: { entries: JournalEntry[]; episodes: PersonaData['episod
                   ))}
                 </dl>
               )}
-              <EvidenceLinks entry={entry} titles={titles} names={props.names} />
+              <EvidenceLinks entry={entry} titles={titles} signalTitles={signalTitles} names={props.names} />
             </li>
           ))}
         </ol>
@@ -428,15 +475,28 @@ function Journal(props: { entries: JournalEntry[]; episodes: PersonaData['episod
   )
 }
 
-/** The experiment and the episodes a journal entry rests on, as links. An episode no longer listed shows nothing. */
-function EvidenceLinks(props: { entry: JournalEntry; titles: Map<Id<'episodes'>, string>; names: ExperimentNames }) {
+/**
+ * The experiment, the episodes and the signals a journal entry rests on, as
+ * links. An episode or a signal no longer listed shows nothing. A signal links
+ * the Signals page, filtered to the persona, which has no page per signal.
+ */
+function EvidenceLinks(props: {
+  entry: JournalEntry
+  titles: Map<Id<'episodes'>, string>
+  signalTitles: Map<Id<'signals'>, string>
+  names: ExperimentNames
+}) {
   const experimentId = props.entry.evidence.experimentId
   const experimentName = experimentId === undefined ? undefined : props.names.get(experimentId)
   const episodes = props.entry.evidence.episodeIds.flatMap((episodeId) => {
     const title = props.titles.get(episodeId)
     return title === undefined ? [] : [{ episodeId, title }]
   })
-  if (experimentName === undefined && episodes.length === 0) return null
+  const signals = props.entry.evidence.signalIds.flatMap((signalId) => {
+    const title = props.signalTitles.get(signalId)
+    return title === undefined ? [] : [{ signalId, title }]
+  })
+  if (experimentName === undefined && episodes.length === 0 && signals.length === 0) return null
   return (
     <p className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-ash">
       <span>Evidence</span>
@@ -453,6 +513,16 @@ function EvidenceLinks(props: { entry: JournalEntry; titles: Map<Id<'episodes'>,
           className="underline decoration-fog hover:text-ink hover:decoration-ink"
         >
           {episode.title}
+        </Link>
+      ))}
+      {signals.map((signal) => (
+        <Link
+          key={signal.signalId}
+          to="/signals"
+          search={{ persona: props.entry.personaId }}
+          className="underline decoration-fog hover:text-ink hover:decoration-ink"
+        >
+          {signal.title}
         </Link>
       ))}
     </p>

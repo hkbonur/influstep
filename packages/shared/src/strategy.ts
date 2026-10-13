@@ -1,4 +1,4 @@
-import { EXPERIMENT_KINDS, EXPERIMENT_KIND_LABELS, catalogControl, type ExperimentKind } from './experiments'
+import { EXPERIMENT_KIND_LABELS, SCRIPT_KINDS, catalogControl, type ExperimentKind } from './experiments'
 import type { Weekday } from './chat'
 import type { SponsorSegment } from './episode-status'
 
@@ -19,6 +19,7 @@ export interface StrategyDefault {
   label: string
   description: string
   lengthFactor?: number
+  hourOffset?: number
   experimentId?: string
   /** When it became the default. */
   since: number
@@ -35,7 +36,14 @@ export const STRATEGY_REVIEW_SLOT = { dayOfWeek: 'monday', hourUTC: 6, minuteUTC
   minuteUTC: number
 }
 
-export const JOURNAL_KINDS = ['pillar_weights', 'publish_hour', 'experiment_started', 'experiment_decided', 'experiment_stopped'] as const
+export const JOURNAL_KINDS = [
+  'pillar_weights',
+  'publish_hour',
+  'experiment_started',
+  'experiment_decided',
+  'experiment_stopped',
+  'concept_swapped',
+] as const
 export type JournalKind = (typeof JOURNAL_KINDS)[number]
 
 export const JOURNAL_KIND_LABELS: Record<JournalKind, string> = {
@@ -44,15 +52,37 @@ export const JOURNAL_KIND_LABELS: Record<JournalKind, string> = {
   experiment_started: 'Experiment started',
   experiment_decided: 'Experiment decided',
   experiment_stopped: 'Experiment stopped',
+  concept_swapped: 'Concept swapped',
 }
 
-/** Who made a change: the persona's analyst on its own, or the operator. Also who set an experiment up. */
-export const JOURNAL_ACTORS = ['analyst', 'operator'] as const
+/**
+ * Who made a change: the persona's analyst on its own, its researcher (a
+ * last check that swapped a cold concept), or the operator. Also who set an
+ * experiment up.
+ */
+export const JOURNAL_ACTORS = ['analyst', 'researcher', 'operator'] as const
 export type JournalActor = (typeof JOURNAL_ACTORS)[number]
 
-/** What a memory entry is. Slice 10 adds fact, rule and goal note. */
-export const MEMORY_KINDS = ['learning'] as const
+/**
+ * What a memory entry is: a learning from a decided experiment, the morning's
+ * research brief, or a problem the persona met (a question repeated under its
+ * videos, a tool that broke in a recording). Slice 10 adds fact, rule and goal
+ * note.
+ */
+export const MEMORY_KINDS = ['learning', 'brief', 'problem'] as const
 export type MemoryKind = (typeof MEMORY_KINDS)[number]
+
+/** How long a morning brief stays the one the writer reads: a day, plus slack for the cron. */
+export const BRIEF_TTL_MS = 26 * 3_600_000
+
+/** The score a problem's candidate signal carries: above almost anything a source finds, since the persona met it itself. */
+export const PROBLEM_SCORE = 95
+
+/** How many comments must ask the same question before it is a problem. */
+export const PROBLEM_REPEAT_MIN = 3
+
+/** How far back the problem log reads comments. */
+export const PROBLEM_WINDOW_DAYS = 14
 
 /** A superseded memory stays, so the persona can show why it once believed it. */
 export const MEMORY_STATUSES = ['active', 'superseded'] as const
@@ -65,12 +95,20 @@ export interface EffectiveVariant {
   label: string
   description: string
   lengthFactor?: number
+  hourOffset?: number
   isControl: boolean
 }
 
 /** An episode as the style rules read it: the variant it carries, with the dimension its experiment varies. */
 export interface StyledEpisode {
-  variant?: { kind: ExperimentKind; key: string; label: string; description: string; lengthFactor?: number }
+  variant?: {
+    kind: ExperimentKind
+    key: string
+    label: string
+    description: string
+    lengthFactor?: number
+    hourOffset?: number
+  }
   /** An unsponsored episode places no sponsor, so a sponsor default or variant says nothing about it. */
   sponsorSegment?: SponsorSegment
 }
@@ -84,6 +122,7 @@ function resolved(kind: ExperimentKind, variant: Omit<EffectiveVariant, 'kind' |
     isControl: variant.key === catalogControl(kind).key,
   }
   if (variant.lengthFactor !== undefined) out.lengthFactor = variant.lengthFactor
+  if (variant.hourOffset !== undefined) out.hourOffset = variant.hourOffset
   return out
 }
 
@@ -116,16 +155,19 @@ export function effectiveStyle(
     sponsor: effectiveVariant('sponsor', episode, defaults),
     length: effectiveVariant('length', episode, defaults),
     cta: effectiveVariant('cta', episode, defaults),
+    publish_time: effectiveVariant('publish_time', episode, defaults),
+    description_format: effectiveVariant('description_format', episode, defaults),
   }
 }
 
 /**
  * The writer's lines for the style in force: "<Dimension>: <what to do>" for
- * every dimension that is not the control, skipping the one the episode's own
- * experiment varies, whose variant line says it.
+ * every scripted dimension (SCRIPT_KINDS) that is not the control, skipping
+ * the one the episode's own experiment varies, whose variant line says it.
+ * Publish time and description format never reach the script.
  */
 export function styleLines(style: Record<ExperimentKind, EffectiveVariant>, variantKind?: ExperimentKind): string[] {
-  return EXPERIMENT_KINDS.flatMap((kind) => {
+  return SCRIPT_KINDS.flatMap((kind) => {
     const variant = style[kind]
     if (variant.isControl) return []
     if (kind === variantKind) return []

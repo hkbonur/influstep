@@ -1,6 +1,7 @@
 import { SIGNAL_TTL_MS } from '@influstep/shared'
 import { internalMutation } from '../_generated/server'
 import { addDays, dayKey, weekStart } from '../core/dates'
+import { queueDueScripts } from '../core/episodes'
 import { enqueueJob } from '../jobs/queue'
 
 /** One job per active persona for each cron, so every run shows up in the jobs table. */
@@ -20,6 +21,35 @@ export const pollComments = internalMutation({
     for (const persona of await activePersonas(ctx)) {
       await enqueueJob(ctx, { kind: 'poll_comments', payload: { personaId: persona._id }, personaId: persona._id })
     }
+  },
+})
+
+/** The researcher's morning: poll the sources, log repeated questions as problems, write the daily brief. */
+export const morningSweep = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    for (const persona of await activePersonas(ctx)) {
+      await enqueueJob(ctx, { kind: 'morning_sweep', payload: { personaId: persona._id }, personaId: persona._id })
+    }
+  },
+})
+
+/**
+ * Tomorrow's scripts, after the sweep (core `queueDueScripts`): no args, so
+ * `npx convex run internal/schedule:writeDueScripts` runs it by hand.
+ */
+export const writeDueScripts = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ queued: number; failed: number }> => {
+    const now = Date.now()
+    let queued = 0
+    let failed = 0
+    for (const persona of await activePersonas(ctx)) {
+      const outcome = await queueDueScripts(ctx, persona, now)
+      queued += outcome.queued
+      failed += outcome.failed
+    }
+    return { queued, failed }
   },
 })
 

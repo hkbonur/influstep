@@ -1,4 +1,14 @@
-import { AI_DISCLOSURE_LINE, X_POST_LIMIT, sponsorDisclosureLine, xLength, type Platform, type SponsorSegment } from '@influstep/shared'
+import {
+  AI_DISCLOSURE_LINE,
+  X_POST_LIMIT,
+  effectiveVariant,
+  sponsorDisclosureLine,
+  xLength,
+  type Platform,
+  type SponsorSegment,
+  type StrategyDefault,
+  type StyledEpisode,
+} from '@influstep/shared'
 import type { Doc } from '../_generated/dataModel'
 import { refusal } from '../lib/errors'
 
@@ -11,8 +21,30 @@ import { refusal } from '../lib/errors'
  * sponsor, so the "Sponsored by" line follows it; the link and code do not.
  * The operator edits only the persona's text; the footer around it is
  * composed when the publication goes out, so an edit is never overwritten and
- * a code change reaches every publication not yet sent.
+ * a code change reaches every publication not yet sent. The description
+ * format (an experiment dimension) decides whether the code or the link comes
+ * first under the text.
  */
+
+/** Which of the code and the link leads under the text: the catalog's description format keys. */
+export const DESCRIPTION_FORMATS = ['link', 'code'] as const
+export type DescriptionFormat = (typeof DESCRIPTION_FORMATS)[number]
+
+export function isDescriptionFormat(key: string): key is DescriptionFormat {
+  return DESCRIPTION_FORMATS.some((format) => format === key)
+}
+
+/**
+ * The description format an episode goes out with: shared `effectiveVariant`
+ * on 'description_format', so the package preview and dispatch read the same
+ * rule. A key outside the catalog is refused when the experiment starts, so
+ * one here is a bug.
+ */
+export function descriptionFormatOf(episode: StyledEpisode, defaults: readonly StrategyDefault[] | undefined): DescriptionFormat {
+  const key = effectiveVariant('description_format', episode, defaults).key
+  if (!isDescriptionFormat(key)) throw new Error(`description format "${key}" is not one the footer knows`)
+  return key
+}
 
 /** What dispatch adds around the persona's text: `above` it the disclosure lines, `below` it the sponsor line, the code and the link. */
 export interface DescriptionFooter {
@@ -27,15 +59,22 @@ interface FooterArgs {
   /** X takes the title alone and never a footer. */
   platform: Exclude<Platform, 'x'>
   discountCode?: { code: string; offer: string }
+  descriptionFormat: DescriptionFormat
 }
 
+/**
+ * The lines around the persona's text. The disclosures stay first under
+ * either format, as the platforms and the EU and FTC rules expect; the format
+ * only orders the code and the link, so without a code the two read the same.
+ */
 export function descriptionFooter(args: FooterArgs): DescriptionFooter {
   const above = [AI_DISCLOSURE_LINE]
   if (args.sponsorSegment !== 'none') above.push(sponsorDisclosureLine(args.sponsorName))
-  const below = [sponsorLine(args.sponsorName)]
-  if (args.discountCode) below.push(`Code ${args.discountCode.code}: ${args.discountCode.offer}.`)
   // Only YouTube prints a link that can be clicked; everywhere else the link lives in the bio.
-  below.push(args.platform === 'youtube' ? args.trackedUrl : 'Link in bio.')
+  const link = args.platform === 'youtube' ? args.trackedUrl : 'Link in bio.'
+  if (!args.discountCode) return { above, below: [sponsorLine(args.sponsorName), link] }
+  const code = `Code ${args.discountCode.code}: ${args.discountCode.offer}.`
+  const below = [sponsorLine(args.sponsorName), ...(args.descriptionFormat === 'code' ? [code, link] : [link, code])]
   return { above, below }
 }
 
@@ -64,6 +103,8 @@ export interface PublicationTextArgs {
   publication: Pick<Doc<'publications'>, '_id' | 'platform' | 'title' | 'body'>
   linkSlug: string
   discountCode: Pick<Doc<'discountCodes'>, 'code' | 'offer'> | null
+  /** The episode's, from `descriptionFormatOf`. */
+  descriptionFormat: DescriptionFormat
 }
 
 /**
@@ -102,6 +143,7 @@ function footerArgsOf(args: PublicationTextArgs, platform: Exclude<Platform, 'x'
     trackedUrl: `${args.workspace.appUrl}/go/${args.linkSlug}`,
     platform,
     discountCode: args.discountCode ? { code: args.discountCode.code, offer: args.discountCode.offer } : undefined,
+    descriptionFormat: args.descriptionFormat,
   }
 }
 

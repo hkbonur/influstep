@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest'
 import { internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
 import { addDays, dayKey, instantAt, weekStart } from './core/dates'
+import { writeScriptsDueBefore } from '../test/scripts'
 import { setup } from '../test/setup'
 
 const TIMEZONE = 'Europe/Oslo'
@@ -136,8 +137,15 @@ describe('posts on X', () => {
     const second = await t.mutation(internal.internal.agents.planWeekMutation, { personaId, weekStart: nextMonday })
     expect(second.planned).toBe(0)
 
-    // The writer: every post is scripted with parts that pass X's rules as they stand, since X gets them as written.
+    // Nothing is written at plan time: each day's posts are written the morning before it, one pass a morning.
     await t.finishAllScheduledFunctions(() => {})
+    expect((await episodesOf(t, personaId)).every((episode) => episode.status === 'idea')).toBe(true)
+    for (const day of week) {
+      const pass = await writeScriptsDueBefore(t, personaId, day)
+      expect(pass.failed).toBe(0)
+    }
+
+    // The writer: every post is scripted with parts that pass X's rules as they stand, since X gets them as written.
     const written = (await episodesOf(t, personaId)).filter((episode) => isPost(episode.kind))
     expect(written.length).toBe(14)
     for (const episode of written) {

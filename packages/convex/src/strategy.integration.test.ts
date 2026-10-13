@@ -6,6 +6,7 @@ import { createIdea } from './core/episodes'
 import { mockLlm } from './providers/llm/mock'
 import type { ScriptBrief } from './providers/llm'
 import { TIMEZONE, insertMeasuredVideo, insertPersona } from '../test/fixtures'
+import { writeScriptsDueBefore } from '../test/scripts'
 import { setup } from '../test/setup'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -65,12 +66,13 @@ describe('the strategy loop', () => {
       briefs.push(brief)
       return write(brief)
     })
+    const plannedFor = addDays(weekStart(dayKey(Date.now(), TIMEZONE)), 7)
     const episodeId = await t.run(async (ctx) => {
       const owner = await ctx.db.get(personaId)
       if (!owner) throw new Error('persona vanished')
       return createIdea(ctx, owner, {
         personaId,
-        plannedFor: addDays(weekStart(dayKey(Date.now(), TIMEZONE)), 7),
+        plannedFor,
         concept: 'n8n webhooks that retry',
         pillar: 'n8n tutorials',
         sponsorSegment: 'none',
@@ -80,7 +82,10 @@ describe('the strategy loop', () => {
     })
     const context = await t.query(internal.internal.data.getEpisodeContext, { episodeId })
     expect(context.learnings).toEqual([learning])
+    // Written the morning before it goes out.
     await t.finishAllScheduledFunctions(() => {})
+    expect(briefs).toEqual([])
+    await writeScriptsDueBefore(t, personaId, plannedFor)
     const [brief] = briefs
     expect(brief?.learnings).toEqual([learning])
     expect(brief?.styleLines).toEqual(['Hook style: Open with the question the viewer has.'])
@@ -120,17 +125,32 @@ describe('the seeded strategy', () => {
         .query('journal')
         .withIndex('by_persona_time', (q) => q.eq('personaId', ada._id))
         .collect()
-      const learnings = await ctx.db
-        .query('memories')
-        .withIndex('by_persona_status', (q) => q.eq('personaId', ada._id).eq('status', 'active'))
-        .collect()
-      return { ada, max, journalKinds: journal.map((entry) => entry.kind), learnings: learnings.map((memory) => memory.text) }
+      const active = async (personaId: Id<'personas'>) =>
+        ctx.db
+          .query('memories')
+          .withIndex('by_persona_status', (q) => q.eq('personaId', personaId).eq('status', 'active'))
+          .collect()
+      const adaMemories = await active(ada._id)
+      return {
+        ada,
+        max,
+        journalKinds: journal.map((entry) => entry.kind),
+        learnings: adaMemories.filter((memory) => memory.kind === 'learning').map((memory) => memory.text),
+        // The morning's research sits beside the learnings: a brief and the one repeated question.
+        research: adaMemories
+          .filter((memory) => memory.kind !== 'learning')
+          .map((memory) => memory.kind)
+          .sort(),
+        maxMemories: (await active(max._id)).length,
+      }
     })
     expect(seeded.ada.strategy?.defaults.map((entry) => [entry.kind, entry.key])).toEqual([['cta', 'comment']])
     expect(seeded.ada.strategy?.reviewedAt).toEqual(expect.any(Number))
     expect(seeded.ada.strategy?.pillarWeights.length).toBe(seeded.ada.pillars.length)
     expect(seeded.journalKinds).toEqual(expect.arrayContaining(['experiment_started', 'experiment_decided', 'pillar_weights']))
     expect(seeded.learnings).toEqual([expect.stringMatching(/^Call to action: "Comment" beat "Follow" on clicks per view/)])
+    expect(seeded.research).toEqual(['brief', 'problem'])
     expect(seeded.max.strategy).toBeUndefined()
+    expect(seeded.maxMemories).toBe(0)
   })
 })

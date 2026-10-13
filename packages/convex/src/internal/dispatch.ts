@@ -16,6 +16,7 @@ import { refusal } from '../lib/errors'
 
 const BACKEND_RUNNERS: Partial<Record<JobKind, (ctx: ActionCtx, job: Doc<'jobs'>) => Promise<unknown>>> = {
   poll_signals: (ctx, job) => ctx.runAction(internal.internal.agents.pollSignals, payloadWith(job.payload, 'personaId')),
+  morning_sweep: (ctx, job) => ctx.runAction(internal.internal.agents.morningSweep, payloadWith(job.payload, 'personaId')),
   plan_week: (ctx, job) => ctx.runAction(internal.internal.agents.planWeek, payloadWith(job.payload, 'personaId', 'weekStart')),
   write_script: (ctx, job) => ctx.runAction(internal.internal.agents.writeScript, payloadWith(job.payload, 'episodeId')),
   poll_comments: (ctx, job) => ctx.runAction(internal.internal.agents.pollComments, payloadWith(job.payload, 'personaId')),

@@ -3,6 +3,7 @@ import {
   EXPERIMENT_CATALOG,
   EXPERIMENT_KINDS,
   GOAL_METRICS,
+  SCRIPT_KINDS,
   METRIC_DENOMINATOR,
   METRIC_MIN_EXPOSURES,
   allocatePillars,
@@ -59,10 +60,11 @@ describe('decideExperiment', () => {
 })
 
 describe('the experiment catalog', () => {
-  it('lists every dimension with its control first, unique keys, and a length factor only on length', () => {
+  it('lists every dimension with its control first, unique keys, a length factor only on length and an hour offset only on publish time', () => {
     for (const kind of EXPERIMENT_KINDS) {
       const variants = EXPERIMENT_CATALOG[kind]
-      expect(variants.length, kind).toBeGreaterThanOrEqual(3)
+      // A description format is the link first or the code first; every other dimension has at least three arms.
+      expect(variants.length, kind).toBeGreaterThanOrEqual(kind === 'description_format' ? 2 : 3)
       expect(
         variants.map((variant) => variant.isControl),
         kind
@@ -72,12 +74,30 @@ describe('the experiment catalog', () => {
         expect(variant.description.trim(), `${kind}/${variant.key}`).not.toBe('')
         expect(variant.description, `${kind}/${variant.key}`).not.toContain('\u2014')
         expect(variant.lengthFactor !== undefined, `${kind}/${variant.key}`).toBe(kind === 'length')
+        expect(variant.hourOffset !== undefined, `${kind}/${variant.key}`).toBe(kind === 'publish_time')
       }
     }
-    expect(EXPERIMENT_KINDS).toEqual(['hook', 'concept', 'sponsor', 'length', 'cta'])
+    expect(EXPERIMENT_KINDS).toEqual(['hook', 'concept', 'sponsor', 'length', 'cta', 'publish_time', 'description_format'])
+    expect(SCRIPT_KINDS).toEqual(['hook', 'concept', 'sponsor', 'length', 'cta'])
     expect(EXPERIMENT_CATALOG.hook.map((variant) => variant.key)).toEqual(['howto', 'question', 'wrong', 'number', 'result'])
     expect(EXPERIMENT_CATALOG.length.map((variant) => variant.lengthFactor)).toEqual([1, 0.7, 1.3])
     expect(catalogControl('cta').key).toBe('follow')
+  })
+
+  it('moves the publish hour by three either way, with the usual hour as the control', () => {
+    expect(EXPERIMENT_CATALOG.publish_time.map((variant) => [variant.key, variant.hourOffset, variant.isControl])).toEqual([
+      ['usual', 0, true],
+      ['earlier', -3, false],
+      ['later', 3, false],
+    ])
+    expect(catalogControl('publish_time').label).toBe('Usual hour')
+  })
+
+  it('puts the link first by default and the code first as the challenger', () => {
+    expect(EXPERIMENT_CATALOG.description_format.map((variant) => [variant.key, variant.label, variant.isControl])).toEqual([
+      ['link', 'Link first', true],
+      ['code', 'Code first', false],
+    ])
   })
 
   it('needs exposures by the goal metric’s denominator', () => {

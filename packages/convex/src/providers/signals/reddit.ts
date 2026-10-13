@@ -44,6 +44,7 @@ export const redditSignals: SignalsProvider = {
           summary: `r/${post.subreddit}, ${post.num_comments} comments. ${(post.selftext ?? '').slice(0, 160)}`.trim(),
           score: post.score + post.num_comments * 2,
           topics: [term, post.subreddit],
+          publishedAt: post.created_utc * 1000,
         })
       }
     }

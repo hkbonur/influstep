@@ -12,10 +12,12 @@ import {
 } from '@influstep/shared'
 import type { Doc, Id } from '../_generated/dataModel'
 import { internalMutation, internalQuery, type MutationCtx, type QueryCtx } from '../_generated/server'
-import { composeDescription } from '../core/attribution'
+import { composeDescription, descriptionFormatOf } from '../core/attribution'
 import { activeDiscountCodeFor } from '../core/discounts'
 import { KILLED_BEFORE_RUN, completeProduction, completePublication, failPublication, startProduction } from '../core/episodes'
+import { episodeVariant } from '../core/experiments'
 import { latestRunner } from '../core/jobs'
+import { logRecordingProblem } from '../core/research'
 import { workspaceOf } from '../core/workspace'
 import { enqueueJob, markDone, markFailed, markRunning } from '../jobs/queue'
 import { applyEvent, failEpisodeIfPossible } from './data'
@@ -139,8 +141,13 @@ export const complete = internalMutation({
   },
 })
 
+/**
+ * A runner job failed. A recording that broke on a screen shot names the shot
+ * (`shotId`), so a tool that broke under the persona becomes a problem in its
+ * problem log (core/research.ts) before the episode fails.
+ */
 export const fail = internalMutation({
-  args: { jobId: v.id('jobs'), error: v.string() },
+  args: { jobId: v.id('jobs'), error: v.string(), shotId: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const job = await ctx.db.get(args.jobId)
     if (!job) throw new Error(`job ${args.jobId} not found`)
@@ -151,6 +158,9 @@ export const fail = internalMutation({
     if (job.kind === 'publish') {
       await failPublication(ctx, job.payload.publicationId as Id<'publications'>, args.error)
       return
+    }
+    if (job.kind === 'produce' && job.episodeId && args.shotId !== undefined) {
+      await logRecordingProblem(ctx, { episodeId: job.episodeId, shotId: args.shotId, error: args.error, now: Date.now() })
     }
     if (job.episodeId) await failEpisodeIfPossible(ctx, job.episodeId, args.error)
   },
@@ -247,6 +257,11 @@ async function publishPayloadFor(
   const workspace = await workspaceOf(ctx, persona)
   // X carries the title alone, so no code is in it whatever is in force.
   const discountCode = publication.platform === 'x' ? null : await activeDiscountCodeFor(ctx, persona._id, episode._id)
+  const experiment = episode.experimentId === undefined ? null : await ctx.db.get(episode.experimentId)
+  const descriptionFormat = descriptionFormatOf(
+    { variant: episodeVariant(episode, experiment), sponsorSegment: episode.sponsorSegment },
+    persona.strategy?.defaults
+  )
   return {
     ok: true,
     value: {
@@ -255,7 +270,7 @@ async function publishPayloadFor(
         publicationId: publication._id,
         platform: publication.platform,
         title: publication.title,
-        description: composeDescription({ workspace, episode, publication, linkSlug: link.slug, discountCode }),
+        description: composeDescription({ workspace, episode, publication, linkSlug: link.slug, discountCode, descriptionFormat }),
         renderStorageId: render.value.storageId,
         renderUrl: render.value.url,
         scheduledAt: publication.scheduledAt,

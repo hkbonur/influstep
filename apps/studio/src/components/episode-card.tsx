@@ -4,6 +4,7 @@ import { api } from '@influstep/convex/_generated/api'
 import type { FunctionReturnType } from 'convex/server'
 import { cn } from '@/lib/cn'
 import { formatTime } from '@/lib/format'
+import { ideaLine } from '@/lib/ideas'
 import { PlatformGlyphs, PostKindIcon, PostShape, TINT_CLASS } from './status'
 
 export type CalendarEpisode = FunctionReturnType<typeof api.private.calendar.week>['days'][number]['episodes'][number]
@@ -13,7 +14,9 @@ export type CalendarEpisode = FunctionReturnType<typeof api.private.calendar.wee
  * weight 500; persona handle in mono; the episode's own platforms on the last
  * row, since an episode can go to fewer platforms than its persona has (DESIGN.md).
  * A post shows its kind icon and its first line where a video shows its title,
- * and under it what the planner asked of it: the intent and the length.
+ * and under it what the planner asked of it: the intent and the length. An
+ * idea has no words yet, so it says when the writer gets to them, or that it is
+ * on them now.
  */
 export function EpisodeCard(props: { episode: CalendarEpisode }) {
   const episode = props.episode
@@ -45,6 +48,9 @@ export function EpisodeCard(props: { episode: CalendarEpisode }) {
             >
               {episode.title}
             </div>
+          )}
+          {episode.status === 'idea' && (
+            <div className={cn('mt-0.5 text-[11px] text-ash', { 'pl-5': isPost(episode.kind) })}>{ideaLine(episode, episode.writing)}</div>
           )}
           <div className="mt-1 flex items-center justify-between gap-2">
             <span className="truncate font-mono text-[11px] text-ash">@{episode.persona.handle}</span>

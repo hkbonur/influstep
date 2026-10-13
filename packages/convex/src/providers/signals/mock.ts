@@ -1,7 +1,12 @@
-import type { SignalSource } from '@influstep/shared'
+import type { PolledSignalSource } from '@influstep/shared'
 import type { FoundSignal, SignalsProvider, SignalsQuery } from './types'
 
-const STORIES: Record<SignalSource, { title: string; summary: string; topics: string[] }[]> = {
+const HOUR_MS = 3_600_000
+
+type Story = { title: string; summary: string; topics: string[] }
+
+/** Search suggestions are made from the query's terms instead (`searchSuggestions`), so they have no fixed stories. */
+const STORIES: Record<Exclude<PolledSignalSource, 'search'>, Story[]> = {
   hackernews: [
     {
       title: 'Show HN: I replaced my Zapier bill with n8n on a $5 VPS',
@@ -35,31 +40,25 @@ const STORIES: Record<SignalSource, { title: string; summary: string; topics: st
     { title: 'ai agents tutorial', summary: 'Rising query, +140% over 90 days.', topics: ['ai agents', 'tutorial'] },
     { title: 'n8n vs make', summary: 'Breakout query in the last 30 days.', topics: ['n8n', 'make', 'comparison'] },
   ],
-  comments: [
-    {
-      title: 'Can you show how to retry a failed webhook step?',
-      summary: 'Asked under last week’s episode, 12 likes.',
-      topics: ['n8n', 'webhooks'],
-    },
-    {
-      title: 'Which form tool is that? Does it work with Zapier?',
-      summary: 'Three viewers asked the same thing.',
-      topics: ['forms', 'zapier'],
-    },
-  ],
   youtube_search: [
     { title: 'n8n beginner tutorial 2026', summary: 'Top result has 400k views and is a year old.', topics: ['n8n', 'tutorial'] },
   ],
 }
 
-/** Fixed, plausible stories so demos and tests see the same signals. */
-export function mockSignals(source: SignalSource): SignalsProvider {
+/**
+ * Fixed, plausible stories so demos and tests see the same signals. Their
+ * post times sit a fixed number of hours before the poll, a day apart, so a
+ * source's stories spread over the last three days. A re-find stamps the
+ * post time again (storeSignals), so a mock story never goes cold.
+ */
+export function mockSignals(source: PolledSignalSource): SignalsProvider {
   return {
     source,
     name: 'mock',
     async find(query: SignalsQuery): Promise<FoundSignal[]> {
-      const stories = STORIES[source]
-      return stories.slice(0, query.limit).map((story, index) => ({
+      const now = Date.now()
+      if (source === 'search') return searchSuggestions(query, now)
+      return STORIES[source].slice(0, query.limit).map((story, index) => ({
         source,
         externalId: `mock-${source}-${index}`,
         title: story.title,
@@ -67,9 +66,37 @@ export function mockSignals(source: SignalSource): SignalsProvider {
         summary: story.summary,
         score: 100 - index * 17 + termBonus(query.terms, story.topics),
         topics: story.topics,
+        publishedAt: now - (6 + index * 24) * HOUR_MS,
       }))
     },
   }
+}
+
+/** The tools the persona's viewers weigh its own subjects against, one per term the mock suggests for. */
+const COMPARED_WITH = ['zapier', 'make'] as const
+
+/**
+ * Suggestions shaped like the real adapter's (search.ts), made from the
+ * first terms: a how-to and a comparison for each, found within the last day.
+ */
+function searchSuggestions(query: SignalsQuery, now: number): FoundSignal[] {
+  const suggestions = COMPARED_WITH.flatMap((rival, index) => {
+    const term = query.terms[index]
+    if (term === undefined) return []
+    const subject = term.toLowerCase()
+    const topics = subject.split(/\s+/).filter((word) => word !== '')
+    return [`how to get started with ${subject}`, `${subject} vs ${rival}`].map((suggestion) => ({ suggestion, topics }))
+  })
+  return suggestions.slice(0, query.limit).map((entry, rank) => ({
+    source: 'search',
+    externalId: entry.suggestion,
+    title: entry.suggestion,
+    url: `https://www.google.com/search?q=${encodeURIComponent(entry.suggestion)}`,
+    summary: `People type "${entry.suggestion}" into Google.`,
+    score: Math.max(30, 70 - rank * 5),
+    topics: entry.topics,
+    publishedAt: now - (2 + rank * 4) * HOUR_MS,
+  }))
 }
 
 function termBonus(terms: string[], topics: string[]): number {

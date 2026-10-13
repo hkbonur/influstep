@@ -38,6 +38,8 @@ export function runnerAlive(lastSeenAt: number, now: number): boolean {
  */
 export const JOB_KINDS = {
   poll_signals: { role: 'researcher', runsOn: 'backend' },
+  // Every morning: poll the sources, log repeated questions as problems, write the daily brief.
+  morning_sweep: { role: 'researcher', runsOn: 'backend' },
   plan_week: { role: 'writer', runsOn: 'backend' },
   write_script: { role: 'writer', runsOn: 'backend' },
   produce: { role: 'producer', runsOn: 'runner' },
@@ -61,6 +63,7 @@ export const JOB_KIND_LIST = Object.keys(JOB_KINDS) as JobKind[]
 
 export const JOB_KIND_LABELS: Record<JobKind, string> = {
   poll_signals: 'Poll signals',
+  morning_sweep: 'Morning sweep',
   plan_week: 'Plan the week',
   write_script: 'Write script',
   produce: 'Record, voice, render',

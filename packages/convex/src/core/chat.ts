@@ -9,6 +9,7 @@ import {
   isChatTask,
   matchEpisodes,
   normalizeDiscountCode,
+  scriptDayOf,
   shortDayLabel,
   weekdayOf,
   type ChatIntent,
@@ -24,7 +25,7 @@ import type { MutationCtx, QueryCtx } from '../_generated/server'
 import { enqueueJob } from '../jobs/queue'
 import { addDays, dayKey, hourAt, weekStart } from './dates'
 import { INVALID_CODE, codeGivenText, giveDiscountCode } from './discounts'
-import { createIdea, killEpisode, rescheduleEpisode } from './episodes'
+import { createIdea, killEpisode, rescheduleEpisode, scriptBeingWritten } from './episodes'
 
 /**
  * The persona's chat as a way to change things (docs/plan.md, slice 7). An
@@ -214,7 +215,8 @@ function replacementShape(episode: Doc<'episodes'>, persona: Doc<'personas'>): R
  * segment, platforms and post shape, the pillar kept, with the concept the
  * operator asked for. The experiment and variant are dropped, since a
  * replacement no longer tests what the old episode was assigned, and no
- * signal feeds it. The writer is queued for it as for any idea.
+ * signal feeds it. The writer gets it as any idea, the day before it goes
+ * out (core `queueScriptIfDue`), and the reply says when.
  *
  * The new idea is created first: it can refuse (a platform the persona has
  * since removed), and a refusal then leaves the old episode as it was. The
@@ -249,7 +251,10 @@ async function replaceEpisode(ctx: MutationCtx, persona: Doc<'personas'>, target
   if (!created.ok) return { text: created.refusal, episodeId: old._id }
   const episodeId = created.value
   await killEpisode(ctx, old._id)
-  return { text: `Replaced ${weekdayLabel(old.plannedFor)}'s "${old.title}" with "${newConcept}". The writer is on it.`, episodeId }
+  const when = (await scriptBeingWritten(ctx, episodeId))
+    ? 'The writer is on it.'
+    : `The writer writes it on ${shortDayLabel(scriptDayOf(old.plannedFor))}.`
+  return { text: `Replaced ${weekdayLabel(old.plannedFor)}'s "${old.title}" with "${newConcept}". ${when}`, episodeId }
 }
 
 /** To the named weekday of the episode's own week (Monday first, in the persona's timezone), never to a day that has passed. */

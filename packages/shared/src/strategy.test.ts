@@ -63,4 +63,33 @@ describe('styleLines', () => {
     expect(styleLines(style, 'length')).toEqual([`Sponsor placement: ${early.description}`, `Call to action: ${comment.description}`])
     expect(styleLines(style)).toContain(`Episode length: ${shorter.description}`)
   })
+
+  it('never says the publish time or the description format, which the script does not carry', () => {
+    const later = EXPERIMENT_CATALOG.publish_time[2]
+    const code = EXPERIMENT_CATALOG.description_format[1]
+    const withNonScript: StrategyDefault[] = [
+      ...defaults,
+      { kind: 'description_format', key: code.key, label: code.label, description: code.description, experimentId: 'e3', since: 3 },
+    ]
+    const style = effectiveStyle({ sponsorSegment: 'mention', variant: { kind: 'publish_time', ...later } }, withNonScript)
+    expect(style.publish_time).toMatchObject({ key: 'later', hourOffset: 3, isControl: false })
+    expect(style.description_format).toMatchObject({ key: 'code', isControl: false })
+    expect(styleLines(style)).toEqual([`Sponsor placement: ${early.description}`, `Call to action: ${comment.description}`])
+    expect(styleLines(style, 'publish_time')).toEqual([`Sponsor placement: ${early.description}`, `Call to action: ${comment.description}`])
+  })
+})
+
+describe('effectiveVariant on publish time', () => {
+  it('carries the hour offset of the episode’s own variant, and the usual hour otherwise', () => {
+    const earlier = EXPERIMENT_CATALOG.publish_time[1]
+    expect(effectiveVariant('publish_time', { variant: { kind: 'publish_time', ...earlier } }, defaults)).toMatchObject({
+      key: 'earlier',
+      hourOffset: -3,
+    })
+    expect(effectiveVariant('publish_time', { variant: { kind: 'hook', ...EXPERIMENT_CATALOG.hook[1] } }, defaults)).toMatchObject({
+      key: 'usual',
+      hourOffset: 0,
+      isControl: true,
+    })
+  })
 })

@@ -36,6 +36,11 @@ export function instantAt(day: string, hour: number, timezone: string): number {
   return guess - offset
 }
 
+/** An hour of the day as the journal and the chat write it: "07:00". */
+export function hourText(hour: number): string {
+  return `${String(hour).padStart(2, '0')}:00`
+}
+
 /** The local hour (0 to 23) of an instant in `timezone`, so a moved post keeps its slot on the new day. */
 export function hourAt(at: number, timezone: string): number {
   const hour = new Intl.DateTimeFormat('en-US', { timeZone: timezone, hourCycle: 'h23', hour: '2-digit' })

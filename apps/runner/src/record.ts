@@ -3,6 +3,7 @@ import path from 'node:path'
 import { chromium } from 'playwright'
 import type { RecipeStep, Shot } from '@influstep/shared'
 import { profileDir } from './config'
+import { ShotRecordingError } from './failure'
 
 export type ScreenShot = Extract<Shot, { kind: 'screen' }>
 
@@ -10,6 +11,9 @@ export type ScreenShot = Extract<Shot, { kind: 'screen' }>
  * Records one screen shot with Playwright's video recorder against the
  * runner's persistent browser profile, so tools the operator signed in to
  * (checklist item "Sign in to …") stay signed in. Returns the webm path.
+ * A recipe step that fails throws a ShotRecordingError naming the shot: the
+ * tool on screen broke. A browser that will not start, or a missing video,
+ * is this machine's failure and stays a plain error.
  */
 export async function recordScreen(args: { shot: ScreenShot; seconds: number; dir: string; headed: boolean }): Promise<string> {
   await fs.mkdir(args.dir, { recursive: true })
@@ -21,7 +25,11 @@ export async function recordScreen(args: { shot: ScreenShot; seconds: number; di
   try {
     const page = await context.newPage()
     const startedAt = Date.now()
-    for (const step of args.shot.recipe) await runStep(page, step)
+    try {
+      for (const step of args.shot.recipe) await runStep(page, step)
+    } catch (error) {
+      throw new ShotRecordingError(args.shot.id, error)
+    }
     const left = args.seconds * 1000 - (Date.now() - startedAt)
     if (left > 0) await page.waitForTimeout(left)
     const video = page.video()

@@ -62,6 +62,14 @@ export interface PlannedEpisode {
   variantKey?: string
 }
 
+/**
+ * The concept a signal becomes: the one rule the planner, the operator's
+ * "make an episode" on the Signals page and the last check's swap all use.
+ */
+export function signalConcept(title: string): string {
+  return `React to: ${title}`
+}
+
 /** Weekday slots by cadence: spread across the week, weekends last. */
 const SLOT_ORDER = [1, 3, 5, 2, 4, 0, 6] // Tue, Thu, Sat, Wed, Fri, Mon, Sun offsets from Monday
 
@@ -86,6 +94,7 @@ export function planWeek(args: {
     .filter((day) => !args.takenDays.includes(day))
     .sort()
 
+  // The caller passes each signal's freshness as its score (shared `signalFreshness`), so the freshest leads.
   const rankedSignals = [...args.signals].sort((a, b) => b.score - a.score)
   // Two of five reactive, the rest evergreen (docs/plan.md, idea 7).
   const reactiveCount = Math.min(rankedSignals.length, Math.max(1, Math.round(days.length * 0.4)))
@@ -107,7 +116,7 @@ export function planWeek(args: {
     const signal = index < reactiveCount ? rankedSignals[index] : undefined
     const pillar = signal ? pillarFor(signal, persona.pillars) : evergreen[index - reactivePillars.length]
     if (pillar === undefined) throw new Error(`slot ${index} of the week has no pillar`)
-    const concept = signal ? `React to: ${signal.title}` : `${pillar}: an evergreen how-to`
+    const concept = signal ? signalConcept(signal.title) : `${pillar}: an evergreen how-to`
     const sponsorSegment: SponsorSegment = sponsoredSlots.has(index) ? (index % 2 === 0 ? 'demo' : 'mention') : 'none'
 
     // Only a sponsored episode places a sponsor, so a sponsor experiment tests only those.

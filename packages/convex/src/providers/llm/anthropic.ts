@@ -37,6 +37,7 @@ import {
   type TaskSignal,
   type VoiceBrief,
   type VoiceDraft,
+  type WriterResearch,
 } from './types'
 
 const MODEL = 'claude-opus-5-5'
@@ -97,8 +98,10 @@ export const anthropicLlm: LlmProvider = {
             sponsorInstruction(brief),
             brief.directives.length > 0 ? `Standing directives from the operator:\n- ${brief.directives.join('\n- ')}` : '',
             brief.signals.length > 0
-              ? `What the audience is talking about:\n${brief.signals.map((signal) => `- ${signal.title}: ${signal.summary} (${signal.url})`).join('\n')}`
+              ? `What the audience is talking about:\n${brief.signals.map((signal) => `- ${signalLine(signal)}`).join('\n')}`
               : '',
+            movedInstruction(brief.research),
+            problemsInstruction(brief.research),
             `Hook conventions of the platforms this goes to, all of which the hook (the first sentence of the first beat) must satisfy:\n- ${brief.format.hookNotes.join('\n- ')}`,
             brief.problems.length > 0 ? `Your last draft broke these rules. Fix every one:\n- ${brief.problems.join('\n- ')}` : '',
             `Return a title of at most ${PUBLICATION_TITLE_MAX} characters, the description, and the beats in order. The description is one to three sentences in your own voice about what the video shows, for the description box under it. Leave out links, discount codes, the AI disclosure, the sponsor line and hashtags: what each platform needs is added when it goes out.`,
@@ -132,8 +135,10 @@ export const anthropicLlm: LlmProvider = {
             `Pillar: ${brief.pillar}`,
             postSponsorInstruction(brief),
             brief.signals.length > 0
-              ? `What the audience is talking about:\n${brief.signals.map((signal) => `- ${signal.title}: ${signal.summary} (${signal.url})`).join('\n')}`
+              ? `What the audience is talking about:\n${brief.signals.map((signal) => `- ${signalLine(signal)}`).join('\n')}`
               : '',
+            movedInstruction(brief.research),
+            problemsInstruction(brief.research),
             `The first line of the first part is the hook. Your convention on X: ${brief.hookNote}`,
             `Every part is at most ${brief.partLimit} characters, and X counts every link as 23. X gets the parts exactly as you write them; nothing is added. End on the post's own last point: no sign-off, no call to follow, no link.`,
             brief.problems.length > 0 ? `Your last draft broke these rules. Fix every one:\n- ${brief.problems.join('\n- ')}` : '',
@@ -301,7 +306,7 @@ function taskRequest(args: TaskReportArgs): string {
   if (args.task === 'research_brief') {
     const on = args.topic === null ? '' : ` on "${args.topic}"`
     if (args.data.signals.length === 0) return `The operator asked for a research brief${on}. There are no new signals${on}.`
-    return `The operator asked for a research brief${on}. Say what people are asking about and which of it would make a good episode. The ${args.data.signals.length} newest unused signals:\n${signalsBlock(args.data.signals)}`
+    return `The operator asked for a research brief${on}. Say what people are asking about and which of it would make a good episode. The ${args.data.signals.length} freshest unused signals:\n${signalsBlock(args.data.signals)}`
   }
   if (args.task === 'comment_digest') {
     const window = `in the last ${args.data.days} days`
@@ -320,7 +325,18 @@ function taskRequest(args: TaskReportArgs): string {
 }
 
 function signalsBlock(signals: TaskSignal[]): string {
-  return signals.map((signal) => `- [${SIGNAL_SOURCE_LABELS[signal.source]}] ${signal.title}: ${signal.summary} (${signal.url})`).join('\n')
+  return signals.map((signal) => `- [${SIGNAL_SOURCE_LABELS[signal.source]}] ${signalLine(signal)}`).join('\n')
+}
+
+/**
+ * A signal as the model reads it: its title, its summary, and its link in
+ * brackets. A problem from the problem log, or a comment under a publication
+ * with no URL yet, links nowhere, so it gets no brackets: an empty pair would
+ * read as a source with no destination.
+ */
+function signalLine(signal: { title: string; summary: string; url: string }): string {
+  if (signal.url === '') return `${signal.title}: ${signal.summary}`
+  return `${signal.title}: ${signal.summary} (${signal.url})`
 }
 
 function lengthInstruction(brief: ScriptBrief): string {
@@ -343,6 +359,22 @@ function deliveryInstruction(brief: ScriptBrief): string {
   if (brief.format.delivery === 'screen_only')
     return `Delivery is screen only: two to four beats, each showing a screen, and every beat names the tool on screen and the URL to open.`
   return `Delivery is screen with avatar: the first beat is the presenter speaking to camera (tool "${PRESENTER_TOOL}", empty url) and it opens with the hook; the beats after it are the screens to record, each naming the tool on screen and the URL to open.`
+}
+
+/**
+ * The researcher's morning brief, in its own words: background for the
+ * concept, never a reason to change it. Nothing before the first sweep or
+ * once the brief expired.
+ */
+function movedInstruction(research: WriterResearch): string {
+  if (research.brief === null) return ''
+  return `What moved since yesterday (this morning's research brief; background for the concept, never a reason to swap it):\n${research.brief}`
+}
+
+/** The persona's open problems, newest first: questions viewers keep asking and tools that broke on camera. Nothing while the log is empty. */
+function problemsInstruction(research: WriterResearch): string {
+  if (research.problems.length === 0) return ''
+  return `Problems I met (your own problem log, newest first; answer one only where it fits the concept):\n- ${research.problems.join('\n- ')}`
 }
 
 /** What the persona's own experiments showed, newest first; nothing until one decides. */

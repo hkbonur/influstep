@@ -1,5 +1,6 @@
 import { backend } from './backend'
 import { config, providersMode } from './config'
+import { failureOf } from './failure'
 import { produce } from './produce'
 import { publish } from './publish'
 import { openBrowser } from './record'
@@ -36,11 +37,12 @@ async function handle(job: NonNullable<Awaited<ReturnType<typeof backend.claim>>
     }
     log(`job ${job.id}: done`)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    log(`job ${job.id}: failed: ${message}`)
+    const failure = failureOf(error)
+    const at = failure.shotId === undefined ? '' : ` at ${failure.shotId}`
+    log(`job ${job.id}: failed${at}: ${failure.error}`)
     // The backend refuses a job that went back to the queue or that another process finished; the loop goes on.
     await backend
-      .fail(job.id, message)
+      .fail(job.id, failure)
       .catch((error: unknown) => log(`job ${job.id}: fail refused: ${error instanceof Error ? error.message : String(error)}`))
   } finally {
     currentJobId = null

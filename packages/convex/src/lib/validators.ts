@@ -176,13 +176,19 @@ export const renderValidator = v.object({
   mock: v.boolean(),
 })
 
-/** One arm of an experiment; a length variant carries the factor its episodes' length is scaled by (shared `variantLength`). */
+/**
+ * One arm of an experiment; a length variant carries the factor its episodes'
+ * length is scaled by (shared `variantLength`), and a publish time variant the
+ * hours its videos move from the platform's usual hour (core/formats.ts
+ * `publishHourFor`).
+ */
 export const variantValidator = v.object({
   key: v.string(),
   label: v.string(),
   description: v.string(),
   isControl: v.boolean(),
   lengthFactor: v.optional(v.number()),
+  hourOffset: v.optional(v.number()),
 })
 
 /**
@@ -211,6 +217,9 @@ export const strategyDefaultValidator = v.object({
   label: v.string(),
   description: v.string(),
   lengthFactor: v.optional(v.number()),
+  // Never stored by a decision: a decided publish time moves formats[].publishHour instead. Here so a
+  // default reads like the variant it came from.
+  hourOffset: v.optional(v.number()),
   experimentId: v.optional(v.id('experiments')),
   since: v.number(),
 })

@@ -11,7 +11,7 @@ import {
   retireDiscountCode as retireDiscountCodeRule,
 } from '../core/discounts'
 import { openXChecklist } from '../core/checklist'
-import { createTrackedLink, reconcilePlatformDrop } from '../core/episodes'
+import { createTrackedLink, reconcilePlatformDrop, scriptBeingWritten } from '../core/episodes'
 import { assertFormats, platformsOf } from '../core/formats'
 import { workingPersonaIds } from '../core/jobs'
 import { requireWorkspace, workspaceOf } from '../core/workspace'
@@ -106,12 +106,17 @@ export const get = query({
       .query('checklistItems')
       .withIndex('by_persona_status', (q) => q.eq('personaId', persona._id).eq('status', 'open'))
       .collect()
-    const episodes = (
+    const rows = (
       await ctx.db
         .query('episodes')
         .withIndex('by_persona', (q) => q.eq('personaId', persona._id))
         .collect()
     ).sort((a, b) => (a.plannedFor < b.plannedFor ? 1 : -1))
+    // An idea says when it is written, or that the writer is on it now (core `scriptBeingWritten`).
+    const episodes: (Doc<'episodes'> & { writing: boolean })[] = []
+    for (const episode of rows) {
+      episodes.push({ ...episode, writing: episode.status === 'idea' && (await scriptBeingWritten(ctx, episode._id)) })
+    }
     const jobs = await ctx.db
       .query('jobs')
       .withIndex('by_persona', (q) => q.eq('personaId', persona._id))

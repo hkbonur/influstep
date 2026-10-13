@@ -2,6 +2,7 @@ import {
   EXPERIMENT_KIND_LABELS,
   METRIC_DENOMINATOR,
   METRIC_RATE_LABELS,
+  PLATFORM_LABELS,
   confidencePercent,
   effectiveVariant,
   isPost,
@@ -17,6 +18,10 @@ import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx, QueryCtx } from '../_generated/server'
 import { refusal } from '../lib/errors'
 import type { journalNumberValidator, strategyDefaultValidator, variantValidator } from '../lib/validators'
+import { DESCRIPTION_FORMATS, isDescriptionFormat } from './attribution'
+import { hourText } from './dates'
+import { activeDiscountCodes } from './discounts'
+import { publishHourFor } from './formats'
 import { latestPerPublication } from './report'
 
 /**
@@ -47,6 +52,24 @@ export function episodeVariant(
   const variant = experiment.variants.find((candidate) => candidate.key === episode.variantKey)
   if (!variant)
     throw new Error(`episode ${episode._id} carries variant "${episode.variantKey}", which experiment ${experiment._id} does not have`)
+  return { ...variant, kind: experiment.kind }
+}
+
+/**
+ * The variant a planned episode will carry, read before its row exists (the
+ * placement of a new idea needs its publish offset). Same rule as
+ * `episodeVariant`: a key its experiment does not have is a bug.
+ */
+export async function plannedVariant(
+  ctx: Reader,
+  planned: { experimentId?: Id<'experiments'>; variantKey?: string }
+): Promise<EpisodeVariant | undefined> {
+  if (planned.variantKey === undefined) return undefined
+  if (planned.experimentId === undefined) throw new Error(`a planned episode carries variant "${planned.variantKey}" but no experiment`)
+  const experiment = await ctx.db.get(planned.experimentId)
+  if (!experiment) throw new Error(`experiment ${planned.experimentId} not found`)
+  const variant = experiment.variants.find((candidate) => candidate.key === planned.variantKey)
+  if (!variant) throw new Error(`experiment ${experiment._id} has no variant "${planned.variantKey}"`)
   return { ...variant, kind: experiment.kind }
 }
 
@@ -275,6 +298,8 @@ async function journal(
     evidence: {
       ...(entry.experimentId === undefined ? {} : { experimentId: entry.experimentId }),
       episodeIds: entry.episodeIds,
+      // Only a last check's swap names signals (core/research.ts); no experiment entry does.
+      signalIds: [],
       numbers: entry.numbers,
     },
     createdAt: entry.at,
@@ -315,6 +340,27 @@ export async function startExperiment(
     if (input.kind !== 'length') throw refusal(`Only an episode length experiment scales length; "${variant.label}" has a length factor.`)
     if (!(variant.lengthFactor > 0)) throw refusal(`"${variant.label}" needs a length factor above 0.`)
   }
+  for (const variant of input.variants) {
+    if (variant.hourOffset === undefined) {
+      if (input.kind === 'publish_time') throw refusal(`"${variant.label}" needs an hour offset: how many hours it moves the publish hour.`)
+      continue
+    }
+    if (input.kind !== 'publish_time')
+      throw refusal(`Only a publish time experiment moves the hour; "${variant.label}" has an hour offset.`)
+    if (!Number.isInteger(variant.hourOffset) || Math.abs(variant.hourOffset) > 23)
+      throw refusal(`"${variant.label}" moves the hour by a whole number of hours, at most 23.`)
+  }
+  // The footer knows two orders (core/attribution.ts `descriptionFooter`); a key it does not know would reach
+  // every description of the experiment's episodes.
+  if (input.kind === 'description_format') {
+    for (const variant of input.variants) {
+      if (isDescriptionFormat(variant.key)) continue
+      throw refusal(
+        `"${variant.label}" is no description format; the footer puts either the ${DESCRIPTION_FORMATS.join(' or the ')} first.`
+      )
+    }
+  }
+  await assertDimensionApplies(ctx, persona, input.kind)
   const running = await ctx.db
     .query('experiments')
     .withIndex('by_persona_status', (q) => q.eq('personaId', persona._id).eq('status', 'running'))
@@ -349,6 +395,75 @@ export async function startExperiment(
     at: now,
   })
   return experimentId
+}
+
+/**
+ * Publish time and description format compare nothing for some personas, so
+ * an experiment on them is refused there, for the operator and the review
+ * alike (core/strategy.ts leaves the kind out by the same rule). Publish time
+ * moves only video platforms' hours; a description format orders a code and a
+ * link, which an X post never prints.
+ */
+async function assertDimensionApplies(ctx: Reader, persona: Doc<'personas'>, kind: ExperimentKind): Promise<void> {
+  if (kind !== 'publish_time' && kind !== 'description_format') return
+  if (!persona.formats.some((format) => format.platform !== 'x')) {
+    throw refusal(
+      `${persona.name} publishes only on X, which keeps its own hours and prints no footer, so a ${EXPERIMENT_KIND_LABELS[kind].toLowerCase()} test would compare nothing.`
+    )
+  }
+  if (kind !== 'description_format') return
+  const codes = await activeDiscountCodes(ctx, persona._id)
+  if (codes.length === 0)
+    throw refusal(`${persona.name} has no discount code in force, so a description format test would compare nothing.`)
+}
+
+/**
+ * Whether a dimension applies to the persona now, the same rule as
+ * `assertDimensionApplies` without the refusal, for the strategy review.
+ */
+export async function dimensionApplies(ctx: Reader, persona: Doc<'personas'>, kind: ExperimentKind): Promise<boolean> {
+  if (kind !== 'publish_time' && kind !== 'description_format') return true
+  if (!persona.formats.some((format) => format.platform !== 'x')) return false
+  if (kind !== 'description_format') return true
+  return (await activeDiscountCodes(ctx, persona._id)).length > 0
+}
+
+/**
+ * The persona's video formats after a decided publish time test: every
+ * platform but X moved by the winner's offset, kept within the day (core
+ * formats `publishHourFor`). The hours live on the formats, so the decision
+ * stores no default.
+ */
+function shiftedVideoHours(formats: Doc<'personas'>['formats'], offset: number): Doc<'personas'>['formats'] {
+  return formats.map((format) => ({ ...format, publishHour: publishHourFor(format, offset) }))
+}
+
+function joinAnd(parts: readonly string[]): string {
+  if (parts.length <= 1) return parts.join('')
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
+}
+
+/** The video platforms' new hours for the journal: "YouTube 13:00 (was 16:00) and TikTok 15:00 (was 18:00)". */
+function videoHoursChange(before: Doc<'personas'>['formats'], after: Doc<'personas'>['formats']): string {
+  return joinAnd(
+    after.flatMap((format) => {
+      if (format.platform === 'x') return []
+      const old = before.find((candidate) => candidate.platform === format.platform)
+      if (!old) throw new Error(`the ${format.platform} format appeared while its hour moved`)
+      const label = `${PLATFORM_LABELS[format.platform]} ${hourText(format.publishHour)}`
+      if (old.publishHour === format.publishHour) return [label]
+      return [`${label} (was ${hourText(old.publishHour)})`]
+    })
+  )
+}
+
+/** The video platforms' hours for the chat: "YouTube videos at 13:00 and TikTok videos at 15:00". */
+function videoHoursText(formats: Doc<'personas'>['formats']): string {
+  return joinAnd(
+    formats.flatMap((format) =>
+      format.platform === 'x' ? [] : [`${PLATFORM_LABELS[format.platform]} videos at ${hourText(format.publishHour)}`]
+    )
+  )
 }
 
 /**
@@ -468,20 +583,32 @@ export async function applyExperimentDecision(
     },
   })
 
-  const inForce: StoredDefault = {
-    kind: experiment.kind,
-    key: winner.key,
-    label: winner.label,
-    description: winner.description,
-    ...(winner.lengthFactor === undefined ? {} : { lengthFactor: winner.lengthFactor }),
-    experimentId: experiment._id,
-    since: now,
+  // A decided publish time moves the video formats' hours, their one home, and stores no default: the
+  // next publish time test then runs around the new hour.
+  const hoursBefore = persona.formats
+  let hoursAfter = persona.formats
+  if (experiment.kind === 'publish_time') {
+    if (winner.hourOffset === undefined)
+      throw new Error(`publish time variant "${winner.key}" of experiment ${experiment._id} has no hour offset`)
+    hoursAfter = shiftedVideoHours(persona.formats, winner.hourOffset)
+    await ctx.db.patch(persona._id, { formats: hoursAfter })
+  } else {
+    const inForce: StoredDefault = {
+      kind: experiment.kind,
+      key: winner.key,
+      label: winner.label,
+      description: winner.description,
+      ...(winner.lengthFactor === undefined ? {} : { lengthFactor: winner.lengthFactor }),
+      ...(winner.hourOffset === undefined ? {} : { hourOffset: winner.hourOffset }),
+      experimentId: experiment._id,
+      since: now,
+    }
+    // No strategy yet: an empty weight list reads as equal shares (shared `pillarWeights`).
+    const strategy = persona.strategy ?? { pillarWeights: [], defaults: [] }
+    await ctx.db.patch(persona._id, {
+      strategy: { ...strategy, defaults: [...strategy.defaults.filter((entry) => entry.kind !== experiment.kind), inForce] },
+    })
   }
-  // No strategy yet: an empty weight list reads as equal shares (shared `pillarWeights`).
-  const strategy = persona.strategy ?? { pillarWeights: [], defaults: [] }
-  await ctx.db.patch(persona._id, {
-    strategy: { ...strategy, defaults: [...strategy.defaults.filter((entry) => entry.kind !== experiment.kind), inForce] },
-  })
 
   const { stats, episodeIds } = await experimentMeasure(ctx, experiment)
   const confidence = actor === 'operator' ? 1 : decision.confidence
@@ -491,7 +618,7 @@ export async function applyExperimentDecision(
     kind: 'learning',
     text,
     dimension: experiment.kind,
-    evidence: { experimentId: experiment._id, episodeIds },
+    evidence: { experimentId: experiment._id, episodeIds, signalIds: [] },
     confidence,
     status: 'active',
     createdAt: now,
@@ -501,6 +628,8 @@ export async function applyExperimentDecision(
     .withIndex('by_persona_status', (q) => q.eq('personaId', persona._id).eq('status', 'active'))
     .collect()
   for (const memory of earlier) {
+    // Only an older learning on the same dimension gives way; a brief or a problem is no learning.
+    if (memory.kind !== 'learning') continue
     if (memory._id === learningId || memory.dimension !== experiment.kind) continue
     await ctx.db.patch(memory._id, { status: 'superseded', supersededBy: learningId })
   }
@@ -517,7 +646,10 @@ export async function applyExperimentDecision(
     personaId: persona._id,
     kind: 'experiment_decided',
     actor,
-    text: `"${winner.label}" is the default for ${EXPERIMENT_KIND_LABELS[experiment.kind].toLowerCase()} now.`,
+    text:
+      experiment.kind === 'publish_time'
+        ? `"${winner.label}" won. Video hours now: ${videoHoursChange(hoursBefore, hoursAfter)}.`
+        : `"${winner.label}" is the default for ${EXPERIMENT_KIND_LABELS[experiment.kind].toLowerCase()} now.`,
     reason: `"${experiment.name}" is decided. ${text}`,
     experimentId: experiment._id,
     episodeIds,
@@ -526,7 +658,12 @@ export async function applyExperimentDecision(
   })
 
   const lead = actor === 'operator' ? `you picked "${winner.label}".${note.trim() === '' ? '' : ` ${sentence(note)}`}` : sentence(note)
-  const from = winner.description.trim() === '' ? `follow "${winner.label}".` : sentence(lowerFirst(winner.description.trim()))
+  const from =
+    experiment.kind === 'publish_time'
+      ? `publish ${videoHoursText(hoursAfter)}.`
+      : winner.description.trim() === ''
+        ? `follow "${winner.label}".`
+        : sentence(lowerFirst(winner.description.trim()))
   await ctx.db.insert('messages', {
     personaId: persona._id,
     author: 'persona',
