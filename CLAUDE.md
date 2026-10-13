@@ -45,7 +45,7 @@ pnpm --filter @influstep/convex codegen   # regenerate src/_generated after an A
 - **One runner only.** The root `pnpm dev` also starts a runner. Two runners with the same name double-run jobs, so check `ps` for a second `tsx watch src/main.ts` before a smoke test.
 - **Crons by hand.** `npx convex run internal/schedule:writeDueScripts` writes tomorrow's scripts (and runs the last check); `npx convex run internal/schedule:morningSweep` writes each persona's brief and problem log. Read tables with `npx convex data <table> --order desc --limit N --format jsonl`.
 - **Refusals.** An error the operator should read is thrown with `refusal()` from `packages/convex/src/lib/errors.ts`, and the studio shows it through `errorMessage` in `apps/studio/src/lib/errors.ts`. A plain `Error` reaches the screen as raw "[CONVEX M(...)] Server Error" text.
-- **Where the build stands.** `docs/plan.md` "Progress" lists the slices done, the open questions for the operator and the slice 15 backlog. Update it with every slice.
+- **Where the build stands.** `docs/plan.md` "Progress" lists the slices done, the open questions for the operator and the slice 15 backlog. Update it with every slice. Slices 10 to 15 are built in the main session, without Workflow runs, at the operator's request.
 
 ## Branches
 
