@@ -29,6 +29,8 @@ import {
   POST_KINDS,
   POST_LENGTHS,
   PUBLICATION_STATUSES,
+  REPLY_ORIGINS,
+  REPLY_STATUSES,
   SIGNAL_SOURCES,
   SIGNAL_STATUSES,
   SPONSOR_SEGMENTS,
@@ -75,12 +77,49 @@ export const memoryStatusValidator = literals(MEMORY_STATUSES)
 export const operatorMemoryKindValidator = literals(OPERATOR_MEMORY_KINDS)
 export const assetKindValidator = literals(ASSET_KINDS)
 export const assetSourceValidator = literals(ASSET_SOURCES)
+export const replyOriginValidator = literals(REPLY_ORIGINS)
+export const replyStatusValidator = literals(REPLY_STATUSES)
 
-/** X's post cadence (shared `XCadence`). Ranges, and each kind and intent once, are checked by core/formats.ts. */
+/** The post a reply answers and its author, as the listener heard it (shared `HeardPost`). */
+export const replyTargetValidator = v.object({
+  text: v.string(),
+  url: v.string(),
+  postedAt: v.number(),
+  author: v.object({ handle: v.string(), name: v.string(), followers: v.number() }),
+})
+
+/** A post the listener heard (shared `HeardPost`), as the listen action hands it to the mutation that keeps it. */
+export const heardPostValidator = v.object({
+  origin: replyOriginValidator,
+  externalId: v.string(),
+  text: v.string(),
+  url: v.string(),
+  postedAt: v.number(),
+  author: v.object({ handle: v.string(), name: v.string(), followers: v.number() }),
+  pillar: v.union(v.string(), v.null()),
+})
+
+/** What the writer made of a heard post (core/replies.ts `WrittenReply`). */
+export const writtenReplyValidator = v.union(
+  v.object({ kind: v.literal('reply'), text: v.string() }),
+  v.object({ kind: v.literal('skip'), reason: v.string() })
+)
+
+/** What a sent reply brought back (shared `ReplyCounts`). */
+export const replyCountsValidator = v.object({
+  impressions: v.number(),
+  likes: v.number(),
+  replies: v.number(),
+  profileVisits: v.number(),
+  follows: v.number(),
+})
+
+/** X's post cadence and reply budget (shared `XCadence`). Ranges, and each kind and intent once, are checked by core/formats.ts. */
 export const xCadenceValidator = v.object({
   postsPerDay: v.number(),
   kinds: v.array(postKindValidator),
   intents: v.array(postIntentValidator),
+  repliesPerDay: v.number(),
 })
 
 /** A persona's format for one platform (shared `PlatformFormat`). Ranges, and cadence only on X, are checked by core/formats.ts. */

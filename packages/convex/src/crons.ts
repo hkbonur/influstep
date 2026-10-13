@@ -10,6 +10,9 @@ const crons = cronJobs()
 
 crons.interval('poll signals for every persona', { hours: 1 }, internal.internal.schedule.pollSignals, {})
 crons.interval('dispatch publications whose time has come', { minutes: 5 }, internal.internal.runner.dispatchDuePublications, {})
+// Engagement on X: listen every three hours; a reply that goes out on its own leaves one per persona per run, within the budget.
+crons.interval('listen on X for posts to answer', { hours: 3 }, internal.internal.schedule.listenOnX, {})
+crons.interval('send replies that go out on their own', { minutes: 5 }, internal.internal.replies.dispatchQueued, {})
 crons.daily('pull metrics and decide experiments', { hourUTC: 5, minuteUTC: 0 }, internal.internal.schedule.pullMetrics, {})
 crons.daily('read comments back as signals', { hourUTC: 6, minuteUTC: 0 }, internal.internal.schedule.pollComments, {})
 // After the comments are read, so the brief and the problem log see this morning's.

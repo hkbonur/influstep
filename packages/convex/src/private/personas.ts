@@ -14,6 +14,7 @@ import { openXChecklist } from '../core/checklist'
 import { createTrackedLink, reconcilePlatformDrop, scriptBeingWritten } from '../core/episodes'
 import { assertFormats, platformsOf } from '../core/formats'
 import { workingPersonaIds } from '../core/jobs'
+import { replySummary } from '../core/replies'
 import { requireWorkspace, workspaceOf } from '../core/workspace'
 import { enqueueJob } from '../jobs/queue'
 import { personaColorValidator, platformFormatValidator } from '../lib/validators'
@@ -159,6 +160,8 @@ export const get = query({
       working,
       bioLink,
       discountCodes,
+      // Engagement on X (core/replies.ts): the reply budget and what waits; null without X.
+      replies: await replySummary(ctx, persona, Date.now()),
     }
   },
 })

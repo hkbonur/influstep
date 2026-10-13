@@ -7,6 +7,7 @@ import {
   POST_INTENT_LABELS,
   PUBLICATION_STATUS_LABELS,
   POST_LENGTH_LABELS,
+  REPLY_STATUS_LABELS,
   SPONSOR_SEGMENT_LABELS,
   type EpisodeStatus,
   type JobStatus,
@@ -15,6 +16,7 @@ import {
   type PostKind,
   type PostLength,
   type PublicationStatus,
+  type ReplyStatus,
   type SponsorSegment,
   type StatusTint,
 } from '@influstep/shared'
@@ -64,6 +66,26 @@ export function PublicationStatusPill(props: { status: PublicationStatus }) {
       {PUBLICATION_STATUS_LABELS[props.status]}
     </Pill>
   )
+}
+
+/**
+ * A reply's status (DESIGN.md, Replies page): a draft waits on the operator
+ * like a publication draft, sending is the runner at work, sent is green and
+ * failed is red. Being written and going out on their own are quiet, and a
+ * reply the persona passed on is smoke.
+ */
+const REPLY_STATUS_TINTS: Record<ReplyStatus, StatusTint> = {
+  heard: 'fog',
+  draft: 'note-blue',
+  queued: 'fog',
+  sending: 'note-blue',
+  sent: 'field-green',
+  failed: 'signal-red',
+  skipped: 'smoke',
+}
+
+export function ReplyStatusPill(props: { status: ReplyStatus }) {
+  return <Pill tint={REPLY_STATUS_TINTS[props.status]}>{REPLY_STATUS_LABELS[props.status]}</Pill>
 }
 
 export function SponsorPill(props: { segment: SponsorSegment }) {

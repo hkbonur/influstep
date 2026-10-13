@@ -59,6 +59,7 @@ export const status = query({
           hasReal: platformHasRealAdapter(platform),
           needs: platform === 'youtube' ? ['YOUTUBE_API_KEY'] : [],
         })),
+        { name: 'engagement', real: 'X API recent search and reply counts', hasReal: false, needs: [] as string[] },
         { name: 'voice', real: 'ElevenLabs (runner)', hasReal: false, needs: ['ELEVENLABS_API_KEY'] },
         { name: 'avatar', real: 'HeyGen or Higgsfield (runner)', hasReal: false, needs: [] as string[] },
         { name: 'publisher', real: 'YouTube upload (runner)', hasReal: false, needs: [] as string[] },

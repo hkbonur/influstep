@@ -206,6 +206,7 @@ _Avoid_: note, info, knowledge.
 
 **Rule**:
 Something the writer must always or never do, from the operator ("never show a customer's real email address on screen"), in the chat ("remember to …", "remember: always …") or on the Memory page. A directive steers what the persona makes for a while and is withdrawn when it is done; a rule is a lasting constraint on how every script and post is written, kept until the operator forgets it. The writer never breaks one.
+A rule about whom the persona answers on X ("never reply to politics", "only reply to people building agents") is stored as a rule from the chat without "remember", and the writer passes on a post it covers unless the operator asks for that reply.
 _Avoid_: constraint, guideline, policy, directive (that is a focus for a while).
 
 **Asset**:
@@ -228,6 +229,24 @@ _Avoid_: status report, scorecard, progress note.
 The memory entry a decision or a review's change leaves. From a decision: on which dimension which variant beat which, on which metric, by how much and how surely, or the operator's reason when they decided. From a review: what the numbers showed and what the persona does since (the pillar weights, a platform's publish hour). The writer reads the persona's active learnings before every script and post. A newer learning on the same subject (a dimension, the pillars, one platform's hour) supersedes the older one.
 _Avoid_: insight, lesson, finding, takeaway.
 
+## Engagement
+
+**Reply**:
+A post on X the persona writes under someone else's post: the post it answers and its author, where that post came from (a mention, a reply under the persona's own post, or the listener's search), the reply's text, its status (being written, waiting for you, goes out on its own, sending, sent, failed, skipped), when it went out, and what it brought back (impressions, likes, replies, profile visits, follows), which the analyst reads for a week. A skipped reply keeps the reason: the writer passed on it, a rule covers the post, the post names the sponsor, the operator skipped it, or the draft went stale after a day. Influstep never likes, reposts or follows.
+_Avoid_: comment (that is a viewer's words under an episode, a signal), engagement (that is the whole practice), interaction, response.
+
+**Listener**:
+The researcher's sweep of X every three hours for posts worth answering: mentions of the persona and replies under its posts for two days, and posts in its pillars found by search for twelve hours, from authors with at least 1,000 followers, at most three per sweep. A post the persona already answered or passed on is never heard twice, and a post naming the sponsor is kept as skipped until the operator asks for a reply.
+_Avoid_: monitor, scraper, crawler, social listening.
+
+**Engaged first**:
+A post whose author reached the persona first: a mention or a reply under its post. Only such a reply may go out on its own, and only when the persona publishes on its own; a reply to a post the listener found by search waits for the operator, who posts it with one click per reply, never in a batch.
+_Avoid_: inbound, warm, organic.
+
+**Reply budget**:
+How many replies a persona sends a day on X, by hand and on its own together, 0 to 20 (5 by default), counted from local midnight. Zero turns the listener off for the persona. The operator sets it with the X post cadence; a post past it is refused until tomorrow or a higher budget.
+_Avoid_: quota, limit (fine casually), rate limit.
+
 ## Attribution
 
 **Tracked link**:
@@ -243,7 +262,7 @@ A Formstep event tied to a persona by UTM: a signup, a first published form, or 
 _Avoid_: sale, lead, goal (that is the workspace's goal, paying customers; PostHog's goals are conversions).
 
 **Report**:
-The one page per persona that answers "is this persona working?": followers, views, clicks, signups, and paid over time, the funnel from view to paid, and the open experiments. Kept to one screen; detail lives in the episode list.
+The one page per persona that answers "is this persona working?": followers, views, clicks, signups, and paid over time, the funnel from view to paid, the replies on X with the follows they brought, and the open experiments. Kept to one screen; detail lives in the episode list.
 _Avoid_: dashboard (fine casually), analytics (that is the data), insights.
 
 ## Operations
@@ -261,7 +280,7 @@ One unit of work a cron, an agent, or the operator queued: a kind, a payload, th
 _Avoid_: task (that is the chat request a job of its kind answers), action, run (an agent run is one job's execution), step.
 
 **Provider**:
-An external capability behind an interface with a mock and a real adapter: `llm`, `voice`, `avatar`, `publisher` (one per platform), `signals` (one per source), `analytics` (PostHog). The provider mode is chosen explicitly per deployment; nothing falls back to mock when a key is missing.
+An external capability behind an interface with a mock and a real adapter: `llm`, `voice`, `avatar`, `publisher` (one per platform), `signals` (one per source), `analytics` (PostHog), `engagement` (the listener's search and a reply's counts on X). The provider mode is chosen explicitly per deployment; nothing falls back to mock when a key is missing.
 _Avoid_: integration, service, plugin, connector.
 
 **Plan**:

@@ -96,6 +96,7 @@ import {
   type StoredBeat,
 } from '../lib/validators'
 import { applyEvent, type EpisodeContext } from './data'
+import { measureReplies } from './replies'
 
 /**
  * The five agent roles as actions. Each reads through internal queries, calls
@@ -712,7 +713,10 @@ export const livePublications = internalQuery({
 
 export const pullMetrics = internalAction({
   args: { personaId: v.string() },
-  handler: async (ctx, args): Promise<{ snapshots: number; conversions: number; redemptions: number; measured: number }> => {
+  handler: async (
+    ctx,
+    args
+  ): Promise<{ snapshots: number; conversions: number; redemptions: number; measured: number; replies: number }> => {
     const personaId = args.personaId as Id<'personas'>
     const { persona } = await ctx.runQuery(internal.internal.data.getPersona, { personaId })
     const publications = await ctx.runQuery(internal.internal.agents.livePublications, { personaId })
@@ -784,8 +788,9 @@ export const pullMetrics = internalAction({
       }
     }
     const measured = await ctx.runMutation(internal.internal.agents.measureEpisodes, { personaId })
+    const replies = await measureReplies(ctx, personaId)
     await ctx.runAction(internal.internal.agents.evaluateExperiments, { personaId })
-    return { snapshots, conversions, redemptions, measured }
+    return { snapshots, conversions, redemptions, measured, replies }
   },
 })
 

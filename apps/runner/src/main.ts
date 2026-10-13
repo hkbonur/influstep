@@ -2,7 +2,7 @@ import { backend } from './backend'
 import { config, providersMode } from './config'
 import { failureOf } from './failure'
 import { produce } from './produce'
-import { publish } from './publish'
+import { postReply, publish } from './publish'
 import { openBrowser } from './record'
 
 /**
@@ -30,6 +30,9 @@ async function handle(job: NonNullable<Awaited<ReturnType<typeof backend.claim>>
       await backend.complete(job.id, result)
     } else if (job.kind === 'publish') {
       const result = await publish(job)
+      await backend.complete(job.id, result)
+    } else if (job.kind === 'post_reply') {
+      const result = await postReply(job)
       await backend.complete(job.id, result)
     } else {
       await openBrowser(job.payload.url)

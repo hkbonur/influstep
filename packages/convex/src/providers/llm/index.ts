@@ -13,6 +13,8 @@ export type {
   ScriptDraft,
   PostBrief,
   PostDraft,
+  ReplyBrief,
+  ReplyDraft,
   VoiceBrief,
   VoiceDraft,
   ChatTurn,

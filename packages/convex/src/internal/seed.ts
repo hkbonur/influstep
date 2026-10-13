@@ -1597,6 +1597,46 @@ export const write = internalMutation({
     for (const example of await topOriginalsOf(ctx, adaId, 5)) await ctx.db.patch(example._id, { example: true })
     await ctx.db.patch(adaId, { voice: { ...ADA_VOICE_TEXT, ...voiceStats(adaHistory), learnedAt: now - 3 * 86_400_000 } })
 
+    // Ada answers people on X (docs/plan.md, slice 11). She was told whom not to answer, and her replies stand
+    // where a week of listening leaves them: found posts and a mention waiting for the operator (she does not
+    // publish on her own), replies sent this week with what they brought back, one of them today, and two
+    // posts passed on, one naming the sponsor and one her rule covers.
+    const replyRule = await rememberFromOperator(
+      ctx,
+      { _id: adaId },
+      { kind: 'rule', text: 'never reply to politics', now: now - 5 * DAY_MS }
+    )
+    if (replyRule.status !== 'stored') throw new Error(`the seeded reply rule was not stored: ${replyRule.status}`)
+    for (const reply of SEEDED_REPLIES) {
+      const heardAt = now - reply.hoursAgo * HOUR_MS
+      const sent = reply.sent
+      await ctx.db.insert('replies', {
+        personaId: adaId,
+        origin: reply.origin,
+        inReplyTo: `seed-x-post-${reply.key}`,
+        target: {
+          text: reply.post,
+          url: `https://x.com/${reply.author.handle}/status/seed-x-post-${reply.key}`,
+          postedAt: heardAt - HOUR_MS,
+          author: reply.author,
+        },
+        pillar: reply.pillar,
+        status: reply.status,
+        text: reply.text,
+        skipReason: reply.skipReason,
+        operatorAsked: false,
+        heardAt,
+        writtenAt: heardAt + 5 * 60_000,
+        dispatchedAt: sent ? heardAt + HOUR_MS : undefined,
+        sentAt: sent ? heardAt + HOUR_MS + 60_000 : undefined,
+        externalId: sent ? `seed-ada-reply-${reply.key}` : undefined,
+        url: sent ? `https://x.com/ada.automates/status/seed-ada-reply-${reply.key}` : undefined,
+        counts: sent ?? undefined,
+        measuredAt: sent ? now - 2 * HOUR_MS : undefined,
+        mock: true,
+      })
+    }
+
     // Max: two ideas on the next two days. Tomorrow's is written at once, so the writer has work on first
     // run whatever today is; the other waits for its script day.
     const max = await ctx.db.get(maxId)
@@ -1628,6 +1668,125 @@ export const write = internalMutation({
   },
 })
 
+const SEEDED_REPLY_AUTHORS = {
+  dana: { handle: 'dana_automates', name: 'Dana Ruiz', followers: 12_400 },
+  kai: { handle: 'buildwithkai', name: 'Kai Lund', followers: 25_800 },
+  mira: { handle: 'mira_ships', name: 'Mira Chen', followers: 5_400 },
+  joe: { handle: 'opsjoe', name: 'Joe Park', followers: 3_100 },
+  tom: { handle: 'tomtries', name: 'Tom Ek', followers: 410 },
+}
+
+/** Ada's replies on X, by where they stand; `sent` holds what a sent one brought back. */
+const SEEDED_REPLIES: {
+  key: string
+  origin: 'mention' | 'reply' | 'search'
+  author: { handle: string; name: string; followers: number }
+  post: string
+  pillar: string | undefined
+  hoursAgo: number
+  status: 'draft' | 'sent' | 'skipped'
+  text: string
+  skipReason: string | undefined
+  sent: { impressions: number; likes: number; replies: number; profileVisits: number; follows: number } | null
+}[] = [
+  {
+    key: '1',
+    origin: 'search',
+    author: SEEDED_REPLY_AUTHORS.kai,
+    post: 'Unpopular opinion: most n8n tutorials skip the only hard part, the error path.',
+    pillar: 'n8n tutorials',
+    hoursAgo: 1,
+    status: 'draft',
+    text: 'Agreed. Set an error workflow before the first real run, and make it post to the channel someone actually reads.',
+    skipReason: undefined,
+    sent: null,
+  },
+  {
+    key: '2',
+    origin: 'search',
+    author: SEEDED_REPLY_AUTHORS.dana,
+    post: "What's your go-to setup for AI agent workflows? Mine keeps breaking on Mondays.",
+    pillar: 'AI agent workflows',
+    hoursAgo: 2,
+    status: 'draft',
+    text: 'Mondays break because the weekend queue lands at once. Cap the batch size and let the agent work through it in order.',
+    skipReason: undefined,
+    sent: null,
+  },
+  {
+    key: '3',
+    origin: 'mention',
+    author: SEEDED_REPLY_AUTHORS.tom,
+    post: '@ada.automates what do you check first when a webhook stops firing overnight?',
+    pillar: undefined,
+    hoursAgo: 3,
+    status: 'draft',
+    text: 'The execution log, before anything else. Nine times out of ten the webhook fired and a later step failed quietly.',
+    skipReason: undefined,
+    sent: null,
+  },
+  {
+    key: '4',
+    origin: 'reply',
+    author: SEEDED_REPLY_AUTHORS.mira,
+    post: 'Tried your retry setup, and it ran twice. Any idea why?',
+    pillar: undefined,
+    hoursAgo: 4,
+    status: 'sent',
+    text: 'The trigger retried too. Turn retries off on the trigger and keep them on the one step that calls out.',
+    skipReason: undefined,
+    sent: { impressions: 1_840, likes: 41, replies: 6, profileVisits: 38, follows: 7 },
+  },
+  {
+    key: '5',
+    origin: 'search',
+    author: SEEDED_REPLY_AUTHORS.kai,
+    post: 'Is n8n still worth learning, or is it all agents now?',
+    pillar: 'n8n tutorials',
+    hoursAgo: 50,
+    status: 'sent',
+    text: 'Both. The agent decides, the workflow does the boring part reliably. Learn the workflow first.',
+    skipReason: undefined,
+    sent: { impressions: 4_120, likes: 96, replies: 14, profileVisits: 81, follows: 12 },
+  },
+  {
+    key: '6',
+    origin: 'search',
+    author: SEEDED_REPLY_AUTHORS.joe,
+    post: 'Three weeks into automation and I finally get why people name every step.',
+    pillar: 'Automation fails',
+    hoursAgo: 98,
+    status: 'sent',
+    text: 'Wait until you rename one six months in and find out which other flow read it by name.',
+    skipReason: undefined,
+    sent: { impressions: 620, likes: 9, replies: 1, profileVisits: 4, follows: 0 },
+  },
+  {
+    key: '7',
+    origin: 'search',
+    author: SEEDED_REPLY_AUTHORS.mira,
+    post: 'Has anyone tried Formstep for client intake? Looking for something my flow can send.',
+    pillar: 'AI agent workflows',
+    hoursAgo: 6,
+    status: 'skipped',
+    text: '',
+    skipReason: 'It names Formstep; the persona answers about its sponsor only when you ask.',
+    sent: null,
+  },
+  {
+    key: '8',
+    origin: 'search',
+    author: SEEDED_REPLY_AUTHORS.kai,
+    post: 'Politics aside, the new AI bill could change automation for small shops overnight.',
+    pillar: 'Automation fails',
+    hoursAgo: 9,
+    status: 'skipped',
+    text: '',
+    skipReason: 'My rule "Never reply to politics." covers this post.',
+    sent: null,
+  },
+]
+
 /** Where a seeded publication lives on its platform. */
 function mockPublicationUrl(platform: Platform, externalId: string): string {
   switch (platform) {
@@ -1656,6 +1815,7 @@ const TABLES = {
   links: true,
   linkClicks: true,
   conversions: true,
+  replies: true,
   discountCodes: true,
   signals: true,
   experiments: true,

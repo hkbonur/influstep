@@ -7,6 +7,7 @@ import {
   effectiveStyle,
   hookOf,
   lengthProblem,
+  replyProblems,
   scriptProblems,
   type CatalogVariant,
   type Delivery,
@@ -16,7 +17,7 @@ import {
 } from '@influstep/shared'
 import { describe, expect, it } from 'vitest'
 import { mockLlm } from './mock'
-import type { ScriptBrief } from './types'
+import type { ReplyBrief, ScriptBrief } from './types'
 
 const SPONSOR = 'Formstep'
 
@@ -164,5 +165,62 @@ describe('the mock writer and the research', () => {
       })
     )
     expect(withResearch).toEqual(without)
+  })
+})
+
+describe('the mock reply writer', () => {
+  function replyBrief(overrides: Partial<ReplyBrief> = {}): ReplyBrief {
+    return {
+      persona: {
+        name: 'Ada Automates',
+        handle: 'ada.automates',
+        niche: 'automation for small teams',
+        tone: 'plain',
+        bible: '',
+        pillars: ['n8n tutorials'],
+      },
+      origin: 'search',
+      post: {
+        text: 'Politics aside, the new AI bill could change n8n for small shops.',
+        author: { handle: 'kai', name: 'Kai', followers: 25_800 },
+      },
+      pillar: 'n8n tutorials',
+      sponsorName: SPONSOR,
+      operatorAsked: false,
+      memory: { goal: 'Paying Formstep customers', standing: null, rules: ['Never reply to politics.'], facts: [], learnings: [] },
+      directives: [],
+      voice: null,
+      partLimit: 280,
+      problems: [],
+      ...overrides,
+    }
+  }
+
+  it('passes on a post its rule covers, and answers it when the operator asks', async () => {
+    expect(await mockLlm.writeReply(replyBrief())).toEqual({ kind: 'skip', reason: 'My rule "Never reply to politics." covers this post.' })
+    const asked = await mockLlm.writeReply(replyBrief({ operatorAsked: true }))
+    expect(asked.kind).toBe('reply')
+  })
+
+  it("answers a mention by name, within X's rules, and the sponsor only when the operator asked", async () => {
+    const mention = await mockLlm.writeReply(
+      replyBrief({
+        origin: 'mention',
+        post: { text: '@ada.automates which form tool?', author: { handle: 'tom', name: 'Tom', followers: 410 } },
+      })
+    )
+    if (mention.kind !== 'reply') throw new Error('the mention was passed on')
+    expect(mention.text).toMatch(/^Thanks for the mention, @tom!/)
+    expect(replyProblems(mention.text, { sponsorName: SPONSOR, sponsorAllowed: false })).toEqual([])
+
+    const sponsored = replyBrief({
+      post: { text: 'Has anyone tried Formstep?', author: { handle: 'mira', name: 'Mira', followers: 5_400 } },
+    })
+    const plain = await mockLlm.writeReply(sponsored)
+    if (plain.kind !== 'reply') throw new Error('the post was passed on')
+    expect(plain.text).not.toContain(SPONSOR)
+    const answered = await mockLlm.writeReply({ ...sponsored, operatorAsked: true })
+    if (answered.kind !== 'reply') throw new Error('the asked post was passed on')
+    expect(answered.text).toContain(`${SPONSOR} does that`)
   })
 })

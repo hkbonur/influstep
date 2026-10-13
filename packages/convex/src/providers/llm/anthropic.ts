@@ -20,6 +20,7 @@ import {
   formatLength,
   type ChatIntent,
   type Habit,
+  type ReplyOrigin,
 } from '@influstep/shared'
 import type { WriterMemory } from '../../core/memory'
 import { requireEnv } from '../../lib/env'
@@ -33,6 +34,8 @@ import {
   type PlanRow,
   type PostBrief,
   type PostDraft,
+  type ReplyBrief,
+  type ReplyDraft,
   type ScriptBrief,
   type ScriptDraft,
   type TaskReportArgs,
@@ -56,6 +59,13 @@ const postDraftSchema = z.object({
   title: z.string(),
   parts: z.array(z.string()),
   cardTitle: z.string(),
+})
+
+// One flat shape: structured outputs take no union. A skip has a reason and an empty text, a reply the reverse.
+const replyDraftSchema = z.object({
+  skip: z.boolean(),
+  reason: z.string(),
+  text: z.string(),
 })
 
 // Structured outputs drop array bounds from the schema they send, so the trait count is said in the prompt and checked after parsing.
@@ -160,6 +170,43 @@ export const anthropicLlm: LlmProvider = {
     const { title, parts, cardTitle } = response.parsed_output
     if (brief.kind === 'image') return { title, post: { parts, cardTitle } }
     return { title, post: { parts } }
+  },
+  async writeReply(brief: ReplyBrief): Promise<ReplyDraft> {
+    const response = await client().messages.parse({
+      model: MODEL,
+      max_tokens: 4000,
+      output_config: { effort: 'low', format: zodOutputFormat(replyDraftSchema) },
+      system: [{ type: 'text', text: postSystem(brief.persona), cache_control: { type: 'ephemeral' } }],
+      messages: [
+        {
+          role: 'user',
+          content: [
+            `Write a reply on X to this post by ${brief.post.author.name} (@${brief.post.author.handle}, ${brief.post.author.followers} followers). ${ORIGIN_CONTEXT[brief.origin]}${brief.pillar === null ? '' : ` Your pillar it touches: ${brief.pillar}.`}`,
+            `<post>\n${brief.post.text}\n</post>`,
+            voiceInstruction(brief),
+            `Persona bible:\n${brief.persona.bible}`,
+            memoryInstruction(brief.memory),
+            brief.directives.length > 0 ? `Standing directives from the operator:\n- ${brief.directives.join('\n- ')}` : '',
+            replySponsorInstruction(brief),
+            brief.operatorAsked
+              ? 'Your operator asked you to answer this post, so answer it: skip is false.'
+              : 'Pass on the post (skip true, with a one-sentence reason in your own words) when one of your rules says not to answer it, or when you have nothing worth adding. Otherwise skip is false and the reason is empty.',
+            `The reply adds something of your own: an answer, a tip, a question back. One part of at most ${brief.partLimit} characters; X counts a link as 23, but put no link in it. No hashtags, no call to follow, no self-promotion.`,
+            brief.problems.length > 0 ? `Your last draft broke these rules. Fix every one:\n- ${brief.problems.join('\n- ')}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n\n'),
+        },
+      ],
+    })
+    if (response.stop_reason === 'refusal') throw new Error('The model declined to write this reply')
+    if (!response.parsed_output) throw new Error('The model returned no parseable reply')
+    const { skip, reason, text } = response.parsed_output
+    if (skip && !brief.operatorAsked) {
+      if (reason.trim() === '') throw new Error('The model passed on the post without a reason')
+      return { kind: 'skip', reason: reason.trim() }
+    }
+    return { kind: 'reply', text: text.trim() }
   },
   async learnVoice(brief: VoiceBrief): Promise<VoiceDraft> {
     const { stats } = brief
@@ -275,7 +322,7 @@ const INTERPRET_SYSTEM = [
   '- move: move one planned episode to another day of its week. to is that weekday.',
   '- drop: drop one planned episode.',
   '- task: a report one agent writes. research_brief is research on a subject; comment_digest is what people say in the comments; analytics_summary is how the persona is doing in numbers. topic only when the message names a subject.',
-  '- remember: something the operator wants the persona to keep knowing ("remember that viewers hate the word guys", "keep in mind most viewers self-host"). memory is rule when it says what to always or never do, else fact; text is what to remember in the operator\'s words, without "remember that". A standing instruction for the next scripts without "remember" is a directive.',
+  '- remember: something the operator wants the persona to keep knowing ("remember that viewers hate the word guys", "keep in mind most viewers self-host"). memory is rule when it says what to always or never do, else fact; text is what to remember in the operator\'s words, without "remember that". A standing instruction for the next scripts without "remember" is a directive. A rule about whom or what the persona replies to on X ("never reply to politics", "only reply to people building agents") is remember with memory rule even without "remember"; text is the rule as written.',
   '- give_code: a discount code for the descriptions. code is the code as written; offer is what it gives ("20% off Pro for 3 months"), or null when the message does not say; target only when the message ties the code to an episode.',
   `Targets: when the message names an episode of the plan, set target.episodeId to that row's id and nothing else. "The next video" is next: true. When nothing in the plan fits, give the weekday and a keyword as the message says them, so the persona can say it found no such episode. Weekdays are ${WEEKDAYS.join(', ')}.`,
   'Read the earlier chat for what a short follow-up refers to ("the second one", "yes, that one").',
@@ -468,7 +515,7 @@ function postShapeInstruction(brief: PostBrief): string {
 }
 
 /** With a learned voice, the account's language and style; without one, English in the persona's tone, as before a takeover. */
-function voiceInstruction(brief: PostBrief): string {
+function voiceInstruction(brief: Pick<PostBrief, 'voice' | 'persona'>): string {
   const voice = brief.voice
   if (!voice) return `Write in English. Tone: ${brief.persona.tone}.`
   return [
@@ -495,6 +542,19 @@ function samplesBlock(samples: AccountPostSample[]): string {
   return samples
     .map((sample) => `<post likes="${sample.likes}" reposts="${sample.reposts}">\n${sample.parts.join('\n---\n')}\n</post>`)
     .join('\n')
+}
+
+/** Where the post came from, as the writer reads it: whether its author knows the persona. */
+const ORIGIN_CONTEXT: Record<ReplyOrigin, string> = {
+  mention: 'It mentions you.',
+  reply: 'It replies to one of your posts.',
+  search: 'You found it searching your pillars; its author does not know you yet.',
+}
+
+/** A reply leaves the sponsor out unless the operator asked for it; then it may answer what the post asks about it. */
+function replySponsorInstruction(brief: ReplyBrief): string {
+  if (!brief.operatorAsked) return `Leave ${brief.sponsorName} out of the reply.`
+  return `Where the post asks about ${brief.sponsorName}, answer in your own words (forms that workflows and AI agents send to one customer; the answers come back into the flow). No link and no discount code.`
 }
 
 /**

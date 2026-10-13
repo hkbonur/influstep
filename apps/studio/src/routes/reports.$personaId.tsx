@@ -3,13 +3,16 @@ import type { Id } from '@influstep/convex/_generated/dataModel'
 import { CONVERSION_KIND_LABELS, EXPERIMENT_KIND_LABELS, METRIC_LABELS, PLATFORM_LABELS, VALUE_LABEL } from '@influstep/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useQuery } from 'convex/react'
+import type { FunctionReturnType } from 'convex/server'
 import { Funnel, MetricStrip, Trend } from '@/components/charts'
 import { PlatformGlyphs, SponsorPill, StatusPill } from '@/components/status'
 import { AttributionNote, Empty, Eyebrow, LinkButton, MockNote, Mono, PageHeader, Pill, Skeleton } from '@/components/ui'
 import { cn } from '@/lib/cn'
-import { formatCount, formatDay, formatMoney, formatPercent } from '@/lib/format'
+import { formatCount, formatDay, formatMoney, formatNumber, formatPercent, plural } from '@/lib/format'
 
 export const Route = createFileRoute('/reports/$personaId')({ component: ReportPage })
+
+type Engagement = NonNullable<NonNullable<FunctionReturnType<typeof api.private.report.forPersona>>['engagement']>
 
 function ReportPage() {
   const params = Route.useParams()
@@ -118,6 +121,8 @@ function ReportPage() {
               </table>
             </div>
           </section>
+
+          {report.engagement && <EngagementBlock personaId={personaId} engagement={report.engagement} windowDays={report.windowDays} />}
 
           <section>
             <Eyebrow className="mb-3">Top episodes</Eyebrow>
@@ -254,5 +259,86 @@ function ReportPage() {
         </div>
       )}
     </>
+  )
+}
+
+/**
+ * What the persona's replies on X brought back in the window (DESIGN.md,
+ * Report): replies sent, what the measured ones were seen and followed for,
+ * follows per measured reply, and the replies that brought the most
+ * followers. A persona without X has no block.
+ */
+function EngagementBlock(props: { personaId: Id<'personas'>; engagement: Engagement; windowDays: number }) {
+  const engagement = props.engagement
+  const repliesLink = (
+    <Link
+      to="/personas/$personaId/replies"
+      params={{ personaId: props.personaId }}
+      className="underline decoration-fog hover:decoration-ink"
+    >
+      replies page
+    </Link>
+  )
+  return (
+    <section>
+      <Eyebrow className="mb-3">Engagement on X</Eyebrow>
+      {engagement.sent === 0 && (
+        <p className="text-ash">
+          No reply sent in the last {props.windowDays} days. Drafts wait on the {repliesLink}.
+        </p>
+      )}
+      {engagement.sent > 0 && (
+        <div className="space-y-4">
+          <MetricStrip
+            items={[
+              {
+                label: 'Replies sent',
+                value: formatCount(engagement.sent),
+                // The numbers after it are over the replies the analyst has read, which lag the newest ones.
+                note: engagement.measured < engagement.sent ? `${engagement.measured} measured` : undefined,
+              },
+              { label: 'Seen', value: formatCount(engagement.impressions) },
+              { label: 'Likes', value: formatCount(engagement.likes) },
+              { label: 'Profile visits', value: formatCount(engagement.profileVisits) },
+              { label: METRIC_LABELS.follows, value: formatCount(engagement.follows) },
+              { label: 'Follows per reply', value: formatNumber(Math.round(engagement.followsPerReply * 10) / 10) },
+            ]}
+          />
+          <div>
+            <h3 className="mb-2 text-xs font-medium text-graphite">Replies that brought followers</h3>
+            {engagement.best.length === 0 && <p className="text-ash">No reply has brought a follower yet.</p>}
+            {engagement.best.length > 0 && (
+              <ol className="divide-y divide-mist border-y border-mist">
+                {engagement.best.map((reply) => (
+                  <li key={reply._id} className="grid grid-cols-[1fr_auto] items-baseline gap-x-5 py-2 text-sm">
+                    <div className="min-w-0">
+                      <p className="line-clamp-2">{reply.text}</p>
+                      <p className="mt-0.5 truncate text-xs text-ash">
+                        to <Mono>@{reply.author}</Mono>: {reply.post}
+                      </p>
+                    </div>
+                    <span className="tabular text-right">
+                      {reply.url ? (
+                        <a href={reply.url} target="_blank" rel="noreferrer" className="hover:underline">
+                          {reply.follows} {plural(reply.follows, 'follow', 'follows')}
+                        </a>
+                      ) : (
+                        <>
+                          {reply.follows} {plural(reply.follows, 'follow', 'follows')}
+                        </>
+                      )}
+                      <span className="block text-xs text-ash">
+                        {reply.likes} {plural(reply.likes, 'like', 'likes')}
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+          <MockNote when={engagement.mock} />
+        </div>
+      )}
+    </section>
   )
 }

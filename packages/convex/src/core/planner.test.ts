@@ -120,7 +120,7 @@ describe('planPostSlots', () => {
     delivery: 'screen_only',
     hookNote: '',
     publishHour: 9,
-    cadence: { postsPerDay: 1, kinds: ['text'], intents: ['teach'] },
+    cadence: { postsPerDay: 1, kinds: ['text'], intents: ['teach'], repliesPerDay: 5 },
   }
 
   it('shares the post slots out by the persona’s weights, counting its recent posts', () => {

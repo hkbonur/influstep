@@ -35,7 +35,7 @@ function xFormat(kinds: PostKind[]): PlatformFormat {
     delivery: 'talking_head',
     hookNote: 'Put the point in the first line.',
     publishHour: 9,
-    cadence: { postsPerDay: 2, kinds, intents: [...POST_INTENTS] },
+    cadence: { postsPerDay: 2, kinds, intents: [...POST_INTENTS], repliesPerDay: 5 },
   }
 }
 

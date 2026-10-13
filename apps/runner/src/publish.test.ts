@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PublishPayload } from '@influstep/shared'
-import { publish } from './publish'
+import { postReply, publish } from './publish'
 
 const POST: PublishPayload = { kind: 'post', publicationId: 'pub-post-1', platform: 'x', parts: ['One line.'], scheduledAt: 0 }
 const VIDEO: PublishPayload = {
@@ -36,5 +36,27 @@ describe('publish to X', () => {
     for (const payload of [POST, VIDEO]) {
       await expect(publish({ id: 'job-1', payload })).rejects.toThrow('X publishing needs X_OAUTH; the X adapter is not built yet.')
     }
+  })
+})
+
+describe('post a reply on X', () => {
+  const REPLY = { replyId: 'reply-1', inReplyTo: '1849', text: 'Cap the retries and log the last one.' }
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('reports a mock reply of its own, the same one for a retried job', async () => {
+    vi.stubEnv('PROVIDERS_MODE', 'mock')
+    const result = await postReply({ id: 'job-1', payload: REPLY })
+    expect(result).toMatchObject({ externalId: expect.stringMatching(/^x-mock-[0-9a-f]{8}$/), mock: true })
+    expect((await postReply({ id: 'job-2', payload: REPLY })).externalId).toBe(result.externalId)
+    const post = await publish({ id: 'job-3', payload: { ...POST, publicationId: REPLY.replyId } })
+    expect(post.externalId).not.toBe(result.externalId)
+  })
+
+  it('refuses in real mode like a post', async () => {
+    vi.stubEnv('PROVIDERS_MODE', 'real')
+    await expect(postReply({ id: 'job-1', payload: REPLY })).rejects.toThrow('X publishing needs X_OAUTH; the X adapter is not built yet.')
   })
 })

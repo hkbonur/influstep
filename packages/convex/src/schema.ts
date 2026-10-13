@@ -35,6 +35,10 @@ import {
   postLengthValidator,
   publicationStatusValidator,
   renderValidator,
+  replyCountsValidator,
+  replyOriginValidator,
+  replyStatusValidator,
+  replyTargetValidator,
   shotPlanValidator,
   shotValidator,
   signalSourceValidator,
@@ -408,6 +412,42 @@ export default defineSchema({
   })
     .index('by_persona', ['personaId'])
     .index('by_episode', ['episodeId']),
+
+  // Engagement on X (shared replies.ts): one row per post the listener heard and the persona answered or passed
+  // on, the engagement row. A reply to someone who engaged first may go out on its own; a reply to a post the
+  // listener found waits as a draft until the operator posts it, one click per reply. Never deleted.
+  replies: defineTable({
+    personaId: v.id('personas'),
+    origin: replyOriginValidator,
+    // The X id of the post it answers; one row per post per persona, so nothing is answered twice.
+    inReplyTo: v.string(),
+    target: replyTargetValidator,
+    // The pillar a search matched the post on; absent on a mention or a reply.
+    pillar: v.optional(v.string()),
+    status: replyStatusValidator,
+    // The reply as written, then as the operator edited it; empty until the writer writes it, and on a post passed on.
+    text: v.string(),
+    // Why it was passed on: the writer's reason, the rule it broke, the sponsor filter, a stale draft or the operator.
+    skipReason: v.optional(v.string()),
+    // The operator asked for this reply (Write a reply on a skipped post), so it may name the sponsor.
+    operatorAsked: v.boolean(),
+    error: v.optional(v.string()),
+    heardAt: v.number(),
+    writtenAt: v.optional(v.number()),
+    // When it was handed to the runner: the reply budget counts these per local day.
+    dispatchedAt: v.optional(v.number()),
+    sentAt: v.optional(v.number()),
+    externalId: v.optional(v.string()),
+    url: v.optional(v.string()),
+    // The latest numbers the analyst read, while the reply is younger than REPLY_MEASURE_MS.
+    counts: v.optional(replyCountsValidator),
+    measuredAt: v.optional(v.number()),
+    mock: v.boolean(),
+  })
+    .index('by_persona_status', ['personaId', 'status'])
+    .index('by_persona_target', ['personaId', 'inReplyTo'])
+    .index('by_persona_dispatched', ['personaId', 'dispatchedAt'])
+    .index('by_status_heard', ['status', 'heardAt']),
 
   directives: defineTable({
     personaId: v.id('personas'),

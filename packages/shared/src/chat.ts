@@ -4,6 +4,7 @@ import type { EpisodeKind } from './episode-kinds'
 import type { JobKind } from './jobs'
 import { OPERATOR_MEMORY_KINDS } from './memory'
 import { normalizeDiscountCode } from './metrics'
+import { REPLY_RULE } from './replies'
 
 /**
  * What an operator's chat message asks for (docs/plan.md, slices 7 and 10).
@@ -258,6 +259,23 @@ function parseRemember(text: string): ChatIntent | null {
   return { kind: 'remember', memory: RULE_OPENING.test(rest) ? 'rule' : 'fact', text: rest }
 }
 
+/**
+ * "Never reply to politics", "only reply to people building agents": a rule
+ * about whom the persona answers on X (shared `REPLY_RULE`) is remembered as
+ * a rule without "remember", since the writer reads it before every reply,
+ * where a directive only reaches scripts and posts.
+ */
+function parseReplyRule(text: string): ChatIntent | null {
+  const rule = text
+    .replace(POLITE_OPENING, '')
+    .replace(/[.!]+$/, '')
+    .replace(POLITE_ENDING, '')
+    .replace(/[.!]+$/, '')
+    .trim()
+  if (!REPLY_RULE.test(rule)) return null
+  return { kind: 'remember', memory: 'rule', text: rule }
+}
+
 function parseTask(text: string): ChatIntent | null {
   const brief = RESEARCH_BRIEF.exec(text) ?? RESEARCH_ON.exec(text)
   if (brief) {
@@ -292,18 +310,18 @@ function parsePlanChange(text: string): ChatIntent | null {
 
 /**
  * Reads a message the way the mock provider does. The rules, first match
- * wins: something to remember, a code to use, a task named in so many
- * words, a change to the plan, a directive (shared `readsAsDirective`), then
- * a task named by a bare word
- * ("comments", "analytics", "summary"), which comes after directives so
- * "stop replying to comments" stays a directive. Everything else is
- * conversation. Weekdays are named, never "today" or "tomorrow". Politeness
+ * wins: something to remember, a rule about whom to reply to, a code to use,
+ * a task named in so many words, a change to the plan, a directive (shared
+ * `readsAsDirective`), then a task named by a bare word ("comments",
+ * "analytics", "summary"), which comes after directives so "stop saying
+ * guys in the comments" stays a directive. Everything else is conversation. Weekdays are named, never "today" or "tomorrow". Politeness
  * at either end ("can you", "please") is read past.
  */
 export function parseChatIntent(text: string): ChatIntent {
   const original = text.trim().replace(/\s+/g, ' ')
   const request = clean(clean(original.replace(POLITE_OPENING, '')).replace(POLITE_ENDING, ''))
-  const matched = parseRemember(original) ?? parseGiveCode(request) ?? parseTask(request) ?? parsePlanChange(request)
+  const matched =
+    parseRemember(original) ?? parseReplyRule(original) ?? parseGiveCode(request) ?? parseTask(request) ?? parsePlanChange(request)
   if (matched) return matched
   if (readsAsDirective(original)) return { kind: 'directive', text: original }
   if (COMMENTS_WORD.test(request)) return { kind: 'task', task: 'comment_digest' }

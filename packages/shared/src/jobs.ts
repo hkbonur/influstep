@@ -52,6 +52,10 @@ export const JOB_KINDS = {
   open_browser: { role: 'producer', runsOn: 'runner' },
   import_x_history: { role: 'researcher', runsOn: 'backend' },
   learn_voice: { role: 'analyst', runsOn: 'backend' },
+  // Engagement on X (shared replies.ts): the listener's sweep, the writer's replies, and the one that sends a reply.
+  listen_x: { role: 'researcher', runsOn: 'backend' },
+  write_replies: { role: 'writer', runsOn: 'backend' },
+  post_reply: { role: 'publisher', runsOn: 'runner' },
   // Tasks the operator gives a persona in its chat (shared CHAT_TASKS): the role that owns the data answers there.
   research_brief: { role: 'researcher', runsOn: 'backend' },
   comment_digest: { role: 'publisher', runsOn: 'backend' },
@@ -76,6 +80,9 @@ export const JOB_KIND_LABELS: Record<JobKind, string> = {
   open_browser: 'Open browser for sign-in',
   import_x_history: 'Import X history',
   learn_voice: 'Learn the voice',
+  listen_x: 'Listen on X',
+  write_replies: 'Write replies',
+  post_reply: 'Post a reply',
   research_brief: 'Research brief',
   comment_digest: 'Comment digest',
   analytics_summary: 'Analytics summary',
@@ -185,6 +192,10 @@ export const publishResultSchema = z.object({
 })
 export type PublishResult = z.infer<typeof publishResultSchema>
 
+/** One reply to post on X, exactly as written, under the post it answers. */
+export const postReplyPayloadSchema = z.object({ replyId: z.string(), inReplyTo: z.string(), text: z.string().min(1) })
+export type PostReplyPayload = z.infer<typeof postReplyPayloadSchema>
+
 export const openBrowserPayloadSchema = z.object({ url: z.string(), checklistItemId: z.string() })
 export type OpenBrowserPayload = z.infer<typeof openBrowserPayloadSchema>
 
@@ -192,5 +203,6 @@ export const runnerJobSchema = z.discriminatedUnion('kind', [
   z.object({ id: z.string(), kind: z.literal('produce'), payload: producePayloadSchema }),
   z.object({ id: z.string(), kind: z.literal('publish'), payload: publishPayloadSchema }),
   z.object({ id: z.string(), kind: z.literal('open_browser'), payload: openBrowserPayloadSchema }),
+  z.object({ id: z.string(), kind: z.literal('post_reply'), payload: postReplyPayloadSchema }),
 ])
 export type RunnerJob = z.infer<typeof runnerJobSchema>

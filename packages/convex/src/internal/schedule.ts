@@ -2,6 +2,7 @@ import { SIGNAL_TTL_MS } from '@influstep/shared'
 import { internalMutation } from '../_generated/server'
 import { addDays, dayKey, weekStart } from '../core/dates'
 import { queueDueScripts } from '../core/episodes'
+import { listens } from '../core/replies'
 import { enqueueJob } from '../jobs/queue'
 
 /** One job per active persona for each cron, so every run shows up in the jobs table. */
@@ -50,6 +51,17 @@ export const writeDueScripts = internalMutation({
       failed += outcome.failed
     }
     return { queued, failed }
+  },
+})
+
+/** The listener's sweep for every active persona that answers people on X (a reply budget above zero). */
+export const listenOnX = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    for (const persona of await activePersonas(ctx)) {
+      if (!listens(persona)) continue
+      await enqueueJob(ctx, { kind: 'listen_x', payload: { personaId: persona._id }, personaId: persona._id })
+    }
   },
 })
 

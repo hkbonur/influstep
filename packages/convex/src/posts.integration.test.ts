@@ -27,7 +27,7 @@ const X_FORMAT: PlatformFormat = {
   delivery: 'talking_head',
   hookNote: 'Put the point in the first line; the video proves it.',
   publishHour: 22,
-  cadence: { postsPerDay: 2, kinds: KINDS, intents: [...POST_INTENTS] },
+  cadence: { postsPerDay: 2, kinds: KINDS, intents: [...POST_INTENTS], repliesPerDay: 5 },
 }
 
 type Test = ReturnType<typeof setup>

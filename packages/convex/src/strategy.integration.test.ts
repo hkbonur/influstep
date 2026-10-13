@@ -156,7 +156,7 @@ describe('the seeded strategy', () => {
       expect.stringMatching(/^Call to action: "Comment" beat "Follow" on clicks per view/),
       expect.stringMatching(/^Over the last 28 days .* So ".*" gets \d+% of the evergreen plan/),
     ])
-    expect(seeded.others).toEqual(['brief', 'fact', 'goal_note', 'problem', 'rule'])
+    expect(seeded.others).toEqual(['brief', 'fact', 'goal_note', 'problem', 'rule', 'rule'])
     expect(seeded.max.strategy).toBeUndefined()
     expect(seeded.maxMemories).toBe(0)
   })

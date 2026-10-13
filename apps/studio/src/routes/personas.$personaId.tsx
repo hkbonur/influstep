@@ -45,6 +45,8 @@ import { useNow } from '@/lib/use-now'
 
 export const Route = createFileRoute('/personas/$personaId')({ component: PersonaPage })
 
+type PersonaData = NonNullable<FunctionReturnType<typeof api.private.personas.get>>
+
 function PersonaPage() {
   const params = Route.useParams()
   const personaId = params.personaId as Id<'personas'>
@@ -175,6 +177,8 @@ function PersonaPage() {
             </ul>
           </section>
 
+          {data.replies && <RepliesSummary personaId={personaId} replies={data.replies} />}
+
           <section>
             <Eyebrow className="mb-3">Profile</Eyebrow>
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
@@ -288,6 +292,29 @@ function PersonaPage() {
         </div>
       </div>
     </>
+  )
+}
+
+/**
+ * Two lines under the checklist, for a persona on X: how many replies wait
+ * for the operator and go out on their own, and today's budget, linking the
+ * Replies page, where each one is posted (DESIGN.md, Persona page).
+ */
+function RepliesSummary(props: { personaId: Id<'personas'>; replies: NonNullable<PersonaData['replies']> }) {
+  const replies = props.replies
+  const lines = [`${replies.waiting} waiting for you`, ...(replies.goingOut > 0 ? [`${replies.goingOut} going out`] : [])]
+  return (
+    <section>
+      <Eyebrow className="mb-3">Replies</Eyebrow>
+      <Link to="/personas/$personaId/replies" params={{ personaId: props.personaId }} className="group block space-y-0.5 text-xs">
+        <span className="tabular block group-hover:underline">{lines.join(' · ')}</span>
+        <span className="tabular block text-ash">
+          {replies.budget === 0
+            ? 'Replies are off: the budget is 0'
+            : `${replies.sentToday} of ${replies.budget} ${plural(replies.budget, 'reply', 'replies')} sent today`}
+        </span>
+      </Link>
+    </section>
   )
 }
 

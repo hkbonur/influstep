@@ -1206,6 +1206,8 @@ describe('posts on X', () => {
     )
     await expect(create([{ ...x, cadence: { ...cadence, intents: [] } }])).rejects.toThrow('X: pick at least one post intent.')
     await expect(create([{ ...x, cadence: { ...cadence, intents: ['ask', 'teach', 'ask'] } }])).rejects.toThrow('X: each post intent once.')
+    await expect(create([{ ...x, cadence: { ...cadence, repliesPerDay: 21 } }])).rejects.toThrow('X: replies per day is 0 to 20.')
+    await expect(create([{ ...x, cadence: { ...cadence, repliesPerDay: -1 } }])).rejects.toThrow('X: replies per day is 0 to 20.')
     const settings = settingsOf(ada)
     await expect(
       t.mutation(api.private.personas.update, {

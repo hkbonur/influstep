@@ -4,7 +4,9 @@ import {
   SHORT_POST_MAX,
   WORDS_PER_SECOND,
   lengthProblem,
+  namesSponsor,
   parseChatIntent,
+  replyRuleCovers,
   xLength,
   type Beat,
   type Delivery,
@@ -12,6 +14,7 @@ import {
   type LengthMix,
   type PostIntent,
   type PostLength,
+  type ReplyOrigin,
 } from '@influstep/shared'
 import {
   PRESENTER_TOOL,
@@ -20,6 +23,8 @@ import {
   type LlmProvider,
   type PostBrief,
   type PostDraft,
+  type ReplyBrief,
+  type ReplyDraft,
   type ScriptBrief,
   type ScriptDraft,
   type TaskReportArgs,
@@ -50,6 +55,10 @@ import {
  * front, so a smoke test shows the language reached the writer. A learned
  * voice is the counted stats in words, in the persona's tone.
  *
+ * A reply passes on a post one of the persona's reply rules covers, read
+ * word for word (shared `replyRuleCovers`), unless the operator asked for it;
+ * otherwise it answers with a tip from the post's pillar, fit to X's limit.
+ *
  * The chat reads a message with the shared English parser, and a task report
  * lists what its data holds, saying so plainly when it holds nothing.
  */
@@ -76,6 +85,13 @@ export const mockLlm: LlmProvider = {
     if (brief.kind === 'image') return { title, post: { parts, cardTitle: fit(topic, CARD_TITLE_MAX) } }
     return { title, post: { parts } }
   },
+  async writeReply(brief: ReplyBrief): Promise<ReplyDraft> {
+    if (!brief.operatorAsked) {
+      const rule = brief.memory.rules.find((candidate) => replyRuleCovers(candidate, brief.post.text))
+      if (rule !== undefined) return { kind: 'skip', reason: `My rule "${rule}" covers this post.` }
+    }
+    return { kind: 'reply', text: fit(replyTextFor(brief), brief.partLimit) }
+  },
   async learnVoice(brief: VoiceBrief): Promise<VoiceDraft> {
     const { stats } = brief
     const mostly = LENGTH_WORDS[dominantLength(stats.lengthMix)]
@@ -101,6 +117,27 @@ export const mockLlm: LlmProvider = {
 }
 
 /** How many titles a mock report quotes before it says how many more there are. */
+const REPLY_OPENINGS: Record<ReplyOrigin, (handle: string) => string> = {
+  mention: (handle) => `Thanks for the mention, @${handle}!`,
+  reply: () => 'Good question.',
+  search: () => 'Been there.',
+}
+
+const REPLY_TIPS = [
+  'Cap the retries, log the last one, and alert on it. The first failure is never the one that hurts.',
+  'Name every step and write down what you changed before the next change. Most of these bugs are naming bugs.',
+  'Decide what happens when the other side never answers. Build that path first; the happy one is easy.',
+]
+
+/** A reply in the persona's voice: an opening for where the post came from, then one tip, picked by the post. */
+function replyTextFor(brief: ReplyBrief): string {
+  if (brief.operatorAsked && namesSponsor(brief.post.text, brief.sponsorName))
+    return `${REPLY_OPENINGS[brief.origin](brief.post.author.handle)} ${brief.sponsorName} does that: your flow sends one customer a prefilled form, and the answers come back into the flow.`
+  const tip = REPLY_TIPS[brief.post.text.length % REPLY_TIPS.length]
+  if (tip === undefined) throw new Error('the mock writer has no reply tips')
+  return `${REPLY_OPENINGS[brief.origin](brief.post.author.handle)} ${tip}`
+}
+
 const REPORT_TITLES = 3
 
 function taskReportText(args: TaskReportArgs): string {

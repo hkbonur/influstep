@@ -6,6 +6,8 @@ import {
   LENGTH_SEC_MIN,
   PLATFORM_LABELS,
   PLATFORMS,
+  REPLIES_PER_DAY_MAX,
+  REPLIES_PER_DAY_MIN,
   type EffectiveVariant,
   type Platform,
   type PlatformFormat,
@@ -83,7 +85,8 @@ export function earliestPublishAt(
 /**
  * What personas.create and update accept: at least one platform, each once,
  * every value in range, and a post cadence on X and nowhere else, with each
- * post kind and each post intent at most once and neither list empty.
+ * post kind and each post intent at most once and neither list empty, and a
+ * reply budget in range.
  */
 export function assertFormats(formats: PlatformFormat[]): void {
   if (formats.length === 0) throw refusal('A persona needs at least one platform.')
@@ -109,7 +112,7 @@ export function assertFormats(formats: PlatformFormat[]): void {
 }
 
 function assertCadence(cadence: XCadence): void {
-  const { postsPerDay, kinds, intents } = cadence
+  const { postsPerDay, kinds, intents, repliesPerDay } = cadence
   if (!Number.isInteger(postsPerDay) || postsPerDay < CADENCE_POSTS_MIN || postsPerDay > CADENCE_POSTS_MAX) {
     throw refusal(`X: posts per day is ${CADENCE_POSTS_MIN} to ${CADENCE_POSTS_MAX}.`)
   }
@@ -122,4 +125,7 @@ function assertCadence(cadence: XCadence): void {
   // The planner rotates through the intents in order, so a repeated one would only skew the mix.
   if (intents.length === 0) throw refusal('X: pick at least one post intent.')
   if (new Set(intents).size !== intents.length) throw refusal('X: each post intent once.')
+  if (!Number.isInteger(repliesPerDay) || repliesPerDay < REPLIES_PER_DAY_MIN || repliesPerDay > REPLIES_PER_DAY_MAX) {
+    throw refusal(`X: replies per day is ${REPLIES_PER_DAY_MIN} to ${REPLIES_PER_DAY_MAX}.`)
+  }
 }

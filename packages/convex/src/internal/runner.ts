@@ -7,6 +7,7 @@ import {
   publishResultSchema,
   xLength,
   type AspectRatio,
+  postReplyPayloadSchema,
   type PublishPayload,
   type RunnerJob,
 } from '@influstep/shared'
@@ -17,6 +18,7 @@ import { activeDiscountCodeFor } from '../core/discounts'
 import { KILLED_BEFORE_RUN, completeProduction, completePublication, failPublication, startProduction } from '../core/episodes'
 import { episodeVariant } from '../core/experiments'
 import { latestRunner } from '../core/jobs'
+import { completeReply, failReply } from '../core/replies'
 import { logRecordingProblem } from '../core/research'
 import { workspaceOf } from '../core/workspace'
 import { enqueueJob, markDone, markFailed, markRunning } from '../jobs/queue'
@@ -93,6 +95,7 @@ function toRunnerJob(job: Doc<'jobs'>): RunnerJob {
   if (job.kind === 'produce') return { id: job._id, kind: 'produce', payload: job.payload }
   if (job.kind === 'publish') return { id: job._id, kind: 'publish', payload: job.payload }
   if (job.kind === 'open_browser') return { id: job._id, kind: 'open_browser', payload: job.payload }
+  if (job.kind === 'post_reply') return { id: job._id, kind: 'post_reply', payload: job.payload }
   throw new Error(`job kind ${job.kind} does not run on the runner`)
 }
 
@@ -135,6 +138,9 @@ export const complete = internalMutation({
       // An upload whose publication was withdrawn meanwhile stays withdrawn; the job keeps where it went, so it can be taken down.
       if ((await completePublication(ctx, job.payload.publicationId as Id<'publications'>, result)) === 'withdrawn')
         stored = { skipped: 'withdrawn', ...result }
+    } else if (job.kind === 'post_reply') {
+      const result = publishResultSchema.parse(args.result)
+      await completeReply(ctx, postReplyPayloadSchema.parse(job.payload).replyId as Id<'replies'>, result)
     }
     await markDone(ctx, args.jobId, stored)
     await clearRunnerJob(ctx, args.jobId)
@@ -157,6 +163,10 @@ export const fail = internalMutation({
     await clearRunnerJob(ctx, args.jobId)
     if (job.kind === 'publish') {
       await failPublication(ctx, job.payload.publicationId as Id<'publications'>, args.error)
+      return
+    }
+    if (job.kind === 'post_reply') {
+      await failReply(ctx, postReplyPayloadSchema.parse(job.payload).replyId as Id<'replies'>, args.error)
       return
     }
     if (job.kind === 'produce' && job.episodeId && args.shotId !== undefined) {

@@ -2,6 +2,7 @@ import { v } from 'convex/values'
 import { PLATFORMS, variantRate } from '@influstep/shared'
 import { query } from '../_generated/server'
 import { platformsOf } from '../core/formats'
+import { engagementReport } from '../core/replies'
 import { buildFunnel, countConversions, latestPerPublication, reportWindow } from '../core/report'
 import { workspaceOf } from '../core/workspace'
 import { variantStatsFor } from '../core/experiments'
@@ -9,7 +10,7 @@ import { variantStatsFor } from '../core/experiments'
 const TREND_DAYS = 28
 const TOP_BY_VALUE = 5
 
-/** One screen per persona: funnel, trend, experiments, the episode table, and what the discount codes did. */
+/** One screen per persona: funnel, trend, experiments, the episode table, what the discount codes did, and the replies on X. */
 export const forPersona = query({
   args: { personaId: v.id('personas') },
   handler: async (ctx, args) => {
@@ -135,6 +136,8 @@ export const forPersona = query({
       topByValue,
       platforms,
       discountCodes,
+      // Replies on X sent in the window and what they brought back (core/replies.ts); null without X.
+      engagement: await engagementReport(ctx, persona, since),
       windowDays: TREND_DAYS,
     }
   },

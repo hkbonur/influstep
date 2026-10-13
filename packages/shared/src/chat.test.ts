@@ -107,7 +107,7 @@ describe('parseChatIntent', () => {
   })
 
   it('keeps a directive a directive when it only mentions comments or analytics', () => {
-    expect(parseChatIntent('stop replying to comments')).toEqual({ kind: 'directive', text: 'stop replying to comments' })
+    expect(parseChatIntent('stop saying guys in the comments')).toEqual({ kind: 'directive', text: 'stop saying guys in the comments' })
     expect(parseChatIntent('more analytics content please')).toEqual({ kind: 'directive', text: 'more analytics content please' })
   })
 
@@ -197,6 +197,23 @@ describe('parseChatIntent', () => {
       memory: 'fact',
       text: 'Make raised its prices in March',
     })
+  })
+
+  it('remembers a rule about whom to reply to, with or without "remember"', () => {
+    expect(parseChatIntent('never reply to politics')).toEqual({ kind: 'remember', memory: 'rule', text: 'never reply to politics' })
+    expect(parseChatIntent('Only reply to people building agents, please.')).toEqual({
+      kind: 'remember',
+      memory: 'rule',
+      text: 'Only reply to people building agents',
+    })
+    expect(parseChatIntent("ok, don't answer anyone selling courses")).toEqual({
+      kind: 'remember',
+      memory: 'rule',
+      text: "don't answer anyone selling courses",
+    })
+    expect(parseChatIntent('stop replying to comments')).toEqual({ kind: 'remember', memory: 'rule', text: 'stop replying to comments' })
+    // A rule about how to reply, not whom, is a directive like any other.
+    expect(parseChatIntent('never say "game changer" in a reply').kind).toBe('directive')
   })
 
   it('reads a bare "remember" or a question about remembering as no memory', () => {

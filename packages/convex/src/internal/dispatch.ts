@@ -24,6 +24,8 @@ const BACKEND_RUNNERS: Partial<Record<JobKind, (ctx: ActionCtx, job: Doc<'jobs'>
   evaluate_experiments: (ctx, job) => ctx.runAction(internal.internal.agents.evaluateExperiments, payloadWith(job.payload, 'personaId')),
   import_x_history: (ctx, job) => ctx.runAction(internal.internal.agents.importXHistory, payloadWith(job.payload, 'personaId')),
   learn_voice: (ctx, job) => ctx.runAction(internal.internal.agents.learnVoice, payloadWith(job.payload, 'personaId')),
+  listen_x: (ctx, job) => ctx.runAction(internal.internal.replies.listen, payloadWith(job.payload, 'personaId')),
+  write_replies: (ctx, job) => ctx.runAction(internal.internal.replies.writeReplies, payloadWith(job.payload, 'personaId')),
   // The review reads its persona from its own row.
   review_strategy: (ctx, job) => ctx.runAction(internal.internal.agents.reviewStrategy, { jobId: job._id }),
   // A chat task reads its persona, its topic and the message it answers from its own row.
@@ -106,6 +108,8 @@ export const retryJob = internalMutation({
     }
     // Dispatch gives every upload its episode, so one without it is a bug, never something to send again.
     if (job.kind === 'publish') throw new Error(`publish job ${job._id} has no episode`)
+    // A reply is posted again from the replies page, through the budget, never by repeating its job.
+    if (job.kind === 'post_reply') throw refusal('A reply goes out again from the replies page: post it there.')
     return enqueueJob(ctx, {
       kind: job.kind,
       payload: job.payload,

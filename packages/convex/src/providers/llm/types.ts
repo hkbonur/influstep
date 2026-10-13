@@ -14,6 +14,7 @@ import {
   type PostIntent,
   type PostKind,
   type PostLength,
+  type ReplyOrigin,
   type ScriptKind,
   type SignalSource,
   type SponsorSegment,
@@ -151,6 +152,35 @@ export interface PostDraft {
   post: EpisodePost
 }
 
+/**
+ * What the writer asks of a language model for a reply on X: the post it
+ * answers and who wrote it, inside the bible, the voice, the directives and
+ * the persona's memory, whose rules may tell it to pass on the post.
+ */
+export interface ReplyBrief {
+  persona: ScriptBrief['persona']
+  origin: ReplyOrigin
+  post: { text: string; author: { handle: string; name: string; followers: number } }
+  /** The pillar a search matched the post on; null for a mention or a reply. */
+  pillar: string | null
+  sponsorName: string
+  /**
+   * The operator asked for this reply (Write a reply on a post it passed on):
+   * it is written whatever the rules say, and it may answer about the sponsor
+   * when the post asks.
+   */
+  operatorAsked: boolean
+  memory: WriterMemory
+  directives: string[]
+  voice: PostBrief['voice']
+  partLimit: number
+  /** What was wrong with the previous draft, on the one retry; empty on the first try. */
+  problems: string[]
+}
+
+/** The reply as X receives it, or the writer's reason to pass on the post, in the persona's words. */
+export type ReplyDraft = { kind: 'reply'; text: string } | { kind: 'skip'; reason: string }
+
 /** One of the account's own posts as the analyst reads it. */
 export interface AccountPostSample {
   parts: string[]
@@ -235,6 +265,7 @@ export interface LlmProvider {
   readonly name: string
   writeScript(brief: ScriptBrief): Promise<ScriptDraft>
   writePost(brief: PostBrief): Promise<PostDraft>
+  writeReply(brief: ReplyBrief): Promise<ReplyDraft>
   learnVoice(brief: VoiceBrief): Promise<VoiceDraft>
   /** The persona's reply in its own chat; `directive` is set when the message was stored as one. */
   reply(args: { persona: ScriptBrief['persona']; history: ChatTurn[]; directive?: string }): Promise<string>

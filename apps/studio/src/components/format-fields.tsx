@@ -13,6 +13,8 @@ import {
   POST_INTENTS,
   POST_INTENT_LABELS,
   POST_KINDS,
+  REPLIES_PER_DAY_MAX,
+  REPLIES_PER_DAY_MIN,
   formatLength,
   postSlotHours,
   type Platform,
@@ -139,7 +141,8 @@ function FormatRow(props: { format: PlatformFormat; onChange: (change: FormatCha
 
 /**
  * X's post cadence: how many posts a day, three hours apart from the publish
- * hour, and which kinds and intents the planner rotates through. Kinds keep
+ * hour, which kinds and intents the planner rotates through, and how many
+ * replies the persona sends a day (zero turns listening off). Kinds keep
  * POST_KINDS order and intents POST_INTENTS order, and the last ticked one of
  * each cannot be cleared, because the backend refuses an X format without one.
  */
@@ -190,8 +193,16 @@ function CadenceFields(props: { format: PlatformFormat; cadence: XCadence; onCha
           })}
         </div>
       </fieldset>
+      <Field label="Replies a day" hint={props.cadence.repliesPerDay === 0 ? 'Off: listens to nobody' : 'By hand and on its own'}>
+        <NumberInput
+          value={props.cadence.repliesPerDay}
+          min={REPLIES_PER_DAY_MIN}
+          max={REPLIES_PER_DAY_MAX}
+          onChange={(repliesPerDay) => props.onChange({ ...props.cadence, repliesPerDay })}
+        />
+      </Field>
       {/* Under the kinds on wide screens: both lists say what the planner rotates through. */}
-      <fieldset className="col-span-2 flex flex-col gap-1.5 lg:col-span-3 lg:col-start-2">
+      <fieldset className="col-span-2 flex flex-col gap-1.5 lg:col-span-3">
         <legend className="mb-1.5 text-xs font-medium text-graphite">Post intents</legend>
         <div className="flex min-h-8 flex-wrap items-center gap-x-4 gap-y-1">
           {POST_INTENTS.map((intent) => {

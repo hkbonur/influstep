@@ -19,14 +19,20 @@ describe('xLength', () => {
 describe('postSlotHours', () => {
   it('spaces the posts three hours from the publish hour', () => {
     expect(postSlotHours(x)).toEqual([15, 18])
-    expect(postSlotHours({ ...x, cadence: { postsPerDay: 1, kinds: ['text'], intents: ['ask'] } })).toEqual([15])
+    expect(postSlotHours({ ...x, cadence: { postsPerDay: 1, kinds: ['text'], intents: ['ask'], repliesPerDay: 5 } })).toEqual([15])
   })
   it('slides the day earlier so the last post lands by 23', () => {
-    expect(postSlotHours({ ...x, cadence: { postsPerDay: 4, kinds: ['text'], intents: ['ask'] } })).toEqual([14, 17, 20, 23])
-    expect(postSlotHours({ ...x, publishHour: 23, cadence: { postsPerDay: 2, kinds: ['text'], intents: ['ask'] } })).toEqual([20, 23])
+    expect(postSlotHours({ ...x, cadence: { postsPerDay: 4, kinds: ['text'], intents: ['ask'], repliesPerDay: 5 } })).toEqual([
+      14, 17, 20, 23,
+    ])
+    expect(
+      postSlotHours({ ...x, publishHour: 23, cadence: { postsPerDay: 2, kinds: ['text'], intents: ['ask'], repliesPerDay: 5 } })
+    ).toEqual([20, 23])
   })
   it('never goes below midnight', () => {
-    expect(postSlotHours({ ...x, publishHour: 23, cadence: { postsPerDay: 9, kinds: ['text'], intents: ['ask'] } })[0]).toBe(0)
+    expect(
+      postSlotHours({ ...x, publishHour: 23, cadence: { postsPerDay: 9, kinds: ['text'], intents: ['ask'], repliesPerDay: 5 } })[0]
+    ).toBe(0)
   })
   it('throws for a format without a cadence', () => {
     expect(() => postSlotHours({ platform: 'tiktok', ...DEFAULT_FORMATS.tiktok })).toThrow('no post cadence')
