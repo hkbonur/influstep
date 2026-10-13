@@ -149,11 +149,12 @@ export const METRIC_MIN_EXPOSURES: Record<(typeof METRIC_DENOMINATOR)[GoalMetric
 export const AUTO_MIN_CONFIDENCE = 0.9
 
 /**
- * A confidence as a whole percentage, rounded down: a test is never certain,
- * so 0.9996 reads 99%, never 100%.
+ * A confidence as a whole percentage, rounded down and at most 99: a test is
+ * never certain, so 0.9996 reads 99%, and so does a z-test whose p-value
+ * underflows to a confidence of exactly 1.
  */
 export function confidencePercent(confidence: number): number {
-  return Math.floor(confidence * 100)
+  return Math.min(99, Math.floor(confidence * 100))
 }
 
 function rate(stats: VariantStats): number {

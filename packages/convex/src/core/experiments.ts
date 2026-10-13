@@ -209,16 +209,21 @@ export async function variantStatsSince(
   return { ...only, episodeIds }
 }
 
-/** A rate as people read it: a percentage with one decimal, or views per episode as a whole number. */
+/**
+ * A rate as people read it: a percentage with two decimals, as the
+ * Experiments table shows it (click rates sit well under 1%, so one decimal
+ * would read 0.26% against 0.13% as 0.3% against 0.1%), or views per episode
+ * as a whole number.
+ */
 export function rateText(metric: MetricKey, rate: number): string {
   if (METRIC_DENOMINATOR[metric] === 'episodes') return grouped(rate)
-  return `${(rate * 100).toFixed(1)}%`
+  return `${(rate * 100).toFixed(2)}%`
 }
 
-/** A rate as a journal number: a percentage rounded to 0.1, or views per episode rounded. */
+/** A rate as a journal number: a percentage rounded to 0.01, or views per episode rounded. */
 export function rateNumber(metric: MetricKey, rate: number): number {
   if (METRIC_DENOMINATOR[metric] === 'episodes') return Math.round(rate)
-  return Math.round(rate * 1000) / 10
+  return Math.round(rate * 10000) / 100
 }
 
 /** The label a rate's journal number carries, with its unit. */

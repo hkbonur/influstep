@@ -384,7 +384,7 @@ describe('reviewStrategy', () => {
         'Comment leads.',
         now - 30 * DAY
       )
-      // Since the decision the default ran 3,000 views at 0.7% clicks per view, under the 1.0% "Follow" had.
+      // Since the decision the default ran 3,000 views at 0.67% clicks per view, under the 1.0% "Follow" had.
       for (const daysAgo of [20, 10]) {
         await insertMeasuredVideo(ctx, persona, { publishedAt: now - daysAgo * DAY, views: 1500, clicks: 10 })
       }
@@ -402,8 +402,8 @@ describe('reviewStrategy', () => {
         (candidate) => candidate.kind === 'experiment_started' && candidate.evidence.experimentId === retest?._id
       )
       expect(entry?.reason).toBe(
-        '"Comment" became the call to action default by beating "Follow" 2.0% to 1.0% on clicks per view. ' +
-          'Since then it got 0.7% over 3,000 views, no better than "Follow" had, so the two are tested again. ' +
+        '"Comment" became the call to action default by beating "Follow" 2.00% to 1.00% on clicks per view. ' +
+          'Since then it got 0.67% over 3,000 views, no better than "Follow" had, so the two are tested again. ' +
           'It aims at follows per view: no step closer to paying customers had 10 successes in the last 28 days.'
       )
       const messages = await messagesOf(ctx, persona._id)

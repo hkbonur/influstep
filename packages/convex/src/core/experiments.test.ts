@@ -202,7 +202,7 @@ describe('applyExperimentDecision', () => {
         .collect()
       const learning = memories.find((memory) => memory.status === 'active' && memory.dimension === 'cta')
       expect(learning?.text).toBe(
-        'Call to action: "Comment" beat "Follow" on clicks per view, 2.0% against 1.0% over 6,000 views, 99% confidence.'
+        'Call to action: "Comment" beat "Follow" on clicks per view, 2.00% against 1.00% over 6,000 views, 99% confidence.'
       )
       expect(learning?.confidence).toBe(0.9996)
       expect(learning?.evidence.experimentId).toBe(experimentId)

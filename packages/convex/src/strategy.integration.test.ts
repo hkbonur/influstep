@@ -56,7 +56,7 @@ describe('the strategy loop', () => {
     expect(await t.mutation(internal.internal.agents.evaluateExperimentsMutation, { personaId })).toEqual({ decided: 1 })
     const persona = await t.run((ctx) => ctx.db.get(personaId))
     expect(persona?.strategy?.defaults).toEqual([expect.objectContaining({ kind: 'hook', key: 'question', experimentId: experiment._id })])
-    const learning = 'Hook style: "Question" beat "How to" on follows per view, 4.0% against 1.0% over 6,000 views, 99% confidence.'
+    const learning = 'Hook style: "Question" beat "How to" on follows per view, 4.00% against 1.00% over 6,000 views, 99% confidence.'
 
     // The next idea is written to the winner: the brief carries the learning and the style line, and the hook asks.
     const briefs: ScriptBrief[] = []

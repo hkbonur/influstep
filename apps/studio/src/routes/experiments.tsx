@@ -5,7 +5,6 @@ import {
   EXPERIMENT_KIND_LABELS,
   METRIC_KEYS,
   METRIC_LABELS,
-  confidencePercent,
   type ExperimentKind,
   type MetricKey,
   type StrategyDefault,
@@ -184,13 +183,8 @@ function ExperimentCard(props: { experiment: ExperimentRow }) {
       {experiment.decision && (
         <p className="mt-3 text-sm">
           <span className="font-medium">{experiment.decision.byOperator ? 'You decided' : 'Decided'}</span>{' '}
+          {/* An analyst's note already states the lift and the confidence (core `analystDecisionNote`). */}
           {formatDateTime(experiment.decision.decidedAt)}: {experiment.decision.note}
-          {!experiment.decision.byOperator && (
-            <span className="tabular text-ash">
-              {' '}
-              (lift {formatPercent(experiment.decision.lift, 0)}, confidence {confidencePercent(experiment.decision.confidence)}%)
-            </span>
-          )}
         </p>
       )}
 
