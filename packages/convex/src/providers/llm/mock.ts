@@ -4,6 +4,7 @@ import {
   SHORT_POST_MAX,
   WORDS_PER_SECOND,
   lengthProblem,
+  parseChatIntent,
   xLength,
   type Beat,
   type Delivery,
@@ -20,6 +21,8 @@ import {
   type PostDraft,
   type ScriptBrief,
   type ScriptDraft,
+  type TaskReportArgs,
+  type TaskSignal,
   type VoiceBrief,
   type VoiceDraft,
 } from './types'
@@ -41,6 +44,9 @@ import {
  * X's rules. A voice in Norwegian or Turkish puts a short native phrase in
  * front, so a smoke test shows the language reached the writer. A learned
  * voice is the counted stats in words, in the persona's tone.
+ *
+ * The chat reads a message with the shared English parser, and a task report
+ * lists what its data holds, saying so plainly when it holds nothing.
  */
 export const mockLlm: LlmProvider = {
   name: 'mock',
@@ -78,8 +84,50 @@ export const mockLlm: LlmProvider = {
     const last = args.history.at(-1)
     if (args.directive) return `Noted. From now on: "${args.directive}". The next scripts follow it.`
     if (!last) return `Hi, I am ${args.persona.name}. Tell me what to focus on, or ask what is planned.`
-    return `Got it. I will keep that in mind for the next episode. Say "focus on ..." or "stop ..." to turn it into a directive.`
+    // A conversation changes nothing, so the reply says what would: a directive, a plan change or a task.
+    return `Nothing changed. Say "focus on ..." or "stop ..." for a directive, ask me to move, drop or replace an episode, or ask for a research brief, a comment digest or an analytics summary.`
   },
+  async interpret(args) {
+    return parseChatIntent(args.text)
+  },
+  async taskReport(args) {
+    return taskReportText(args)
+  },
+}
+
+/** How many titles a mock report quotes before it says how many more there are. */
+const REPORT_TITLES = 3
+
+function taskReportText(args: TaskReportArgs): string {
+  if (args.task === 'research_brief') {
+    const on = args.topic === null ? '' : ` on ${args.topic}`
+    if (args.data.signals.length === 0) return `No new signals${on}.`
+    return `${counted(args.data.signals.length, 'new signal')}${on}: ${quotedTitles(args.data.signals, args.data.signals.length)}.`
+  }
+  if (args.task === 'comment_digest') {
+    const window = `in the last ${args.data.days} days`
+    if (args.data.total === 0) return `No comments ${window}.`
+    return `${counted(args.data.total, 'comment')} ${window}. Most liked: ${quotedTitles(args.data.comments, args.data.total)}.`
+  }
+  const { funnel, days, currency } = args.data
+  if (funnel.views === 0 && funnel.clicks === 0 && funnel.signups === 0 && funnel.paid === 0)
+    return `No views, clicks or conversions in the last ${days} days.`
+  const mock = funnel.mock ? ' Some of it is mock data.' : ''
+  return `Last ${days} days: ${counted(funnel.views, 'view')}, ${counted(funnel.follows, 'follow')}, ${counted(funnel.clicks, 'click')}, ${counted(funnel.signups, 'signup')}, ${funnel.paid} paid (${funnel.value} ${currency}).${mock}`
+}
+
+function counted(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`
+}
+
+/** The first titles, quoted, and how many of `total` are left unquoted. */
+function quotedTitles(signals: TaskSignal[], total: number): string {
+  const quoted = signals
+    .slice(0, REPORT_TITLES)
+    .map((signal) => `"${signal.title}"`)
+    .join('; ')
+  const more = total - Math.min(signals.length, REPORT_TITLES)
+  return more > 0 ? `${quoted}; and ${more} more` : quoted
 }
 
 /** A short phrase in the voice's language, so the language visibly took effect; English and the rest get none. */

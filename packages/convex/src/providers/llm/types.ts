@@ -4,15 +4,21 @@ import {
   THREAD_PARTS_MIN,
   X_POST_LIMIT,
   type Beat,
+  type ChatIntent,
+  type ChatTask,
   type Delivery,
+  type EpisodeKind,
   type EpisodePost,
   type PostIntent,
   type PostKind,
   type PostLength,
+  type SignalSource,
   type SponsorSegment,
   type Voice,
   type VoiceStats,
+  type Weekday,
 } from '@influstep/shared'
+import type { Funnel } from '../../core/report'
 
 /**
  * What the writer asks of a language model. Both adapters return the same
@@ -137,6 +143,50 @@ export interface ChatTurn {
   text: string
 }
 
+/** One episode a chat message may change (core `changeablePlan`), as the interpreter reads it. */
+export interface PlanRow {
+  id: string
+  weekday: Weekday
+  /** The local day it is planned for, YYYY-MM-DD in the persona's timezone. */
+  plannedFor: string
+  kind: EpisodeKind
+  title: string
+  pillar: string | null
+  /** The status as the operator reads it (EPISODE_STATUS_LABELS). */
+  status: string
+}
+
+export interface InterpretArgs {
+  persona: ScriptBrief['persona']
+  /** The chat before the message, oldest first. */
+  history: ChatTurn[]
+  plan: PlanRow[]
+  /** The operator's message to read. */
+  text: string
+}
+
+/** A signal as a task report reads it; a comment is a signal whose title is the comment's text. */
+export interface TaskSignal {
+  source: SignalSource
+  title: string
+  summary: string
+  url: string
+  topics: string[]
+}
+
+/** What each chat task is written from. Code reads and counts it; the model only puts it in words. */
+interface TaskData {
+  research_brief: { signals: TaskSignal[] }
+  /** The most liked comments of the window, most liked first; `total` counts every comment in it. */
+  comment_digest: { days: number; total: number; comments: TaskSignal[] }
+  analytics_summary: { days: number; funnel: Funnel; currency: string }
+}
+
+/** One member per task, so narrowing on `task` narrows `data` with it. */
+export type TaskReportArgs = {
+  [Task in ChatTask]: { persona: ScriptBrief['persona']; task: Task; topic: string | null; data: TaskData[Task] }
+}[ChatTask]
+
 export interface LlmProvider {
   readonly name: string
   writeScript(brief: ScriptBrief): Promise<ScriptDraft>
@@ -144,4 +194,8 @@ export interface LlmProvider {
   learnVoice(brief: VoiceBrief): Promise<VoiceDraft>
   /** The persona's reply in its own chat; `directive` is set when the message was stored as one. */
   reply(args: { persona: ScriptBrief['persona']; history: ChatTurn[]; directive?: string }): Promise<string>
+  /** What an operator's chat message asks for; `conversation` when it asks for no change and no task. */
+  interpret(args: InterpretArgs): Promise<ChatIntent>
+  /** A chat task's answer in the persona's voice, from the data alone. */
+  taskReport(args: TaskReportArgs): Promise<string>
 }

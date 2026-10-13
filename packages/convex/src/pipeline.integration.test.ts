@@ -859,11 +859,13 @@ describe('episode pipeline', () => {
     await t.finishAllScheduledFunctions(() => {})
     const personas = await t.query(api.private.personas.list, {})
     const max = personas.find((persona) => persona.handle === 'max.builds.agents')!
-    const sent = await t.mutation(api.private.personas.sendMessage, { personaId: max._id, text: 'Never mention pricing in an episode' })
-    expect(sent.directiveId).toBeDefined()
+    await t.mutation(api.private.personas.sendMessage, { personaId: max._id, text: 'Never mention pricing in an episode' })
     await t.finishAllScheduledFunctions(() => {})
     const page = await t.query(api.private.personas.get, { personaId: max._id })
     expect(page?.directives.map((directive) => directive.text)).toContain('Never mention pricing in an episode')
+    // The persona reads the message once: the operator's message carries the directive it became.
+    const asked = page?.messages.find((message) => message.author === 'operator' && message.text === 'Never mention pricing in an episode')
+    expect(asked?.directiveId).toBeDefined()
     expect(page?.messages.at(-1)?.author).toBe('persona')
   })
 })

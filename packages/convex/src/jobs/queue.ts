@@ -9,7 +9,14 @@ import type { MutationCtx } from '../_generated/server'
  */
 export async function enqueueJob(
   ctx: MutationCtx,
-  args: { kind: JobKind; payload: unknown; personaId?: Id<'personas'>; episodeId?: Id<'episodes'> }
+  args: {
+    kind: JobKind
+    payload: unknown
+    personaId?: Id<'personas'>
+    episodeId?: Id<'episodes'>
+    /** The operator's chat message that asked for the job, for a chat task. */
+    messageId?: Id<'messages'>
+  }
 ): Promise<Id<'jobs'>> {
   const meta = JOB_KINDS[args.kind]
   const jobId = await ctx.db.insert('jobs', {
@@ -19,6 +26,7 @@ export async function enqueueJob(
     status: 'queued',
     personaId: args.personaId,
     episodeId: args.episodeId,
+    messageId: args.messageId,
     payload: args.payload,
     attempts: 0,
     createdAt: Date.now(),

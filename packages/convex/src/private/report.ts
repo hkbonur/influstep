@@ -1,9 +1,8 @@
 import { v } from 'convex/values'
 import { PLATFORMS, variantRate } from '@influstep/shared'
 import { query } from '../_generated/server'
-import { addDays, dayKey } from '../core/dates'
 import { platformsOf } from '../core/formats'
-import { buildFunnel, buildTrend, countConversions, latestPerPublication } from '../core/report'
+import { buildFunnel, countConversions, latestPerPublication, reportWindow } from '../core/report'
 import { workspaceOf } from '../core/workspace'
 import { variantStatsFor } from '../internal/agents'
 
@@ -17,7 +16,8 @@ export const forPersona = query({
     const persona = await ctx.db.get(args.personaId)
     if (!persona) return null
     const workspace = await workspaceOf(ctx, persona)
-    const since = Date.now() - TREND_DAYS * 86_400_000
+    const now = Date.now()
+    const since = now - TREND_DAYS * 86_400_000
     const snapshots = await ctx.db
       .query('metricSnapshots')
       .withIndex('by_persona_time', (q) => q.eq('personaId', persona._id))
@@ -31,17 +31,7 @@ export const forPersona = query({
       .withIndex('by_persona_time', (q) => q.eq('personaId', persona._id))
       .collect()
     const funnel = buildFunnel({ snapshots, clicks: clicks.length, conversions, valuePerPaid: workspace.valuePerPaid })
-    const today = dayKey(Date.now(), persona.timezone)
-    const days = Array.from({ length: TREND_DAYS }, (_, index) => addDays(today, index - TREND_DAYS + 1))
-    const trend = buildTrend({
-      days,
-      snapshots: snapshots.filter((snapshot) => snapshot.takenAt >= since),
-      clicks: clicks.filter((click) => click.at >= since).map((click) => ({ day: dayKey(click.at, persona.timezone) })),
-      conversions: conversions
-        .filter((conversion) => conversion.at >= since)
-        .map((conversion) => ({ day: dayKey(conversion.at, persona.timezone), kind: conversion.kind })),
-      snapshotDay: (snapshot) => dayKey(snapshot.takenAt, persona.timezone),
-    })
+    const { trend } = await reportWindow(ctx, persona, TREND_DAYS, now)
 
     const experiments = []
     for (const experiment of await ctx.db

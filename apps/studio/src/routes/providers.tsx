@@ -6,12 +6,14 @@ import { Button, ErrorLine, Eyebrow, Field, Input, Mono, PageHeader, Pill, Skele
 import { cn } from '@/lib/cn'
 import { errorMessage } from '@/lib/errors'
 import { relativeTime } from '@/lib/format'
+import { useRunnerOnline } from '@/lib/use-runner-online'
 
 export const Route = createFileRoute('/providers')({ component: ProvidersPage })
 
 function ProvidersPage() {
   const status = useQuery(api.private.providers.status, {})
   const retry = useMutation(api.private.jobs.retry)
+  const runnerOnline = useRunnerOnline(status?.runner?.lastSeenAt ?? null)
   if (!status) return <Skeleton className="h-96" />
   const { runner } = status
   return (
@@ -84,7 +86,7 @@ function ProvidersPage() {
               <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
                 <dt className="text-ash">Status</dt>
                 <dd>
-                  <Pill tint={runner.alive ? 'field-green' : 'signal-red'}>{runner.alive ? 'online' : 'offline'}</Pill>
+                  <Pill tint={runnerOnline ? 'field-green' : 'signal-red'}>{runnerOnline ? 'online' : 'offline'}</Pill>
                 </dd>
                 <dt className="text-ash">Name</dt>
                 <dd>

@@ -25,12 +25,20 @@ One AI influencer profile: a name, a handle, a spoken voice (and on X a writing 
 _Avoid_: influencer (fine in conversation; in code and copy a persona is the profile, the agents do the work), bot, avatar (that is only the rendered face), character, creator.
 
 **Agent**:
-One role a persona's work is split into. Five roles: the **researcher** polls sources for signals, the **writer** turns a concept into a script, the **producer** records the screen, voices the script, and renders the video, the **publisher** uploads on schedule and reads comments, and the **analyst** pulls metrics and decides experiments. An agent run is one job carried out by one role.
-_Avoid_: bot, worker (that is the runner process), assistant, sub-agent.
+A worker of the workspace with one role, serving every persona. Five agents: the **researcher** polls sources for signals, the **writer** turns a concept into a script, the **producer** records the screen, voices the script, and renders the video, the **publisher** uploads on schedule and reads comments, and the **analyst** pulls metrics and decides experiments. Each takes jobs from its own queue, whichever persona they are for, and the Agents page shows what each is doing now, what waits in its queue, and what it did last. A persona hands an agent a task the way a creator briefs an assistant. An agent run is one job carried out by one role.
+_Avoid_: bot, assistant, sub-agent, worker (fine in copy, "five workers serve every persona"; never as the term, since the runner and the Cloudflare Worker are the processes).
 
 **Directive**:
 An instruction the operator gives a persona in its chat ("focus on n8n error handling for two weeks", "stop mentioning pricing"). Directives are stored, dated, and read by every agent run that follows. A directive stays in force until the operator withdraws it.
 _Avoid_: prompt, instruction (fine casually), note, feedback.
+
+**Chat change**:
+A change to the plan the operator asks for in a persona's chat, in plain words: replace an episode with another concept, move it to another day of its week, drop it, or give a discount code for it ("replace Tuesday's n8n episode with one about Make", "move Friday to Saturday", "drop the webhook one", "use code ADA20 for the next video"). The persona reads the message, applies the change to the episodes it may still change (from today through next week, not yet recording, uploading or live), and replies with what it did, linking the episode. A change it cannot apply (no episode matches, more than one does, the day has passed) changes nothing, and the reply says why.
+_Avoid_: command, action, edit (fine casually).
+
+**Task**:
+Something the operator asks for in a persona's chat that one agent runs and answers in the same chat: a research brief (the researcher, from the persona's newest signals), a comment digest (the publisher, from the last week's comments), or an analytics summary (the analyst, from the last week's numbers). It runs as a job of the role that owns it; the persona's reply shows the job's state while it waits or runs, and the answer arrives as a message of its own.
+_Avoid_: job (that is how a task runs), todo, ticket, request (Formstep's word).
 
 **Voice** (spoken):
 The persona's text-to-speech voice, set as "Voice id" in the persona's settings (`voiceId` in code: an ElevenLabs voice id in production, a mock voice locally), used for every voiced episode so the persona sounds the same across platforms.
@@ -83,7 +91,7 @@ The finished video file for one aspect ratio (16:9 for YouTube, 9:16 for TikTok,
 _Avoid_: export, output, final.
 
 **Publication**:
-One episode on one platform: the upload, its title and description, its external id, its URL, its publish time, its AI-disclosure label, and the metric snapshots taken afterwards. Its status is one of draft (waiting in a publish package), queued, uploading, live, or failed. A video's description off X is the persona's own text inside a footer composed when it goes out: the disclosure above, then the Formstep line, the discount code in force, and the tracked link or "Link in bio." below. On X nothing is appended: a video's text is its title, a post is its parts.
+One episode on one platform: the upload, its title and description, its external id, its URL, its publish time, its AI-disclosure label, and the metric snapshots taken afterwards. Its status is one of draft (waiting in a publish package), queued, uploading, live, failed, or withdrawn (its episode was killed before it went out, so it never will). A video's description off X is the persona's own text inside a footer composed when it goes out: the disclosure above, then the Formstep line, the discount code in force, and the tracked link or "Link in bio." below. On X nothing is appended: a video's text is its title, a post is its parts.
 _Avoid_: post (fine in UI copy for TikTok and Instagram, never as the term), upload, release.
 
 **Publish package**:
@@ -91,7 +99,7 @@ A rendered episode's publications waiting for the operator's approval: per platf
 _Avoid_: bundle, preview (fine casually), draft (that is a publication's status inside the package), release.
 
 **Episode status**:
-Exactly one of: **idea** (concept only), **scripted** (script written, waiting for operator approval), **waiting on you** (a checklist item blocks it), **recording** (producer is recording shots), **rendered**, shown as "Ready to publish" (renders exist; the publish package waits for the operator's approval), **scheduled** (publications queued), **published** (every publication live), **measured** (metrics collected after the measurement window), **failed** (an agent run gave up; the error is on the episode), and **killed** (the operator withdrew it). Scripted episodes wait for the operator's approval before recording unless the persona is set to auto-approve, and rendered ones wait for approval of their publish package unless the persona publishes on its own. Needs approval, waiting on you and ready to publish are what "waits on you" counts; failed is counted on its own.
+Exactly one of: **idea** (concept only), **scripted** (script written, waiting for operator approval), **waiting on you** (a checklist item blocks it), **recording** (producer is recording shots), **rendered**, shown as "Ready to publish" (renders exist; the publish package waits for the operator's approval), **scheduled** (publications queued), **published** (every publication live), **measured** (metrics collected after the measurement window), **failed** (an agent run gave up; the error is on the episode), and **killed** (the operator withdrew it, on its page or in the chat; its publications that had not gone out are withdrawn and its queued jobs fail). Scripted episodes wait for the operator's approval before recording unless the persona is set to auto-approve, and rendered ones wait for approval of their publish package unless the persona publishes on its own. Needs approval, waiting on you and ready to publish are what "waits on you" counts; failed is counted on its own.
 _Avoid_: draft (that is a publication in a package), in progress, done, live (that is a publication), pending.
 
 **Measurement window**:
@@ -151,8 +159,8 @@ _Avoid_: dashboard (fine casually), analytics (that is the data), insights.
 ## Operations
 
 **Checklist item**:
-A task only the operator can do, created by an agent when it is blocked: what to do, why, which episode it unblocks, and a button that performs it when the runner can help (open the runner's browser for a sign-in). Done items unblock their episode.
-_Avoid_: todo, task (collides with agent runs), ticket, request (Formstep's word).
+Something only the operator can do, created by an agent when it is blocked: what to do, why, which episode it unblocks, and a button that performs it when the runner can help (open the runner's browser for a sign-in). Done items unblock their episode.
+_Avoid_: todo, task (that is a chat request an agent answers), ticket, request (Formstep's word).
 
 **Runner**:
 The Node process on the operator's computer that records screens, calls the voice and avatar providers, renders videos, and uploads to platforms. It polls the backend for jobs, keeps a signed-in browser profile, and writes artifacts back. There is one runner per operator machine.
@@ -160,14 +168,14 @@ _Avoid_: worker (that is the Cloudflare Worker serving the app), daemon (fine ca
 
 **Job**:
 One unit of work a cron, an agent, or the operator queued: a kind, a payload, the role that owns it, where it runs (`backend` or `runner`), and a status (`queued`, `running`, `done`, `failed`). Jobs are the audit trail of what a persona did.
-_Avoid_: task, action, run (an agent run is one job's execution), step.
+_Avoid_: task (that is the chat request a job of its kind answers), action, run (an agent run is one job's execution), step.
 
 **Provider**:
 An external capability behind an interface with a mock and a real adapter: `llm`, `voice`, `avatar`, `publisher` (one per platform), `signals` (one per source), `analytics` (PostHog). The provider mode is chosen explicitly per deployment; nothing falls back to mock when a key is missing.
 _Avoid_: integration, service, plugin, connector.
 
 **Plan**:
-The persona's calendar for the coming week: which episodes on which days, which variant each carries, which carry the sponsor. The planner job writes it; the operator edits it on the calendar.
+The persona's calendar for the coming week: which episodes on which days, which variant each carries, which carry the sponsor. The planner job writes it; the operator edits it on the calendar or with a chat change.
 _Avoid_: schedule (that is the publish time), roadmap, queue.
 
 **Pause**:

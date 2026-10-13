@@ -1,6 +1,7 @@
 import { v } from 'convex/values'
 import {
   DEFAULT_FORMATS,
+  WEEKDAY_LABELS,
   X_IMAGE_ASPECT,
   formatAspects,
   hookOf,
@@ -9,6 +10,7 @@ import {
   postSlotHours,
   resolveEpisodeFormat,
   voiceStats,
+  weekdayOf,
   type Beat,
   type EpisodePost,
   type ImportedPost,
@@ -836,6 +838,8 @@ export const write = internalMutation({
     // Every one is scripted or later, so it carries Ada's resolved format, her description and the beats
     // its shots came from. The rendered one waits two days out as a publish package, its drafts unsent.
     const monday = weekStart(today)
+    // The publish package the chat below moved; its id links the persona's reply.
+    let renderedEpisodeId: Id<'episodes'> | null = null
     const thisWeek = [
       {
         day: addDays(monday, 0),
@@ -891,6 +895,7 @@ export const write = internalMutation({
         createdAt: now - 2 * 86_400_000,
         updatedAt: now - 3_600_000,
       })
+      if (item.status === 'rendered') renderedEpisodeId = episodeId
       if (item.status === 'waiting_on_you') {
         await ctx.db.insert('checklistItems', {
           personaId: adaId,
@@ -936,6 +941,62 @@ export const write = internalMutation({
       }
     }
     if (signalIds[0]) await ctx.db.patch(signalIds[0], { status: 'used' })
+
+    // Ada's chat since the directive: a plan change the persona made and a task the researcher answered,
+    // so the chat shows a linked episode and a finished task, and the Agents page has a finished job.
+    if (renderedEpisodeId === null) throw new Error('the rendered episode was not seeded')
+    const movedTo = addDays(today, 2)
+    // A day of the same week, since a chat move stays in the episode's own week.
+    const movedFrom = weekdayOf(movedTo) === 'monday' ? addDays(movedTo, 1) : addDays(movedTo, -1)
+    const movedTitle = 'Send the quote and wait for the customer in n8n'
+    await ctx.db.insert('messages', {
+      personaId: adaId,
+      author: 'operator',
+      text: `Move the quote one to ${WEEKDAY_LABELS[weekdayOf(movedTo)]}`,
+      createdAt: now - 26 * 3_600_000,
+    })
+    await ctx.db.insert('messages', {
+      personaId: adaId,
+      author: 'persona',
+      text: `Moved "${movedTitle}" from ${WEEKDAY_LABELS[weekdayOf(movedFrom)]} to ${WEEKDAY_LABELS[weekdayOf(movedTo)]}.`,
+      episodeId: renderedEpisodeId,
+      createdAt: now - 26 * 3_600_000 + 4_000,
+    })
+    const askedAt = now - 2 * 3_600_000
+    const askId = await ctx.db.insert('messages', {
+      personaId: adaId,
+      author: 'operator',
+      text: 'Research brief on customer sign-off',
+      createdAt: askedAt,
+    })
+    const briefJobId = await ctx.db.insert('jobs', {
+      kind: 'research_brief',
+      role: 'researcher',
+      runsOn: 'backend',
+      status: 'done',
+      personaId: adaId,
+      messageId: askId,
+      payload: { personaId: adaId, topic: 'customer sign-off', messageId: askId },
+      attempts: 1,
+      createdAt: askedAt + 3_000,
+      startedAt: askedAt + 4_000,
+      finishedAt: askedAt + 40_000,
+    })
+    await ctx.db.insert('messages', {
+      personaId: adaId,
+      author: 'persona',
+      text: 'Asked the researcher for a research brief on customer sign-off. It lands here when it is done.',
+      jobId: briefJobId,
+      createdAt: askedAt + 3_000,
+    })
+    const briefId = await ctx.db.insert('messages', {
+      personaId: adaId,
+      author: 'persona',
+      text: "1 signal on customer sign-off: an Ask HN thread on getting customer sign-off inside an automated pipeline (score 81), mostly about pausing a workflow until the client approves a quote. That is Friday's episode; a follow-up on reminding a customer who has not signed would fit next week.",
+      jobId: briefJobId,
+      createdAt: askedAt + 40_000,
+    })
+    await ctx.db.patch(briefJobId, { result: { messageId: briefId } })
 
     // Ada on X: the label and connect items a persona gets when it gains X, and one post of each kind.
     // A text post waits for approval, a thread went live two days ago, and an image post's card is

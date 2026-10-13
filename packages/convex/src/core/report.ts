@@ -1,5 +1,8 @@
 import type { ConversionKind, ConversionVia } from '@influstep/shared'
 import type { Doc } from '../_generated/dataModel'
+import type { QueryCtx } from '../_generated/server'
+import { addDays, dayKey } from './dates'
+import { workspaceOf } from './workspace'
 
 /**
  * The persona report (CONTEXT.md, "Report"): one funnel and one trend from
@@ -98,4 +101,50 @@ export function buildTrend(args: {
     clicks: args.clicks.filter((click) => click.day === day).length,
     signups: args.conversions.filter((conversion) => conversion.day === day && conversion.kind === 'signup').length,
   }))
+}
+
+type Reader = { db: QueryCtx['db'] }
+
+const DAY_MS = 86_400_000
+
+/** The persona's numbers over the last `days` days, today included, in its own timezone. */
+export interface ReportWindow {
+  days: number
+  /** Each publication's latest snapshot taken in the window, and the clicks and conversions that happened in it. */
+  funnel: Funnel
+  /** One point per day of the window, oldest first. */
+  trend: TrendPoint[]
+  currency: string
+}
+
+/**
+ * The report over a window: the report page's trend (28 days), and the
+ * analyst's answer when the operator asks in chat how the week went (7 days).
+ * One reading, so the chat and the page never disagree about a day.
+ */
+export async function reportWindow(ctx: Reader, persona: Doc<'personas'>, days: number, now: number): Promise<ReportWindow> {
+  const workspace = await workspaceOf(ctx, persona)
+  const since = now - days * DAY_MS
+  const snapshots = await ctx.db
+    .query('metricSnapshots')
+    .withIndex('by_persona_time', (q) => q.eq('personaId', persona._id).gte('takenAt', since))
+    .collect()
+  const clicks = await ctx.db
+    .query('linkClicks')
+    .withIndex('by_persona_time', (q) => q.eq('personaId', persona._id).gte('at', since))
+    .collect()
+  const conversions = await ctx.db
+    .query('conversions')
+    .withIndex('by_persona_time', (q) => q.eq('personaId', persona._id).gte('at', since))
+    .collect()
+  const today = dayKey(now, persona.timezone)
+  const trend = buildTrend({
+    days: Array.from({ length: days }, (_, index) => addDays(today, index - days + 1)),
+    snapshots,
+    clicks: clicks.map((click) => ({ day: dayKey(click.at, persona.timezone) })),
+    conversions: conversions.map((conversion) => ({ day: dayKey(conversion.at, persona.timezone), kind: conversion.kind })),
+    snapshotDay: (snapshot) => dayKey(snapshot.takenAt, persona.timezone),
+  })
+  const funnel = buildFunnel({ snapshots, clicks: clicks.length, conversions, valuePerPaid: workspace.valuePerPaid })
+  return { days, funnel, trend, currency: workspace.currency }
 }

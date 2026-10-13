@@ -93,6 +93,20 @@ export function relativeTime(at: number, now = Date.now()): string {
   return formatter.format(Math.round(seconds / 86_400), 'day')
 }
 
+/**
+ * How long something has been going, "2 min" or "1 h 5 min", for a running
+ * job ("for 2 min"). Whole minutes, rounded down, because the line is read at a
+ * glance and ticks on its own; under a minute it says so in words.
+ */
+export function formatElapsed(ms: number): string {
+  const minutes = Math.floor(ms / 60_000)
+  if (minutes < 1) return 'under a minute'
+  if (minutes < 60) return `${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return minutes % 60 === 0 ? `${hours} h` : `${hours} h ${minutes % 60} min`
+  return `${Math.floor(hours / 24)} d`
+}
+
 /** Today as YYYY-MM-DD in the browser's timezone. */
 export function todayKey(): string {
   const now = new Date()

@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { addDays, formatCount, formatDateTime, formatHour, formatMoney, languageName, plural, urlHost, weekStart } from './format'
+import {
+  addDays,
+  formatCount,
+  formatDateTime,
+  formatElapsed,
+  formatHour,
+  formatMoney,
+  languageName,
+  plural,
+  urlHost,
+  weekStart,
+} from './format'
 
 describe('format', () => {
   it('shortens counts the way a report reads them', () => {
@@ -38,6 +49,13 @@ describe('format', () => {
     expect(urlHost('http://localhost:5678/home')).toBe('localhost:5678')
     expect(urlHost('')).toBeNull()
     expect(urlHost('n8n.io')).toBeNull()
+  })
+  it('says how long a job has been running in whole minutes, hours past the hour, and days', () => {
+    expect(formatElapsed(40_000)).toBe('under a minute')
+    expect(formatElapsed(2 * 60_000 + 59_000)).toBe('2 min')
+    expect(formatElapsed(60 * 60_000)).toBe('1 h')
+    expect(formatElapsed(65 * 60_000)).toBe('1 h 5 min')
+    expect(formatElapsed(50 * 3_600_000)).toBe('2 d')
   })
   it('names a language tag, and knows when it cannot', () => {
     expect(languageName('nb', 'en')).toBe('Norwegian Bokmål')

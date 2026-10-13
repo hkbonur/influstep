@@ -24,11 +24,11 @@ import {
 import type { Doc, Id } from '../_generated/dataModel'
 import type { MutationCtx } from '../_generated/server'
 import { applyEvent } from '../internal/data'
-import { enqueueJob } from '../jobs/queue'
+import { enqueueJob, markFailed } from '../jobs/queue'
 import { providersMode } from '../lib/env'
 import { PRESENTER_TOOL } from '../providers/llm'
 import { assertXTitleFits } from './attribution'
-import { instantAt } from './dates'
+import { hourAt, instantAt } from './dates'
 import { earliestPublishAt, formatFor, formatsFor, platformsOf } from './formats'
 import { assertLengthFitsKind, assertPostFits, findXPublication } from './posts'
 import { workspaceOf } from './workspace'
@@ -42,25 +42,30 @@ import { refusal } from '../lib/errors'
  */
 
 /**
- * One planned episode. A video goes to every platform the persona has; a post
- * goes only to X, at one of the day's post slots (shared `postSlotHours`),
- * with the intent and the length the planner chose for that slot.
+ * One planned episode. A video goes to every platform the persona has, or to
+ * the platforms it is given (a replacement keeps those of the episode it
+ * replaces); a post goes only to X, at one of the day's post slots (shared
+ * `postSlotHours`), with the intent and the length the planner chose for that
+ * slot.
  */
 export type PlannedEpisodeInput = {
   personaId: Id<'personas'>
   plannedFor: string
   concept: string
-  pillar: string
+  // A replacement keeps the pillar of the episode it replaces, which an episode planned without one never had.
+  pillar?: string
   sponsorSegment: Doc<'episodes'>['sponsorSegment']
   signalIds: Id<'signals'>[]
   experimentId?: Id<'experiments'>
   variantKey?: string
-} & ({ kind: 'video' } | { kind: PostKind; publishHour: number; intent: PostIntent; length: PostLength })
+} & ({ kind: 'video'; platforms?: Platform[] } | { kind: PostKind; publishHour: number; intent: PostIntent; length: PostLength })
 
 /** Where a new idea goes and when: a video everywhere the persona publishes, a post on X at its slot. */
 function placement(persona: Doc<'personas'>, input: PlannedEpisodeInput): { platforms: Platform[]; scheduledAt: number } {
   if (input.kind === 'video') {
-    const platforms = platformsOf(persona)
+    // formatsFor refuses a platform the persona does not have, and keeps PLATFORMS order.
+    const platforms =
+      input.platforms === undefined ? platformsOf(persona) : formatsFor(persona, input.platforms).map((format) => format.platform)
     return { platforms, scheduledAt: earliestPublishAt(persona, platforms, input.plannedFor) }
   }
   // Refuses by name when the persona has no X format.
@@ -389,9 +394,11 @@ function publicationBody(episode: Doc<'episodes'>, platform: Platform): string |
  * Nothing composes a description here: dispatch does, with the code in force
  * when the publication goes out.
  */
-export async function completeProduction(ctx: MutationCtx, episodeId: Id<'episodes'>, result: ProduceResult): Promise<void> {
+export async function completeProduction(ctx: MutationCtx, episodeId: Id<'episodes'>, result: ProduceResult): Promise<ProductionOutcome> {
   const episode = await ctx.db.get(episodeId)
   if (!episode) throw new Error(`episode ${episodeId} not found`)
+  // The operator killed it while the runner was rendering: the render has nowhere to go, and that is no failure.
+  if (episode.status === 'killed') return 'killed'
   const persona = await ctx.db.get(episode.personaId)
   if (!persona) throw new Error(`persona ${episode.personaId} not found`)
   if (episode.kind === 'text' || episode.kind === 'thread')
@@ -410,7 +417,7 @@ export async function completeProduction(ctx: MutationCtx, episodeId: Id<'episod
   if (episode.kind === 'image') {
     await createPostPublication(ctx, episode, persona, { mock, status })
     if (persona.autoPublish) await applyEvent(ctx, episodeId, { type: 'scheduled' })
-    return
+    return 'stored'
   }
   if (!episode.format) throw new Error(`episode ${episodeId} has no format: it cannot be scheduled before it is scripted`)
 
@@ -454,7 +461,11 @@ export async function completeProduction(ctx: MutationCtx, episodeId: Id<'episod
   }
   await ctx.db.patch(episodeId, { scheduledAt: earliestPublishAt(persona, episode.platforms, episode.plannedFor) })
   if (persona.autoPublish) await applyEvent(ctx, episodeId, { type: 'scheduled' })
+  return 'stored'
 }
+
+/** What became of a finished render: stored on its episode, or set aside because the episode was killed meanwhile. */
+export type ProductionOutcome = 'stored' | 'killed'
 
 /**
  * A post's one publication, on X at the post's slot, with the parts exactly
@@ -526,10 +537,20 @@ export async function createTrackedLink(
   })
 }
 
-/** A publication went live. Once every platform is live the episode is published. */
-export async function completePublication(ctx: MutationCtx, publicationId: Id<'publications'>, result: PublishResult): Promise<void> {
+/**
+ * A publication went live. Once every platform is live the episode is
+ * published. A withdrawn one stays withdrawn: its episode was killed, so it
+ * never turns live and never publishes the episode. Dispatch and the kill
+ * rule keep an upload from running for one; this holds if one ever does.
+ */
+export async function completePublication(
+  ctx: MutationCtx,
+  publicationId: Id<'publications'>,
+  result: PublishResult
+): Promise<PublicationOutcome> {
   const publication = await ctx.db.get(publicationId)
   if (!publication) throw new Error(`publication ${publicationId} not found`)
+  if (publication.status === 'withdrawn') return 'withdrawn'
   await ctx.db.patch(publicationId, {
     status: 'live',
     externalId: result.externalId,
@@ -546,7 +567,11 @@ export async function completePublication(ctx: MutationCtx, publicationId: Id<'p
     await ctx.db.patch(publication.episodeId, { publishedAt: result.publishedAt })
     await applyEvent(ctx, publication.episodeId, { type: 'published' })
   }
+  return 'live'
 }
+
+/** What became of a finished upload: live on its publication, or set aside because the publication was withdrawn. */
+export type PublicationOutcome = 'live' | 'withdrawn'
 
 export async function failPublication(ctx: MutationCtx, publicationId: Id<'publications'>, error: string): Promise<void> {
   const publication = await ctx.db.get(publicationId)
@@ -556,6 +581,91 @@ export async function failPublication(ctx: MutationCtx, publicationId: Id<'publi
   const episode = await ctx.db.get(publication.episodeId)
   if (!episode || !canTransition(episode.status, 'failed')) return
   await applyEvent(ctx, publication.episodeId, { type: 'failed', error: `${publication.platform}: ${error}` })
+}
+
+/** What a job of a killed episode that had not started yet fails with, so its row says why it never ran. */
+export const KILLED_BEFORE_RUN = 'The episode was killed before this ran.'
+
+/** The publications a kill withdraws: everything that has not gone out. Live ones stay live. */
+const WITHDRAWN_ON_KILL: readonly Doc<'publications'>['status'][] = ['draft', 'queued', 'failed']
+
+/**
+ * The operator withdraws an episode, on its page or in chat. Nothing of it
+ * goes out afterwards: every publication that has not gone out is withdrawn,
+ * and every job still queued for it fails with the reason, so neither the
+ * runner nor the backend picks it up. A job already running finishes against
+ * a killed episode and stores nothing (`completeProduction`). A publication
+ * uploading right now refuses the kill: the runner holds it and cannot be
+ * called back. Every refusal comes before the first write.
+ */
+export async function killEpisode(ctx: MutationCtx, episodeId: Id<'episodes'>): Promise<void> {
+  const episode = await ctx.db.get(episodeId)
+  if (!episode) throw new Error(`episode ${episodeId} not found`)
+  if (!canTransition(episode.status, 'killed')) throw refusal(`An episode at "${EPISODE_STATUS_LABELS[episode.status]}" cannot be killed.`)
+  const publications = await ctx.db
+    .query('publications')
+    .withIndex('by_episode', (q) => q.eq('episodeId', episodeId))
+    .collect()
+  const uploading = publications.find((publication) => publication.status === 'uploading')
+  if (uploading) throw refusal(`"${episode.title}" is uploading to ${PLATFORM_LABELS[uploading.platform]}; it cannot be killed now.`)
+
+  await applyEvent(ctx, episodeId, { type: 'killed' })
+  for (const publication of publications) {
+    if (!WITHDRAWN_ON_KILL.includes(publication.status)) continue
+    await ctx.db.patch(publication._id, { status: 'withdrawn' })
+  }
+  const jobs = await ctx.db
+    .query('jobs')
+    .withIndex('by_episode', (q) => q.eq('episodeId', episodeId))
+    .collect()
+  for (const job of jobs) {
+    if (job.status !== 'queued') continue
+    await markFailed(ctx, job._id, KILLED_BEFORE_RUN)
+  }
+}
+
+/**
+ * Not yet handed to the runner and still due to go: a move takes its time
+ * along. Narrower than "has not gone out": a failed publication keeps its
+ * time until a retry or a new render arms it again, and a withdrawn one never
+ * goes.
+ */
+function waitsForDispatch(publication: Doc<'publications'>): boolean {
+  return publication.status === 'draft' || publication.status === 'queued'
+}
+
+/**
+ * Moves an episode to another calendar day, on the calendar or in chat. An
+ * episode moves for as long as it could still be killed, so never once it is
+ * published, measured or killed. A video takes its platforms' hours on the new
+ * day; a post keeps its slot's hour. Every publication not yet handed to the
+ * runner, a package's drafts included, moves with it.
+ */
+export async function rescheduleEpisode(ctx: MutationCtx, episodeId: Id<'episodes'>, plannedFor: string): Promise<void> {
+  const episode = await ctx.db.get(episodeId)
+  if (!episode) throw new Error(`episode ${episodeId} not found`)
+  if (!canTransition(episode.status, 'killed')) throw refusal(`An episode at "${EPISODE_STATUS_LABELS[episode.status]}" cannot be moved.`)
+  const persona = await ctx.db.get(episode.personaId)
+  if (!persona) throw new Error(`persona ${episode.personaId} not found`)
+  const publications = await ctx.db
+    .query('publications')
+    .withIndex('by_episode', (q) => q.eq('episodeId', episode._id))
+    .collect()
+  if (isPost(episode.kind)) {
+    const scheduledAt = instantAt(plannedFor, hourAt(episode.scheduledAt, persona.timezone), persona.timezone)
+    await ctx.db.patch(episodeId, { plannedFor, scheduledAt, updatedAt: Date.now() })
+    for (const publication of publications) {
+      if (waitsForDispatch(publication)) await ctx.db.patch(publication._id, { scheduledAt })
+    }
+    return
+  }
+  const scheduledAt = earliestPublishAt(persona, episode.platforms, plannedFor)
+  await ctx.db.patch(episodeId, { plannedFor, scheduledAt, updatedAt: Date.now() })
+  for (const publication of publications) {
+    if (!waitsForDispatch(publication)) continue
+    const hour = formatFor(persona, publication.platform).publishHour
+    await ctx.db.patch(publication._id, { scheduledAt: instantAt(plannedFor, hour, persona.timezone) })
+  }
 }
 
 /** Local tools (n8n in docker, a dev server) answer on http; everything else on https. */

@@ -328,7 +328,11 @@ export default defineSchema({
     personaId: v.id('personas'),
     author: v.union(v.literal('operator'), v.literal('persona')),
     text: v.string(),
+    // The directive the operator's message became, and on the persona's reply the one it confirms.
     directiveId: v.optional(v.id('directives')),
+    // On a persona's reply: the episode a chat change touched or created, and the job a chat task queued.
+    episodeId: v.optional(v.id('episodes')),
+    jobId: v.optional(v.id('jobs')),
     createdAt: v.number(),
   }).index('by_persona', ['personaId']),
 
@@ -353,6 +357,8 @@ export default defineSchema({
     status: jobStatusValidator,
     personaId: v.optional(v.id('personas')),
     episodeId: v.optional(v.id('episodes')),
+    // The operator's chat message that asked for this job: set on a chat task (shared CHAT_TASKS).
+    messageId: v.optional(v.id('messages')),
     payload: v.any(),
     result: v.optional(v.any()),
     error: v.optional(v.string()),
@@ -364,6 +370,8 @@ export default defineSchema({
     finishedAt: v.optional(v.number()),
   })
     .index('by_runtime_status', ['runsOn', 'status'])
+    // Each agent's queue on the Agents page: one role's jobs in one status, oldest first.
+    .index('by_role_status', ['role', 'status'])
     .index('by_persona', ['personaId'])
     .index('by_episode', ['episodeId']),
 

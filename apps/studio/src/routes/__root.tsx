@@ -8,6 +8,7 @@ import {
   ListChecksIcon,
   PlugsIcon,
   PlusIcon,
+  RobotIcon,
   UsersThreeIcon,
 } from '@phosphor-icons/react'
 import { Link, Outlet, createRootRoute, useMatchRoute } from '@tanstack/react-router'
@@ -17,6 +18,7 @@ import React from 'react'
 import { PersonaAvatar, personaAvatarState } from '@/components/persona-avatar'
 import { Skeleton } from '@/components/ui'
 import { cn } from '@/lib/cn'
+import { useRunnerOnline } from '@/lib/use-runner-online'
 
 // `exact`: a persona's own page, its voice and its report light up the persona's row instead, so the section stays dark there
 // and the sidebar never shows two selections at once. Search params never count, so the open new persona form on
@@ -24,6 +26,7 @@ import { cn } from '@/lib/cn'
 const NAV = [
   { to: '/', label: 'Calendar', icon: CalendarBlankIcon, exact: true },
   { to: '/personas', label: 'Personas', icon: UsersThreeIcon, exact: true },
+  { to: '/agents', label: 'Agents', icon: RobotIcon, exact: false },
   { to: '/experiments', label: 'Experiments', icon: FlaskIcon, exact: false },
   { to: '/signals', label: 'Signals', icon: BroadcastIcon, exact: false },
   { to: '/checklist', label: 'Checklist', icon: ListChecksIcon, exact: false },
@@ -40,8 +43,8 @@ function Sidebar(props: { collapsed: boolean; onToggle: () => void }) {
   const checklist = useQuery(api.private.checklist.list, {})
   const providers = useQuery(api.private.providers.status, {})
   const open = checklist?.filter((item) => item.status === 'open').length ?? 0
-  const runnerAlive = providers?.runner?.alive ?? false
-  const runnerStatus = runnerAlive ? 'Runner online' : 'Runner offline'
+  const runnerOnline = useRunnerOnline(providers?.runner?.lastSeenAt ?? null)
+  const runnerStatus = runnerOnline ? 'Runner online' : 'Runner offline'
   const runnerLabel = providers ? `${runnerStatus}, ${providers.mode}` : runnerStatus
   return (
     // Sticky rather than a scroll container of its own: the page keeps window scroll, which the router resets on navigation.
@@ -81,7 +84,7 @@ function Sidebar(props: { collapsed: boolean; onToggle: () => void }) {
           role={props.collapsed ? 'img' : undefined}
           aria-label={props.collapsed ? runnerLabel : undefined}
         >
-          <span aria-hidden className={cn('size-1.5 rounded-full', { 'bg-field-green': runnerAlive, 'bg-fog': !runnerAlive })} />
+          <span aria-hidden className={cn('size-1.5 rounded-full', { 'bg-field-green': runnerOnline, 'bg-fog': !runnerOnline })} />
           {!props.collapsed && runnerStatus}
           {!props.collapsed && providers && <span className="ml-auto font-mono">{providers.mode}</span>}
         </div>

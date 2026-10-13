@@ -1,11 +1,15 @@
 import { JOB_RUNTIMES, type JobStatus } from '@influstep/shared'
-import type { Id } from '../_generated/dataModel'
+import type { Doc, Id } from '../_generated/dataModel'
 import type { QueryCtx } from '../_generated/server'
 
 type Reader = { db: QueryCtx['db'] }
 
-/** A runner silent this long is not alive (the Providers page says so), and a running job nobody reported for this long is orphaned. */
-export const RUNNER_STALE_MS = 2 * 60_000
+/** The runner process heard from last, or null when none ever checked in. One row per runner name, so the table stays small. */
+export async function latestRunner(ctx: Reader): Promise<Doc<'runners'> | null> {
+  const runners = await ctx.db.query('runners').collect()
+  const [latest] = runners.sort((a, b) => b.lastSeenAt - a.lastSeenAt)
+  return latest ?? null
+}
 
 /** A job in one of these statuses means one of the persona's agents is at work. */
 const ACTIVE_JOB_STATUSES = ['queued', 'running'] as const satisfies readonly JobStatus[]

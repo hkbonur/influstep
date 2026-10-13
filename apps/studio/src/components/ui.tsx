@@ -76,8 +76,9 @@ export function ExternalLinkButton(props: {
   )
 }
 
-function Spinner() {
-  return <span aria-hidden className="size-3 animate-spin rounded-full border-[1.5px] border-current border-r-transparent" />
+/** A small ring in the current text color. Decorative: the words beside it say what is in progress. */
+export function Spinner() {
+  return <span aria-hidden className="size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-current border-r-transparent" />
 }
 
 export function Eyebrow(props: { children: React.ReactNode; className?: string }) {

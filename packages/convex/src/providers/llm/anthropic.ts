@@ -4,14 +4,19 @@ import { z } from 'zod'
 import {
   CARD_TITLE_MAX,
   DELIVERY_LABELS,
+  EPISODE_KIND_LABELS,
   POST_INTENT_BRIEFS,
   POST_INTENT_LABELS,
   PUBLICATION_TITLE_MAX,
   THREAD_PARTS_MAX,
   THREAD_PARTS_MIN,
   VOICE_TRAITS_MAX,
+  SIGNAL_SOURCE_LABELS,
+  WEEKDAYS,
   WORDS_PER_SECOND,
+  chatIntentSchema,
   formatLength,
+  type ChatIntent,
   type Habit,
 } from '@influstep/shared'
 import { requireEnv } from '../../lib/env'
@@ -19,11 +24,16 @@ import {
   POST_LENGTH_TARGETS,
   PRESENTER_TOOL,
   type AccountPostSample,
+  type ChatTurn,
+  type InterpretArgs,
   type LlmProvider,
+  type PlanRow,
   type PostBrief,
   type PostDraft,
   type ScriptBrief,
   type ScriptDraft,
+  type TaskReportArgs,
+  type TaskSignal,
   type VoiceBrief,
   type VoiceDraft,
 } from './types'
@@ -199,6 +209,115 @@ export const anthropicLlm: LlmProvider = {
     if (!text) throw new Error('The model returned no text')
     return text.text
   },
+  async interpret(args) {
+    let response
+    try {
+      response = await client().messages.parse({
+        model: MODEL,
+        max_tokens: 8000,
+        output_config: { effort: 'low', format: zodOutputFormat(chatIntentSchema) },
+        system: [{ type: 'text', text: INTERPRET_SYSTEM, cache_control: { type: 'ephemeral' } }],
+        messages: [{ role: 'user', content: interpretRequest(args) }],
+      })
+    } catch (error) {
+      // The SDK checks the answer against the schema itself and throws a plain AnthropicError when it does not fit
+      // (a code with a dash, say). A reading that does not fit changes nothing, so it is conversation; a failed
+      // request (an APIError) stays an error, and the chat says it could not read the message.
+      if (error instanceof Anthropic.APIError || !(error instanceof Anthropic.AnthropicError)) throw error
+      console.warn(`The interpreter's answer did not fit the chat intent schema; it is read as conversation. ${error.message}`)
+      return CONVERSATION
+    }
+    if (response.stop_reason === 'refusal') throw new Error('The model declined to read this message')
+    if (!response.parsed_output) throw new Error('The model returned no parseable reading of the message')
+    return response.parsed_output
+  },
+  async taskReport(args) {
+    const response = await client().messages.create({
+      model: MODEL,
+      max_tokens: 8000,
+      output_config: { effort: 'low' },
+      system: [
+        { type: 'text', text: personaSystem(args.persona), cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: TASK_REPORT_INSTRUCTION },
+      ],
+      messages: [{ role: 'user', content: taskRequest(args) }],
+    })
+    if (response.stop_reason === 'refusal') throw new Error('The model declined to write this report')
+    const text = response.content.find((block) => block.type === 'text')
+    if (!text) throw new Error('The model returned no text')
+    return text.text
+  },
+}
+
+const CONVERSATION: ChatIntent = { kind: 'conversation' }
+
+/** What the interpreter does, for every message alike, so it caches; the persona, the plan and the message follow. */
+const INTERPRET_SYSTEM = [
+  'You read a message the operator of Influstep sends to one of its personas, an AI creator, and say what the message asks for. You never answer the message.',
+  'Kinds:',
+  '- conversation: a question, a remark, thanks, or anything you are unsure about. When in doubt, it is conversation.',
+  '- directive: a standing rule for the next scripts and posts ("focus on beginners", "stop saying guys"). text is the rule in the operator\'s words.',
+  "- replace: replace one planned episode with a new one. concept is the new episode's idea in a short phrase.",
+  '- move: move one planned episode to another day of its week. to is that weekday.',
+  '- drop: drop one planned episode.',
+  '- task: a report one agent writes. research_brief is research on a subject; comment_digest is what people say in the comments; analytics_summary is how the persona is doing in numbers. topic only when the message names a subject.',
+  '- give_code: a discount code for the descriptions. code is the code as written; offer is what it gives ("20% off Pro for 3 months"), or null when the message does not say; target only when the message ties the code to an episode.',
+  `Targets: when the message names an episode of the plan, set target.episodeId to that row's id and nothing else. "The next video" is next: true. When nothing in the plan fits, give the weekday and a keyword as the message says them, so the persona can say it found no such episode. Weekdays are ${WEEKDAYS.join(', ')}.`,
+  'Read the earlier chat for what a short follow-up refers to ("the second one", "yes, that one").',
+].join('\n')
+
+function interpretRequest(args: InterpretArgs): string {
+  return [
+    `Persona: ${args.persona.name} (@${args.persona.handle}), niche "${args.persona.niche}", pillars: ${args.persona.pillars.join('; ')}.`,
+    args.plan.length > 0
+      ? `The plan, the only episodes a message can change:\n${args.plan.map(planLine).join('\n')}`
+      : 'The plan is empty: no episode can be changed now.',
+    args.history.length > 0 ? `The chat so far:\n${args.history.map((turn) => turnLine(args.persona.name, turn)).join('\n')}` : '',
+    `The message to read:\n<message>\n${args.text}\n</message>`,
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+function planLine(row: PlanRow): string {
+  const pillar = row.pillar === null ? '' : `, pillar "${row.pillar}"`
+  return `- id ${row.id}: ${row.weekday} ${row.plannedFor}, ${EPISODE_KIND_LABELS[row.kind]}, "${row.title}"${pillar}, ${row.status}`
+}
+
+function turnLine(personaName: string, turn: ChatTurn): string {
+  return `${turn.author === 'operator' ? 'Operator' : personaName}: ${turn.text}`
+}
+
+const TASK_REPORT_INSTRUCTION = [
+  'You are answering your operator in the Influstep chat with a report one of your agents put together.',
+  'Write plain text in your own voice, under 120 words, with no headings.',
+  'Use only numbers that appear in the data; never estimate, total or invent one. When the data is empty, say so plainly.',
+].join(' ')
+
+function taskRequest(args: TaskReportArgs): string {
+  if (args.task === 'research_brief') {
+    const on = args.topic === null ? '' : ` on "${args.topic}"`
+    if (args.data.signals.length === 0) return `The operator asked for a research brief${on}. There are no new signals${on}.`
+    return `The operator asked for a research brief${on}. Say what people are asking about and which of it would make a good episode. The ${args.data.signals.length} newest unused signals:\n${signalsBlock(args.data.signals)}`
+  }
+  if (args.task === 'comment_digest') {
+    const window = `in the last ${args.data.days} days`
+    if (args.data.total === 0) return `The operator asked what people say in the comments. There are no comments ${window}.`
+    return `The operator asked what people say in the comments. Say what they praise, ask and complain about. ${args.data.total} comments ${window}; the ${args.data.comments.length} most liked:\n${signalsBlock(args.data.comments)}`
+  }
+  const { funnel, days, currency } = args.data
+  return [
+    `The operator asked how the last ${days} days went. Say what stands out.`,
+    `Views ${funnel.views}, follows ${funnel.follows}, link clicks ${funnel.clicks}, demos started ${funnel.demos}, signups ${funnel.signups}, trials ${funnel.trials}, paid ${funnel.paid} (${funnel.paidViaCode} through a discount code), value ${funnel.value} ${currency}.`,
+    'Views and follows are the latest platform counts taken in the window. Conversions are first-touch and undercount; say so if you mention them.',
+    funnel.mock ? 'Some of these numbers are mock data; say so.' : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+function signalsBlock(signals: TaskSignal[]): string {
+  return signals.map((signal) => `- [${SIGNAL_SOURCE_LABELS[signal.source]}] ${signal.title}: ${signal.summary} (${signal.url})`).join('\n')
 }
 
 function lengthInstruction(brief: ScriptBrief): string {

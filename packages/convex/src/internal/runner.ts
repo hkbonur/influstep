@@ -1,5 +1,6 @@
 import { v } from 'convex/values'
 import {
+  RUNNER_STALE_MS,
   X_POST_LIMIT,
   isPost,
   produceResultSchema,
@@ -13,8 +14,8 @@ import type { Doc, Id } from '../_generated/dataModel'
 import { internalMutation, internalQuery, type MutationCtx, type QueryCtx } from '../_generated/server'
 import { composeDescription } from '../core/attribution'
 import { activeDiscountCodeFor } from '../core/discounts'
-import { completeProduction, completePublication, failPublication, startProduction } from '../core/episodes'
-import { RUNNER_STALE_MS } from '../core/jobs'
+import { KILLED_BEFORE_RUN, completeProduction, completePublication, failPublication, startProduction } from '../core/episodes'
+import { latestRunner } from '../core/jobs'
 import { workspaceOf } from '../core/workspace'
 import { enqueueJob, markDone, markFailed, markRunning } from '../jobs/queue'
 import { applyEvent, failEpisodeIfPossible } from './data'
@@ -57,7 +58,9 @@ export const claimNext = internalMutation({
  * processes can share a name (RUNNER_NAME defaults to "runner"), and a rule by
  * name would hand a live process's job to its twin and run it twice. A
  * running job without a start time has no sign of life at all, so it goes
- * back too. The claim that picks the job up again counts the attempt.
+ * back too. The claim that picks the job up again counts the attempt. An
+ * orphan whose episode was killed meanwhile fails instead, like every queued
+ * job of a killed episode, so its render is not recorded again for nothing.
  */
 async function requeueOrphanedJobs(ctx: MutationCtx, now: number): Promise<void> {
   const running = await ctx.db
@@ -69,10 +72,19 @@ async function requeueOrphanedJobs(ctx: MutationCtx, now: number): Promise<void>
   for (const job of running) {
     const lastSign = job.aliveAt ?? job.startedAt
     if (lastSign !== undefined && now - lastSign < RUNNER_STALE_MS) continue
-    await ctx.db.patch(job._id, { status: 'queued', startedAt: undefined, aliveAt: undefined })
+    if (await episodeKilled(ctx, job)) await markFailed(ctx, job._id, KILLED_BEFORE_RUN)
+    else await ctx.db.patch(job._id, { status: 'queued', startedAt: undefined, aliveAt: undefined })
     // Only the job pointer goes: the holder said nothing, so its last seen time stays as it was.
     for (const runner of runners) if (runner.currentJobId === job._id) await ctx.db.patch(runner._id, { currentJobId: undefined })
   }
+}
+
+/** Whether the job's episode was killed; a job that serves no episode has none to kill. */
+async function episodeKilled(ctx: MutationCtx, job: Doc<'jobs'>): Promise<boolean> {
+  if (job.episodeId === undefined) return false
+  const episode = await ctx.db.get(job.episodeId)
+  if (!episode) throw new Error(`episode ${job.episodeId} of job ${job._id} not found`)
+  return episode.status === 'killed'
 }
 
 function toRunnerJob(job: Doc<'jobs'>): RunnerJob {
@@ -110,15 +122,19 @@ export const complete = internalMutation({
     const job = await ctx.db.get(args.jobId)
     if (!job) throw new Error(`job ${args.jobId} not found`)
     if (job.status !== 'running') throw new Error(`job ${args.jobId} is ${job.status}, not running`)
+    let stored: unknown = args.result
     if (job.kind === 'produce') {
       const result = produceResultSchema.parse(args.result)
       if (!job.episodeId) throw new Error('produce job has no episode')
-      await completeProduction(ctx, job.episodeId, result)
+      // A render of an episode killed meanwhile is set aside; the job still did its work, so it ends done and says why.
+      if ((await completeProduction(ctx, job.episodeId, result)) === 'killed') stored = { skipped: 'killed' }
     } else if (job.kind === 'publish') {
       const result = publishResultSchema.parse(args.result)
-      await completePublication(ctx, job.payload.publicationId as Id<'publications'>, result)
+      // An upload whose publication was withdrawn meanwhile stays withdrawn; the job keeps where it went, so it can be taken down.
+      if ((await completePublication(ctx, job.payload.publicationId as Id<'publications'>, result)) === 'withdrawn')
+        stored = { skipped: 'withdrawn', ...result }
     }
-    await markDone(ctx, args.jobId, args.result)
+    await markDone(ctx, args.jobId, stored)
     await clearRunnerJob(ctx, args.jobId)
   },
 })
@@ -148,10 +164,7 @@ async function clearRunnerJob(ctx: Parameters<typeof markDone>[0], jobId: Id<'jo
 
 export const latest = internalQuery({
   args: {},
-  handler: async (ctx): Promise<Doc<'runners'> | null> => {
-    const runners = await ctx.db.query('runners').collect()
-    return runners.sort((a, b) => b.lastSeenAt - a.lastSeenAt)[0] ?? null
-  },
+  handler: async (ctx): Promise<Doc<'runners'> | null> => latestRunner(ctx),
 })
 
 /**

@@ -1,5 +1,6 @@
 import {
   POST_INTENTS,
+  RUNNER_STALE_MS,
   isPost,
   postHook,
   postProblems,
@@ -12,7 +13,6 @@ import { describe, expect, it } from 'vitest'
 import { internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
 import { addDays, dayKey, instantAt, weekStart } from './core/dates'
-import { RUNNER_STALE_MS } from './core/jobs'
 import { setup } from '../test/setup'
 
 const TIMEZONE = 'Europe/Oslo'

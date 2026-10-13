@@ -133,6 +133,9 @@ function PublicationBlock(props: {
 }) {
   const publication = props.publication
   const hasRender = props.kind === 'video' || props.kind === 'image'
+  // An upload error is the failed block's to show. A withdrawn block keeps the error it had when its episode was
+  // killed, and in red under a block that never goes out it would read as something still to fix.
+  const uploadError = publication.status === 'failed' ? publication.error : undefined
   return (
     <div className={cn('grid gap-4 py-4', { 'sm:grid-cols-[auto_minmax(0,1fr)]': hasRender })}>
       {hasRender && <RenderFrame image={props.kind === 'image'} url={publication.renderUrl} aspect={publication.aspect} />}
@@ -160,7 +163,7 @@ function PublicationBlock(props: {
             {props.appUrl}/go/{props.link.slug} · {props.link.clicks} clicks
           </span>
         )}
-        {publication.error && <ErrorLine>{publication.error}</ErrorLine>}
+        {uploadError !== undefined && <ErrorLine>{uploadError}</ErrorLine>}
       </div>
     </div>
   )
@@ -171,13 +174,20 @@ function PublishTime(props: { publication: Publication; timezone: string }) {
   const publishedAt = props.publication.publishedAt
   return (
     <span className="ml-auto text-[11px] text-ash">
-      {publishedAt === undefined ? 'Goes out' : 'Published'}{' '}
+      {publishTimeWord(props.publication)}{' '}
       <Mono className="text-[11px] text-graphite">
         {formatDateTime(publishedAt === undefined ? props.publication.scheduledAt : publishedAt, props.timezone)}
       </Mono>{' '}
       {props.timezone}
     </span>
   )
+}
+
+/** A withdrawn publication went with its killed episode and never goes out, so its time is the one it was due at. */
+function publishTimeWord(publication: Publication): string {
+  if (publication.publishedAt !== undefined) return 'Published'
+  if (publication.status === 'withdrawn') return 'Was due'
+  return 'Goes out'
 }
 
 /**
@@ -243,7 +253,8 @@ function BlockText(props: {
     <>
       <p className="font-medium">{publication.title}</p>
       {publication.body && <p className="whitespace-pre-line text-graphite">{publication.body}</p>}
-      <FooterLines footer={publication.footer} sent={publication.sent} />
+      {/* A withdrawn publication never goes out, so no lines are ever added to it; showing them would say they will be. */}
+      {publication.status !== 'withdrawn' && <FooterLines footer={publication.footer} sent={publication.sent} />}
     </>
   )
 }

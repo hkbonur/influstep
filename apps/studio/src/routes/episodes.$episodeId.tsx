@@ -12,6 +12,7 @@ import {
   isPost,
   platformsOpen,
   type EpisodeKind,
+  type EpisodeStatus,
   type Platform,
 } from '@influstep/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
@@ -43,9 +44,10 @@ const APPROVE_LABEL: Record<EpisodeKind, string> = {
  * Where publications come from before there are any. A render makes a video's
  * or an image post's publications, which wait as a publish package unless the
  * persona publishes on its own; text posts and threads skip rendering and are
- * queued by their approval.
+ * queued by their approval. A killed episode never gets any.
  */
-function noPublicationsLine(kind: EpisodeKind, autoPublish: boolean): string {
+function noPublicationsLine(kind: EpisodeKind, status: EpisodeStatus, autoPublish: boolean): string {
+  if (status === 'killed') return 'Killed, so nothing goes out.'
   if (kind === 'text' || kind === 'thread') return 'Queued when the post is approved.'
   const rendered = kind === 'video' ? 'the episode is rendered' : 'the card is rendered'
   if (autoPublish) return `Queued when ${rendered}.`
@@ -278,9 +280,9 @@ function EpisodePage() {
           {data.publications.length === 0 && (
             <section>
               <Eyebrow className="mb-3">Publications</Eyebrow>
-              <p className="text-ash">{noPublicationsLine(episode.kind, persona.autoPublish)}</p>
+              <p className="text-ash">{noPublicationsLine(episode.kind, episode.status, persona.autoPublish)}</p>
               {/* Nothing is appended on X, posts and videos alike, so the code line speaks only for a video's other platforms. */}
-              {carriesCode && <CodeInForce code={data.discountCode} />}
+              {carriesCode && episode.status !== 'killed' && <CodeInForce code={data.discountCode} />}
             </section>
           )}
           {data.publications.length === 0 && episode.kind === 'video' && data.renders.length > 0 && (

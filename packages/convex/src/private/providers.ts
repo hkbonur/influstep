@@ -1,6 +1,6 @@
 import { PLATFORMS, SIGNAL_SOURCES } from '@influstep/shared'
 import { query } from '../_generated/server'
-import { RUNNER_STALE_MS } from '../core/jobs'
+import { latestRunner } from '../core/jobs'
 import { hasEnv, providersMode } from '../lib/env'
 import { platformHasRealAdapter } from '../providers/comments'
 import { signalSourceHasRealAdapter } from '../providers/signals'
@@ -10,8 +10,7 @@ export const status = query({
   args: {},
   handler: async (ctx) => {
     const mode = providersMode()
-    const runners = (await ctx.db.query('runners').collect()).sort((a, b) => b.lastSeenAt - a.lastSeenAt)
-    const runner = runners[0] ?? null
+    const runner = await latestRunner(ctx)
     const recentJobs = await ctx.db.query('jobs').order('desc').take(30)
     return {
       mode,
@@ -51,7 +50,8 @@ export const status = query({
         { name: 'avatar', real: 'HeyGen or Higgsfield (runner)', hasReal: false, needs: [] as string[] },
         { name: 'publisher', real: 'YouTube upload (runner)', hasReal: false, needs: [] as string[] },
       ],
-      runner: runner ? { ...runner, alive: Date.now() - runner.lastSeenAt < RUNNER_STALE_MS } : null,
+      // Whether it is alive is judged in the studio against its own clock (shared runnerAlive); a query would not notice it go silent.
+      runner,
       recentJobs,
     }
   },

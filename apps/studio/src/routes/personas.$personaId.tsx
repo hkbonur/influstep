@@ -114,7 +114,7 @@ function PersonaPage() {
       <div className="grid gap-8 xl:grid-cols-[1fr_1.4fr_0.8fr] xl:gap-6">
         <div className="flex max-h-[70vh] min-h-[28rem] flex-col">
           <Eyebrow className="mb-3">Chat</Eyebrow>
-          <PersonaChat persona={persona} messages={data.messages} directives={data.directives} />
+          <PersonaChat persona={persona} messages={data.messages} directives={data.directives} episodes={data.episodes} jobs={data.jobs} />
         </div>
 
         <div>

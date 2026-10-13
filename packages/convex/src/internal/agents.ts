@@ -1,13 +1,16 @@
-import { v, type Infer } from 'convex/values'
+import { ConvexError, v, type Infer } from 'convex/values'
 import {
+  EPISODE_STATUS_LABELS,
   MEASUREMENT_WINDOW_MS,
   POST_LENGTH_LABELS,
   PUBLICATION_BODY_MAX,
   PUBLICATION_TITLE_MAX,
   SIGNAL_SOURCES,
   X_POST_LIMIT,
+  chatIntentSchema,
   decideExperiment,
   hookOf,
+  isChatTask,
   isPost,
   lengthProblem,
   METRIC_DENOMINATOR,
@@ -17,6 +20,9 @@ import {
   resolveEpisodeFormat,
   scriptProblems,
   voiceStatsOf,
+  weekdayOf,
+  type ChatIntent,
+  type ChatTask,
   type EpisodePost,
   type PostKind,
   type PostLength,
@@ -25,7 +31,7 @@ import {
 } from '@influstep/shared'
 import { internal } from '../_generated/api'
 import type { Doc, Id } from '../_generated/dataModel'
-import { internalAction, internalMutation, internalQuery, type ActionCtx, type QueryCtx } from '../_generated/server'
+import { internalAction, internalMutation, internalQuery, type ActionCtx, type MutationCtx, type QueryCtx } from '../_generated/server'
 import {
   accountCountsOf,
   examplePostsOf,
@@ -35,13 +41,14 @@ import {
   topOriginalsOf,
   voiceSampleOf,
 } from '../core/account'
+import { applyChatIntent, changeablePlan } from '../core/chat'
 import { addDays, dayKey } from '../core/dates'
 import { discountCodesFor as discountCodesRule, redemptionOwner } from '../core/discounts'
 import { approveEpisode, createIdea, formatAndShots } from '../core/episodes'
 import { formatFor, formatsFor } from '../core/formats'
 import { planPostSlots, planWeek as planWeekRule } from '../core/planner'
 import { savePost } from '../core/posts'
-import { latestPerPublication } from '../core/report'
+import { latestPerPublication, reportWindow } from '../core/report'
 import { workspaceOf } from '../core/workspace'
 import { providersMode } from '../lib/env'
 import { analyticsProvider } from '../providers/analytics'
@@ -51,9 +58,13 @@ import {
   POST_LENGTH_TARGETS,
   llmProvider,
   type AccountPostSample,
+  type ChatTurn,
+  type PlanRow,
   type PostBrief,
   type ScriptBrief,
   type ScriptDraft,
+  type TaskReportArgs,
+  type TaskSignal,
 } from '../providers/llm'
 import { signalSourceHasRealAdapter, signalsProvider } from '../providers/signals'
 import { timelineProvider } from '../providers/timeline'
@@ -296,7 +307,7 @@ export const planWeekMutation = internalMutation({
  */
 export const writeScript = internalAction({
   args: { episodeId: v.string() },
-  handler: async (ctx, args): Promise<{ title: string }> => {
+  handler: async (ctx, args): Promise<WriterResult> => {
     const episodeId = args.episodeId as Id<'episodes'>
     const context: EpisodeContext = await ctx.runQuery(internal.internal.data.getEpisodeContext, { episodeId })
     const kind = context.episode.kind
@@ -331,16 +342,23 @@ export const writeScript = internalAction({
     const draft = firstProblems.length === 0 ? first : await llm.writeScript({ ...brief, problems: firstProblems })
     const problems = scriptDraftProblems(brief, draft)
     if (problems.length > 0) throw new Error(`The writer missed the script's rules twice: ${problems.join(' ')}`)
-    await ctx.runMutation(internal.internal.agents.storeScript, {
+    return ctx.runMutation(internal.internal.agents.storeScript, {
       episodeId,
       title: draft.title,
       description: draft.description,
       shotPlan: draft.shotPlan,
       autoApprove: persona.autoApprove,
     })
-    return { title: draft.title }
   },
 })
+
+/**
+ * What the writer's job ends with: the title it wrote, or a skip when the
+ * episode was killed while the model was writing. Killing an episode fails
+ * its queued jobs but cannot stop one that is running, so the store step is
+ * where a late draft is dropped, and the job still ends done.
+ */
+type WriterResult = { title: string } | { skipped: 'killed' }
 
 /**
  * The shared beat rules for the sponsor segment, the format's length, then
@@ -388,9 +406,10 @@ export const storeScript = internalMutation({
     shotPlan: shotPlanValidator,
     autoApprove: v.boolean(),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<WriterResult> => {
     const episode = await ctx.db.get(args.episodeId)
     if (!episode) throw new Error(`episode ${args.episodeId} not found`)
+    if (episode.status === 'killed') return { skipped: 'killed' }
     const persona = await ctx.db.get(episode.personaId)
     if (!persona) throw new Error(`persona ${episode.personaId} not found`)
     const workspace = await workspaceOf(ctx, persona)
@@ -411,6 +430,7 @@ export const storeScript = internalMutation({
     })
     await applyEvent(ctx, args.episodeId, { type: 'script_written' })
     if (args.autoApprove) await approveEpisode(ctx, args.episodeId)
+    return { title: args.title }
   },
 })
 
@@ -422,7 +442,7 @@ export const storeScript = internalMutation({
  * misses the length goes back to the model once with the problems named; a
  * second miss fails the episode with them.
  */
-async function writePost(ctx: ActionCtx, context: EpisodeContext, kind: PostKind): Promise<{ title: string }> {
+async function writePost(ctx: ActionCtx, context: EpisodeContext, kind: PostKind): Promise<WriterResult> {
   const { episode, persona, workspace, directives, signals, examples } = context
   // A post planned before intents and lengths existed has neither and is written to its kind alone.
   const length = episode.length ?? null
@@ -464,13 +484,12 @@ async function writePost(ctx: ActionCtx, context: EpisodeContext, kind: PostKind
   const draft = firstProblems.length === 0 ? first : await llm.writePost({ ...brief, problems: firstProblems })
   const problems = draftProblems(kind, length, draft.post)
   if (problems.length > 0) throw new Error(`The writer missed the post's limits twice: ${problems.join(' ')}`)
-  await ctx.runMutation(internal.internal.agents.storePost, {
+  return ctx.runMutation(internal.internal.agents.storePost, {
     episodeId: episode._id,
     title: draft.title,
     post: draft.post,
     autoApprove: persona.autoApprove,
   })
-  return { title: draft.title }
 }
 
 /** X's rules for the kind (shared `postProblems`), then the length the planner chose, when it chose one. */
@@ -493,10 +512,14 @@ export const storePost = internalMutation({
     post: episodePostValidator,
     autoApprove: v.boolean(),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<WriterResult> => {
+    const episode = await ctx.db.get(args.episodeId)
+    if (!episode) throw new Error(`episode ${args.episodeId} not found`)
+    if (episode.status === 'killed') return { skipped: 'killed' }
     await savePost(ctx, args.episodeId, { title: args.title, post: args.post })
     await applyEvent(ctx, args.episodeId, { type: 'script_written' })
     if (args.autoApprove) await approveEpisode(ctx, args.episodeId)
+    return { title: args.title }
   },
 })
 
@@ -956,42 +979,320 @@ function sampleOf(post: Doc<'accountPosts'>): AccountPostSample {
 // Persona chat
 // ---------------------------------------------------------------------------
 
-export const replyInChat = internalAction({
-  args: { personaId: v.id('personas'), directive: v.optional(v.string()) },
+/** How many earlier messages the persona reads before it answers. */
+const CHAT_HISTORY = 20
+
+/**
+ * Every operator message is read once (docs/plan.md, slice 7). The action
+ * reads the chat and the changeable plan, asks the language model what the
+ * message asks for, and for a directive or a conversation also writes the
+ * persona's reply, so the one mutation that follows only applies and stores:
+ * a change and the words that report it land in the same transaction.
+ * Nothing here throws at the operator. A message the model cannot read, or a
+ * change that fails, still gets a persona message that says so.
+ */
+export const handleMessage = internalAction({
+  args: { messageId: v.id('messages') },
   handler: async (ctx, args): Promise<void> => {
-    const { persona } = await ctx.runQuery(internal.internal.data.getPersona, { personaId: args.personaId })
-    const history: Doc<'messages'>[] = await ctx.runQuery(internal.internal.agents.chatHistory, { personaId: args.personaId })
-    const text = await llmProvider().reply({
-      persona: {
-        name: persona.name,
-        handle: persona.handle,
-        niche: persona.niche,
-        tone: persona.tone,
-        bible: persona.bible,
-        pillars: persona.pillars,
-      },
-      history: history.map((message) => ({ author: message.author, text: message.text })),
-      directive: args.directive,
-    })
-    await ctx.runMutation(internal.internal.agents.storeReply, { personaId: args.personaId, text })
+    const chat: ChatReading = await ctx.runQuery(internal.internal.agents.chatReading, { messageId: args.messageId })
+    const understood = await understand(chat)
+    if (!understood.ok) {
+      await ctx.runMutation(internal.internal.agents.storeReply, {
+        personaId: chat.personaId,
+        text: `I could not read that just now: ${understood.error}`,
+      })
+      return
+    }
+    try {
+      await ctx.runMutation(internal.internal.agents.applyIntent, {
+        messageId: args.messageId,
+        intent: understood.intent,
+        reply: understood.reply,
+      })
+    } catch (error) {
+      // applyChatIntent turns every refusal into a reply, so this is a bug: the operator still hears about
+      // it, nothing changed (the mutation rolled back), and the rethrow keeps it in the logs.
+      await ctx.runMutation(internal.internal.agents.storeReply, {
+        personaId: chat.personaId,
+        text: `Something went wrong while I worked on that, so nothing changed: ${errorText(error)}`,
+      })
+      throw error
+    }
   },
 })
 
-export const chatHistory = internalQuery({
-  args: { personaId: v.id('personas') },
-  handler: async (ctx, args): Promise<Doc<'messages'>[]> => {
-    const messages = await ctx.db
+interface ChatReading {
+  personaId: Id<'personas'>
+  persona: ScriptBrief['persona']
+  /** The message to read. */
+  text: string
+  /** The chat before it, oldest first. */
+  history: ChatTurn[]
+  plan: PlanRow[]
+}
+
+/** The message, the chat before it, and the plan rows the interpreter may change (core `changeablePlan`). */
+export const chatReading = internalQuery({
+  args: { messageId: v.id('messages') },
+  handler: async (ctx, args): Promise<ChatReading> => {
+    const message = await ctx.db.get(args.messageId)
+    if (!message) throw new Error(`message ${args.messageId} not found`)
+    if (message.author !== 'operator') throw new Error(`message ${message._id} is the persona's own; only operator messages are read`)
+    const persona = await ctx.db.get(message.personaId)
+    if (!persona) throw new Error(`persona ${message.personaId} not found`)
+    const earlier = await ctx.db
       .query('messages')
-      .withIndex('by_persona', (q) => q.eq('personaId', args.personaId))
+      .withIndex('by_persona', (q) => q.eq('personaId', persona._id).lt('_creationTime', message._creationTime))
       .order('desc')
-      .take(20)
-    return messages.reverse()
+      .take(CHAT_HISTORY)
+    const plan = await changeablePlan(ctx, persona._id)
+    return {
+      personaId: persona._id,
+      persona: personaBriefOf(persona),
+      text: message.text,
+      history: earlier.reverse().map((turn) => ({ author: turn.author, text: turn.text })),
+      plan: plan.map((episode) => ({
+        id: episode._id,
+        weekday: weekdayOf(episode.plannedFor),
+        plannedFor: episode.plannedFor,
+        kind: episode.kind,
+        title: episode.title,
+        pillar: episode.pillar ?? null,
+        status: EPISODE_STATUS_LABELS[episode.status],
+      })),
+    }
   },
 })
 
+/** What the model made of a message: an intent, with the persona's reply when the intent is a directive or a conversation. */
+type Understood = { ok: true; intent: ChatIntent; reply: string | null } | { ok: false; error: string }
+
+async function understand(chat: ChatReading): Promise<Understood> {
+  const llm = llmProvider()
+  try {
+    const intent = validIntent(await llm.interpret(chat))
+    if (intent.kind !== 'directive' && intent.kind !== 'conversation') return { ok: true, intent, reply: null }
+    const reply = await llm.reply({
+      persona: chat.persona,
+      history: [...chat.history, { author: 'operator', text: chat.text }],
+      directive: intent.kind === 'directive' ? directiveText(intent.text, chat.text) : undefined,
+    })
+    return { ok: true, intent, reply }
+  } catch (error) {
+    return { ok: false, error: errorText(error) }
+  }
+}
+
+/** The words a directive is stored with, as core `applyDirective` picks them: the restatement, or the message when it is empty. */
+function directiveText(restated: string, message: string): string {
+  const text = restated.trim()
+  return text === '' ? message : text
+}
+
+/** The interpreter's answer, held to the shared schema. One that does not fit changes nothing: it is conversation. */
+function validIntent(answer: unknown): ChatIntent {
+  const parsed = chatIntentSchema.safeParse(answer)
+  if (parsed.success) return parsed.data
+  console.warn(`The interpreter's answer did not fit the chat intent schema; it is read as conversation. ${parsed.error.message}`)
+  return { kind: 'conversation' }
+}
+
+/**
+ * Applies what the message asks for and stores the persona's reply with the
+ * episode, job or directive it is about; core `applyChatIntent` does both. The
+ * reply of a directive or a conversation was written in the action and comes
+ * in as `reply`; every other kind is answered by the core and takes null.
+ */
+export const applyIntent = internalMutation({
+  // The intent was checked against chatIntentSchema in the action and is parsed again here, at the boundary.
+  args: { messageId: v.id('messages'), intent: v.any(), reply: v.union(v.string(), v.null()) },
+  handler: async (ctx, args): Promise<void> => {
+    const message = await ctx.db.get(args.messageId)
+    if (!message) throw new Error(`message ${args.messageId} not found`)
+    const persona = await ctx.db.get(message.personaId)
+    if (!persona) throw new Error(`persona ${message.personaId} not found`)
+    const intent = chatIntentSchema.parse(args.intent)
+    await applyChatIntent(ctx, persona, message._id, intent, args.reply)
+  },
+})
+
+/** A persona message that belongs to no change and no task: the answer when a message could not be read or applied. */
 export const storeReply = internalMutation({
   args: { personaId: v.id('personas'), text: v.string() },
-  handler: async (ctx, args) => {
-    await ctx.db.insert('messages', { personaId: args.personaId, author: 'persona', text: args.text, createdAt: Date.now() })
+  handler: async (ctx, args): Promise<void> => {
+    await insertPersonaMessage(ctx, { personaId: args.personaId, text: args.text })
   },
 })
+
+async function insertPersonaMessage(
+  ctx: MutationCtx,
+  args: { personaId: Id<'personas'>; text: string; jobId?: Id<'jobs'> }
+): Promise<Id<'messages'>> {
+  return ctx.db.insert('messages', {
+    personaId: args.personaId,
+    author: 'persona',
+    text: args.text,
+    jobId: args.jobId,
+    createdAt: Date.now(),
+  })
+}
+
+/** A refusal's own words, or the message of anything else; the chat shows it as it is, like the studio does. */
+function errorText(error: unknown): string {
+  if (error instanceof ConvexError && typeof error.data === 'string') return error.data
+  return error instanceof Error ? error.message : String(error)
+}
+
+function personaBriefOf(persona: Doc<'personas'>): ScriptBrief['persona'] {
+  return {
+    name: persona.name,
+    handle: persona.handle,
+    niche: persona.niche,
+    tone: persona.tone,
+    bible: persona.bible,
+    pillars: persona.pillars,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Chat tasks: a report one agent writes and posts back in the persona's chat
+// ---------------------------------------------------------------------------
+
+/** How many unused signals a research brief reads, newest first. */
+const RESEARCH_BRIEF_SIGNALS = 10
+/** How far back a comment digest and an analytics summary look. */
+const TASK_WINDOW_DAYS = 7
+/** How many of the window's comments the writer of a digest reads, most liked first; the count covers them all. */
+const COMMENT_DIGEST_COMMENTS = 30
+
+export const researchBrief = internalAction({
+  args: { jobId: v.id('jobs') },
+  handler: async (ctx, args): Promise<{ messageId: Id<'messages'> }> => runChatTask(ctx, args.jobId, 'research_brief'),
+})
+
+export const commentDigest = internalAction({
+  args: { jobId: v.id('jobs') },
+  handler: async (ctx, args): Promise<{ messageId: Id<'messages'> }> => runChatTask(ctx, args.jobId, 'comment_digest'),
+})
+
+export const analyticsSummary = internalAction({
+  args: { jobId: v.id('jobs') },
+  handler: async (ctx, args): Promise<{ messageId: Id<'messages'> }> => runChatTask(ctx, args.jobId, 'analytics_summary'),
+})
+
+/**
+ * Gathers the task's data in code, has the model put it in words, and posts
+ * the words in the persona's chat with the job; the message is the job's
+ * result. A task that fails posts nothing here and throws: dispatch fails the
+ * job and posts why in the chat (core `reportChatTaskFailure`), so the
+ * operator who asked is never left waiting and hears it once.
+ */
+async function runChatTask(ctx: ActionCtx, jobId: Id<'jobs'>, task: ChatTask): Promise<{ messageId: Id<'messages'> }> {
+  const report: TaskReportArgs = await ctx.runQuery(internal.internal.agents.taskReading, { jobId })
+  if (report.task !== task) throw new Error(`job ${jobId} is a ${report.task} job, not a ${task} job`)
+  const text = await llmProvider().taskReport(report)
+  const messageId: Id<'messages'> = await ctx.runMutation(internal.internal.agents.storeTaskMessage, { jobId, text })
+  return { messageId }
+}
+
+/** The persona, the topic and the data of a chat task job, as the report's writer reads them. */
+export const taskReading = internalQuery({
+  args: { jobId: v.id('jobs') },
+  handler: async (ctx, args): Promise<TaskReportArgs> => {
+    const job = await ctx.db.get(args.jobId)
+    if (!job) throw new Error(`job ${args.jobId} not found`)
+    if (!isChatTask(job.kind)) throw new Error(`job ${job._id} is a ${job.kind} job, not a chat task`)
+    if (!job.personaId) throw new Error(`chat task job ${job._id} has no persona`)
+    const persona = await ctx.db.get(job.personaId)
+    if (!persona) throw new Error(`persona ${job.personaId} not found`)
+    const topic = topicOf(job.payload)
+    const brief = personaBriefOf(persona)
+    const now = Date.now()
+    if (job.kind === 'research_brief') {
+      return { persona: brief, task: job.kind, topic, data: { signals: await unusedSignals(ctx, persona._id, topic) } }
+    }
+    if (job.kind === 'comment_digest') {
+      const comments = await commentsSince(ctx, persona._id, now - TASK_WINDOW_DAYS * 86_400_000)
+      return {
+        persona: brief,
+        task: job.kind,
+        topic,
+        data: { days: TASK_WINDOW_DAYS, total: comments.length, comments: comments.slice(0, COMMENT_DIGEST_COMMENTS).map(taskSignalOf) },
+      }
+    }
+    // The report page's own reading over the window (core `reportWindow`), so the chat and the page never disagree about a week.
+    const window = await reportWindow(ctx, persona, TASK_WINDOW_DAYS, now)
+    return { persona: brief, task: job.kind, topic, data: { days: window.days, funnel: window.funnel, currency: window.currency } }
+  },
+})
+
+/** The chat task's report in the persona's chat, with the job it answers. */
+export const storeTaskMessage = internalMutation({
+  args: { jobId: v.id('jobs'), text: v.string() },
+  handler: async (ctx, args): Promise<Id<'messages'>> => {
+    const job = await ctx.db.get(args.jobId)
+    if (!job) throw new Error(`job ${args.jobId} not found`)
+    if (!job.personaId) throw new Error(`chat task job ${job._id} has no persona`)
+    return insertPersonaMessage(ctx, { personaId: job.personaId, text: args.text, jobId: job._id })
+  },
+})
+
+/** A chat task's topic; the payload is stored as v.any(), so it is narrowed here. Null when the message named none. */
+function topicOf(payload: unknown): string | null {
+  if (typeof payload !== 'object' || payload === null) throw new Error('job payload is not an object')
+  if (!('topic' in payload) || payload.topic === undefined) return null
+  if (typeof payload.topic !== 'string') throw new Error('a chat task topic is not a string')
+  return payload.topic
+}
+
+/** The persona's newest signals nobody used yet, those that mention the topic when there is one. */
+async function unusedSignals(ctx: QueryCtx, personaId: Id<'personas'>, topic: string | null): Promise<TaskSignal[]> {
+  const signals = await ctx.db
+    .query('signals')
+    .withIndex('by_persona_status', (q) => q.eq('personaId', personaId).eq('status', 'new'))
+    .order('desc')
+    .collect()
+  const terms = topic === null ? null : topicTerms(topic)
+  return signals
+    .filter((signal) => terms === null || mentionsAny(signal, terms))
+    .slice(0, RESEARCH_BRIEF_SIGNALS)
+    .map(taskSignalOf)
+}
+
+/** Where a topic names more than one subject: "Make vs n8n", "Zapier, Make and n8n". */
+const TOPIC_CONNECTOR = /\s*,\s*|\s+(?:vs\.?|versus|and|or)\s+/i
+/** An article opening a subject says nothing about it: "the n8n error trigger" is about "n8n error trigger". */
+const LEADING_ARTICLE = /^(?:the|a|an)\s+/i
+
+/**
+ * The subjects of a topic; a signal has to mention one of them whole. A
+ * comparison such as "Make vs n8n" is about either side, so the topic splits
+ * at its connectors, but never at a plain space: a single word of a phrase
+ * ("the", "sign" of "sign-off") is part of too many titles to filter by. A
+ * topic of commas alone names no subject, so no signal mentions it.
+ */
+function topicTerms(topic: string): string[] {
+  return topic
+    .toLowerCase()
+    .split(TOPIC_CONNECTOR)
+    .map((subject) => subject.trim().replace(LEADING_ARTICLE, ''))
+    .filter((subject) => subject !== '')
+}
+
+function mentionsAny(signal: Doc<'signals'>, terms: string[]): boolean {
+  const texts = [signal.title, ...signal.topics].map((text) => text.toLowerCase())
+  return terms.some((term) => texts.some((text) => text.includes(term)))
+}
+
+/** Every comment the publisher read under the persona's publications since `since`, most liked first. */
+async function commentsSince(ctx: QueryCtx, personaId: Id<'personas'>, since: number): Promise<Doc<'signals'>[]> {
+  const comments = await ctx.db
+    .query('signals')
+    .withIndex('by_persona_external', (q) => q.eq('personaId', personaId).eq('source', 'comments'))
+    .collect()
+  return comments.filter((comment) => comment.foundAt >= since).sort((a, b) => b.score - a.score)
+}
+
+function taskSignalOf(signal: Doc<'signals'>): TaskSignal {
+  return { source: signal.source, title: signal.title, summary: signal.summary, url: signal.url, topics: signal.topics }
+}

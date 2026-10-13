@@ -18,6 +18,19 @@ export type JobRuntime = (typeof JOB_RUNTIMES)[number]
 export const JOB_STATUSES = ['queued', 'running', 'done', 'failed'] as const
 export type JobStatus = (typeof JOB_STATUSES)[number]
 
+/** A runner silent this long is not alive, and a running job nobody reported for this long is orphaned. */
+export const RUNNER_STALE_MS = 2 * 60_000
+
+/**
+ * Whether a runner last heard from at `lastSeenAt` is alive at `now`. The
+ * studio reads it against its own clock: a query computing it on the backend
+ * re-runs only when a row changes, so once the runner stops beating, nothing
+ * would say it went silent.
+ */
+export function runnerAlive(lastSeenAt: number, now: number): boolean {
+  return now - lastSeenAt < RUNNER_STALE_MS
+}
+
 /**
  * Every unit of agent work. `runsOn` says which process executes it: the
  * backend runs HTTP-only work, the runner runs what needs a browser, ffmpeg,
@@ -35,6 +48,10 @@ export const JOB_KINDS = {
   open_browser: { role: 'producer', runsOn: 'runner' },
   import_x_history: { role: 'researcher', runsOn: 'backend' },
   learn_voice: { role: 'analyst', runsOn: 'backend' },
+  // Tasks the operator gives a persona in its chat (shared CHAT_TASKS): the role that owns the data answers there.
+  research_brief: { role: 'researcher', runsOn: 'backend' },
+  comment_digest: { role: 'publisher', runsOn: 'backend' },
+  analytics_summary: { role: 'analyst', runsOn: 'backend' },
 } as const satisfies Record<string, { role: AgentRole; runsOn: JobRuntime }>
 
 export type JobKind = keyof typeof JOB_KINDS
@@ -53,6 +70,9 @@ export const JOB_KIND_LABELS: Record<JobKind, string> = {
   open_browser: 'Open browser for sign-in',
   import_x_history: 'Import X history',
   learn_voice: 'Learn the voice',
+  research_brief: 'Research brief',
+  comment_digest: 'Comment digest',
+  analytics_summary: 'Analytics summary',
 }
 
 // ---------------------------------------------------------------------------

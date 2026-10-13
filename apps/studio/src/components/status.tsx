@@ -46,7 +46,8 @@ export function StatusPill(props: { status: EpisodeStatus }) {
  * A publication's own status, apart from its episode's (DESIGN.md, Publish
  * package): a draft waits on the operator like "Ready to publish", queued is
  * quiet until its time, uploading is the runner at work, live is green and
- * failed is red.
+ * failed is red. Withdrawn is the killed episode's publication that never went
+ * out, so it reads like the killed episode: fog, struck through.
  */
 const PUBLICATION_STATUS_TINTS: Record<PublicationStatus, StatusTint> = {
   draft: 'note-blue',
@@ -54,10 +55,15 @@ const PUBLICATION_STATUS_TINTS: Record<PublicationStatus, StatusTint> = {
   uploading: 'note-blue',
   live: 'field-green',
   failed: 'signal-red',
+  withdrawn: 'fog',
 }
 
 export function PublicationStatusPill(props: { status: PublicationStatus }) {
-  return <Pill tint={PUBLICATION_STATUS_TINTS[props.status]}>{PUBLICATION_STATUS_LABELS[props.status]}</Pill>
+  return (
+    <Pill tint={PUBLICATION_STATUS_TINTS[props.status]} struck={props.status === 'withdrawn'}>
+      {PUBLICATION_STATUS_LABELS[props.status]}
+    </Pill>
+  )
 }
 
 export function SponsorPill(props: { segment: SponsorSegment }) {

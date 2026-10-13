@@ -69,7 +69,7 @@ export async function giveDiscountCode(
   args: { personaId: Id<'personas'>; code: string; offer: string; episodeId?: Id<'episodes'> }
 ): Promise<Id<'discountCodes'>> {
   const code = normalizeDiscountCode(args.code)
-  if (!code) throw refusal('A code is 3 to 24 letters or digits.')
+  if (!code) throw refusal(INVALID_CODE)
   const offer = args.offer.trim()
   if (!offer) throw refusal('Say what the code offers, such as "20% off Pro for 3 months".')
   const persona = await ctx.db.get(args.personaId)
@@ -106,12 +106,20 @@ export async function giveDiscountCode(
   await ctx.db.insert('messages', {
     personaId: persona._id,
     author: 'persona',
-    text: episode
-      ? `Code ${code} (${offer}) goes into the descriptions of "${episode.title}".`
-      : `Code ${code} (${offer}) goes into every description from the next publication on.`,
+    text: codeGivenText({ code, offer, episodeTitle: episode?.title ?? null }),
+    episodeId: episode?._id,
     createdAt: now,
   })
   return discountCodeId
+}
+
+/** What a code must be (shared DISCOUNT_CODE_PATTERN), in the words the operator reads. */
+export const INVALID_CODE = 'A code is 3 to 24 letters or digits.'
+
+/** The persona's confirmation of a code it was given, in its chat: persona-wide, or for one episode. */
+export function codeGivenText(args: { code: string; offer: string; episodeTitle: string | null }): string {
+  if (args.episodeTitle === null) return `Code ${args.code} (${args.offer}) goes into every description from the next publication on.`
+  return `Code ${args.code} (${args.offer}) goes into the descriptions of "${args.episodeTitle}".`
 }
 
 async function inUseMessage(ctx: Reader, persona: Doc<'personas'>, row: Doc<'discountCodes'>): Promise<string> {

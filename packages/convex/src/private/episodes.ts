@@ -1,12 +1,11 @@
 import { v } from 'convex/values'
-import { canTransition, EPISODE_STATUS_LABELS, hookOf, isPost, scriptProblems, textEditable } from '@influstep/shared'
+import { EPISODE_STATUS_LABELS, hookOf, isPost, scriptProblems, textEditable } from '@influstep/shared'
 import type { Doc } from '../_generated/dataModel'
 import { mutation, query, type QueryCtx } from '../_generated/server'
 import { assertXTitleFits, publicationFooter, type DescriptionFooter } from '../core/attribution'
-import { hourAt, instantAt } from '../core/dates'
 import { activeDiscountCodeFor } from '../core/discounts'
-import { approveEpisode, formatAndShots, setEpisodePlatforms, startProduction } from '../core/episodes'
-import { earliestPublishAt, formatFor, platformsOf } from '../core/formats'
+import { approveEpisode, formatAndShots, killEpisode, rescheduleEpisode, setEpisodePlatforms, startProduction } from '../core/episodes'
+import { platformsOf } from '../core/formats'
 import { savePost } from '../core/posts'
 import { countConversions } from '../core/report'
 import { workspaceOf } from '../core/workspace'
@@ -127,19 +126,11 @@ type PackagedPublication = Doc<'publications'> & { renderUrl: string | null; foo
 /**
  * Handed to the runner or live: its description is fixed, with the code
  * stamped at dispatch. A failed publication has not gone out, since a retry
- * or a new render composes it again with the code in force then.
+ * or a new render composes it again with the code in force then, and a
+ * withdrawn one never will.
  */
 function wentOut(publication: Doc<'publications'>): boolean {
   return publication.status === 'uploading' || publication.status === 'live'
-}
-
-/**
- * Not yet handed to the runner and still due to go: a move takes its time
- * along. Narrower than "has not gone out" (`wentOut`): a failed publication
- * keeps its time until a retry or a new render arms it again.
- */
-function waitsForDispatch(publication: Doc<'publications'>): boolean {
-  return publication.status === 'draft' || publication.status === 'queued'
 }
 
 /** The code a publication that went out carried, or null when none was in force then. */
@@ -233,9 +224,7 @@ export const approve = mutation({
 
 export const kill = mutation({
   args: { episodeId: v.id('episodes') },
-  handler: async (ctx, args) => {
-    await applyEvent(ctx, args.episodeId, { type: 'killed' })
-  },
+  handler: async (ctx, args) => killEpisode(ctx, args.episodeId),
 })
 
 /** Send the episode back to the writer. */
@@ -304,33 +293,5 @@ export const retry = mutation({
 
 export const reschedule = mutation({
   args: { episodeId: v.id('episodes'), plannedFor: v.string() },
-  handler: async (ctx, args) => {
-    const episode = await ctx.db.get(args.episodeId)
-    if (!episode) throw new Error('episode not found')
-    if (!canTransition(episode.status, 'killed'))
-      throw refusal(`An episode at "${EPISODE_STATUS_LABELS[episode.status]}" cannot be killed.`)
-    const persona = await ctx.db.get(episode.personaId)
-    if (!persona) throw new Error('persona not found')
-    const publications = await ctx.db
-      .query('publications')
-      .withIndex('by_episode', (q) => q.eq('episodeId', episode._id))
-      .collect()
-    // A post keeps its slot's hour on the new day, and so does its X publication, drafted or queued.
-    if (isPost(episode.kind)) {
-      const scheduledAt = instantAt(args.plannedFor, hourAt(episode.scheduledAt, persona.timezone), persona.timezone)
-      await ctx.db.patch(args.episodeId, { plannedFor: args.plannedFor, scheduledAt, updatedAt: Date.now() })
-      for (const publication of publications) {
-        if (waitsForDispatch(publication)) await ctx.db.patch(publication._id, { scheduledAt })
-      }
-      return
-    }
-    const scheduledAt = earliestPublishAt(persona, episode.platforms, args.plannedFor)
-    await ctx.db.patch(args.episodeId, { plannedFor: args.plannedFor, scheduledAt, updatedAt: Date.now() })
-    // Each publication not yet gone out, a package's drafts included, keeps its platform's hour on the new day.
-    for (const publication of publications) {
-      if (!waitsForDispatch(publication)) continue
-      const hour = formatFor(persona, publication.platform).publishHour
-      await ctx.db.patch(publication._id, { scheduledAt: instantAt(args.plannedFor, hour, persona.timezone) })
-    }
-  },
+  handler: async (ctx, args) => rescheduleEpisode(ctx, args.episodeId, args.plannedFor),
 })

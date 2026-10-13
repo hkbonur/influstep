@@ -1,5 +1,5 @@
 import { v } from 'convex/values'
-import { readsAsDirective, waitsOnOperator } from '@influstep/shared'
+import { waitsOnOperator } from '@influstep/shared'
 import { internal } from '../_generated/api'
 import type { Doc } from '../_generated/dataModel'
 import { mutation, query } from '../_generated/server'
@@ -233,22 +233,20 @@ export const pullMetrics = mutation({
     enqueueJob(ctx, { kind: 'pull_metrics', payload: { personaId: args.personaId }, personaId: args.personaId }),
 })
 
-/** Chat: the operator's message is stored, becomes a directive when it reads like one, and the persona replies. */
+/**
+ * Chat: the operator's message is stored and read once by the persona
+ * (internal/agents.ts, handleMessage), which decides whether it is a
+ * question, a rule, a change to the plan or a task, applies it, and replies.
+ */
 export const sendMessage = mutation({
   args: { personaId: v.id('personas'), text: v.string() },
-  handler: async (ctx, args): Promise<{ directiveId?: Doc<'directives'>['_id'] }> => {
+  handler: async (ctx, args): Promise<void> => {
     const text = args.text.trim()
     if (!text) throw refusal('The message is empty.')
-    const now = Date.now()
-    let directiveId: Doc<'directives'>['_id'] | undefined
-    if (readsAsDirective(text))
-      directiveId = await ctx.db.insert('directives', { personaId: args.personaId, text, active: true, createdAt: now })
-    await ctx.db.insert('messages', { personaId: args.personaId, author: 'operator', text, directiveId, createdAt: now })
-    await ctx.scheduler.runAfter(0, internal.internal.agents.replyInChat, {
-      personaId: args.personaId,
-      directive: directiveId ? text : undefined,
-    })
-    return { directiveId }
+    const persona = await ctx.db.get(args.personaId)
+    if (!persona) throw new Error(`persona ${args.personaId} not found`)
+    const messageId = await ctx.db.insert('messages', { personaId: persona._id, author: 'operator', text, createdAt: Date.now() })
+    await ctx.scheduler.runAfter(0, internal.internal.agents.handleMessage, { messageId })
   },
 })
 
