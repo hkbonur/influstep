@@ -1,6 +1,6 @@
-import { CONVERSION_KIND_LABELS, METRIC_LABELS } from '@influstep/shared'
+import { CONVERSION_KIND_LABELS, METRIC_LABELS, VALUE_LABEL } from '@influstep/shared'
 import { cn } from '@/lib/cn'
-import { formatCount, formatDay, formatPercent } from '@/lib/format'
+import { formatCount, formatDay, formatMoney, formatPercent } from '@/lib/format'
 
 /**
  * The report's two charts, hand-drawn SVG so the colors stay the fixed
@@ -160,4 +160,44 @@ export function MetricStrip(props: { items: { label: string; value: string; note
       ))}
     </dl>
   )
+}
+
+/** What a report's strip reads from a funnel. */
+interface StripFunnel {
+  follows: number
+  views: number
+  clicks: number
+  signups: number
+  paid: number
+  paidViaCode: number
+  value: number
+}
+
+/**
+ * The six values every report leads with (DESIGN.md, Report), with the rate
+ * each one leads to: the workspace report and a persona's read alike.
+ */
+export function reportStrip(funnel: StripFunnel, currency: string): { label: string; value: string; note?: string }[] {
+  const clickRate = funnel.views === 0 ? null : funnel.clicks / funnel.views
+  const signupRate = funnel.clicks === 0 ? null : funnel.signups / funnel.clicks
+  return [
+    { label: 'Followers', value: formatCount(funnel.follows) },
+    { label: METRIC_LABELS.views, value: formatCount(funnel.views) },
+    {
+      label: METRIC_LABELS.clicks,
+      value: formatCount(funnel.clicks),
+      note: clickRate === null ? undefined : `${formatPercent(clickRate, 2)} of views`,
+    },
+    {
+      label: CONVERSION_KIND_LABELS.signup,
+      value: formatCount(funnel.signups),
+      note: signupRate === null ? undefined : `${formatPercent(signupRate)} of clicks`,
+    },
+    {
+      label: CONVERSION_KIND_LABELS.paid,
+      value: formatCount(funnel.paid),
+      note: funnel.paidViaCode > 0 ? `${funnel.paidViaCode} via code` : undefined,
+    },
+    { label: VALUE_LABEL, value: formatMoney(funnel.value, currency) },
+  ]
 }

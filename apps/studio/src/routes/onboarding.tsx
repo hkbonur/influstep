@@ -8,6 +8,7 @@ import {
   PILLARS_MAX,
   PILLARS_MIN,
   REFERENCES_MAX,
+  SPONSOR_RAMP_EPISODES,
   appearanceProblem,
   assetFileProblem,
   assetKindOf,
@@ -437,7 +438,7 @@ function PersonaStep(props: {
                 onChange={(event) => patch({ episodesPerWeek: Number(event.target.value) })}
               />
             </Field>
-            <Field label="Sponsor dial" hint={`Share of videos that carry ${props.sponsorName}, after the first ten.`}>
+            <Field label="Sponsor dial" hint={`Share of videos that carry ${props.sponsorName}, after the first ${SPONSOR_RAMP_EPISODES}.`}>
               <Input
                 type="number"
                 min={0}

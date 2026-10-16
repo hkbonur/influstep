@@ -11,6 +11,9 @@ export const ONBOARDING_PERSONAS_MAX = 5
 /** A persona's handle: the same on every platform and the tracked links' utm_source. */
 export const HANDLE_PATTERN = /^[a-z0-9._-]{3,30}$/
 
+/** How many videos a new persona publishes unsponsored before its sponsor dial applies (CONTEXT.md, "Sponsor dial"). */
+export const SPONSOR_RAMP_EPISODES = 10
+
 export const PILLARS_MIN = 3
 export const PILLARS_MAX = 5
 

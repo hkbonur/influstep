@@ -2,6 +2,7 @@ import { v } from 'convex/values'
 import {
   REFERENCES_MAX,
   REFERENCE_TAG,
+  SPONSOR_RAMP_EPISODES,
   appearanceProblem,
   assetFileProblem,
   assetKindOf,
@@ -14,8 +15,8 @@ import {
   type PersonaProposal,
 } from '@influstep/shared'
 import { internal } from '../_generated/api'
-import type { Id } from '../_generated/dataModel'
-import { action, internalQuery, mutation, query, type MutationCtx } from '../_generated/server'
+import type { Doc, Id } from '../_generated/dataModel'
+import { action, internalQuery, mutation, query, type MutationCtx, type QueryCtx } from '../_generated/server'
 import { addUploadedAsset } from '../core/assets'
 import { createPersona, planFirstWeeks } from '../core/personas'
 import { FIRST_WORKSPACE, ensureWorkspace } from '../core/workspace'
@@ -32,31 +33,33 @@ import { llmProvider } from '../providers/llm'
  * first weeks.
  */
 
-/** How many episodes a new persona publishes unsponsored before the dial applies (CONTEXT.md, "Sponsor dial"). */
-const SPONSOR_RAMP_EPISODES = 10
+/**
+ * The sponsor a proposal names and the roster so far. On the first run there
+ * is no workspace yet, and the sponsor is the one the first persona will make it with.
+ */
+async function rosterOf(ctx: QueryCtx): Promise<{ sponsorName: string; personas: Doc<'personas'>[] }> {
+  const workspace = await ctx.db.query('workspaces').first()
+  return { sponsorName: workspace?.sponsorName ?? FIRST_WORKSPACE.sponsorName, personas: await ctx.db.query('personas').collect() }
+}
 
 /** What the flow starts from: the roster so far, its colors and handles, and the sponsor a proposal names. */
 export const start = query({
   args: {},
   handler: async (ctx) => {
-    const workspace = await ctx.db.query('workspaces').first()
-    const personas = await ctx.db.query('personas').collect()
+    const { sponsorName, personas } = await rosterOf(ctx)
     return {
-      sponsorName: workspace?.sponsorName ?? FIRST_WORKSPACE.sponsorName,
+      sponsorName,
       roster: personas.map((persona) => ({ _id: persona._id, name: persona.name, handle: persona.handle, color: persona.color })),
     }
   },
 })
 
+/** What the writer reads before it proposes: the sponsor, and the roster it must not repeat. */
 export const proposalContext = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const workspace = await ctx.db.query('workspaces').first()
-    const personas = await ctx.db.query('personas').collect()
-    return {
-      sponsorName: workspace?.sponsorName ?? FIRST_WORKSPACE.sponsorName,
-      roster: personas.map((persona) => ({ name: persona.name, handle: persona.handle, niche: persona.niche })),
-    }
+    const { sponsorName, personas } = await rosterOf(ctx)
+    return { sponsorName, roster: personas.map((persona) => ({ name: persona.name, handle: persona.handle, niche: persona.niche })) }
   },
 })
 

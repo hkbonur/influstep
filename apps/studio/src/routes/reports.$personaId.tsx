@@ -4,7 +4,7 @@ import { CONVERSION_KIND_LABELS, EXPERIMENT_KIND_LABELS, METRIC_LABELS, PLATFORM
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useQuery } from 'convex/react'
 import type { FunctionReturnType } from 'convex/server'
-import { Funnel, MetricStrip, Trend } from '@/components/charts'
+import { Funnel, MetricStrip, Trend, reportStrip } from '@/components/charts'
 import { PlatformGlyphs, SponsorPill, StatusPill } from '@/components/status'
 import { AttributionNote, Empty, Eyebrow, LinkButton, MockNote, Mono, PageHeader, Pill, Skeleton } from '@/components/ui'
 import { cn } from '@/lib/cn'
@@ -21,8 +21,6 @@ function ReportPage() {
   if (report === undefined) return <Skeleton className="h-96" />
   if (report === null) return <p className="text-ash">This persona does not exist.</p>
   const { persona, funnel, trend } = report
-  const signupRate = funnel.clicks === 0 ? null : funnel.signups / funnel.clicks
-  const clickRate = funnel.views === 0 ? null : funnel.clicks / funnel.views
   const nothing = funnel.views === 0 && funnel.clicks === 0 && report.episodes.length === 0
 
   return (
@@ -49,28 +47,7 @@ function ReportPage() {
       {!nothing && (
         <div className="space-y-10">
           <div className="space-y-3">
-            <MetricStrip
-              items={[
-                { label: 'Followers', value: formatCount(funnel.follows) },
-                { label: METRIC_LABELS.views, value: formatCount(funnel.views) },
-                {
-                  label: METRIC_LABELS.clicks,
-                  value: formatCount(funnel.clicks),
-                  note: clickRate === null ? undefined : `${formatPercent(clickRate, 2)} of views`,
-                },
-                {
-                  label: CONVERSION_KIND_LABELS.signup,
-                  value: formatCount(funnel.signups),
-                  note: signupRate === null ? undefined : `${formatPercent(signupRate)} of clicks`,
-                },
-                {
-                  label: CONVERSION_KIND_LABELS.paid,
-                  value: formatCount(funnel.paid),
-                  note: funnel.paidViaCode > 0 ? `${funnel.paidViaCode} via code` : undefined,
-                },
-                { label: VALUE_LABEL, value: formatMoney(funnel.value, report.currency) },
-              ]}
-            />
+            <MetricStrip items={reportStrip(funnel, report.currency)} />
             <AttributionNote />
             <MockNote when={funnel.mock} />
           </div>

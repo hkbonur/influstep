@@ -3,7 +3,7 @@ import { CONVERSION_KIND_LABELS, METRIC_LABELS, VALUE_LABEL } from '@influstep/s
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useQuery } from 'convex/react'
 import type { FunctionReturnType } from 'convex/server'
-import { Funnel, MetricStrip } from '@/components/charts'
+import { Funnel, MetricStrip, reportStrip } from '@/components/charts'
 import { PersonaAvatar } from '@/components/persona-avatar'
 import { AttributionNote, Empty, Eyebrow, MockNote, Mono, PageHeader, Skeleton } from '@/components/ui'
 import { cn } from '@/lib/cn'
@@ -34,7 +34,7 @@ function WorkspaceReport() {
       {report.personas.length > 0 && (
         <div className="space-y-10">
           <div className="space-y-3">
-            <MetricStrip items={stripItems(total, report.currency)} />
+            <MetricStrip items={reportStrip(total, report.currency)} />
             <EngagementLine funnel={total} />
             <AttributionNote />
             <MockNote when={total.mock} />
@@ -55,32 +55,6 @@ function WorkspaceReport() {
       )}
     </>
   )
-}
-
-/** The same six values the persona report leads with, so the two pages read alike. */
-function stripItems(funnel: Funnel, currency: string) {
-  const clickRate = funnel.views === 0 ? null : funnel.clicks / funnel.views
-  const signupRate = funnel.clicks === 0 ? null : funnel.signups / funnel.clicks
-  return [
-    { label: 'Followers', value: formatCount(funnel.follows) },
-    { label: METRIC_LABELS.views, value: formatCount(funnel.views) },
-    {
-      label: METRIC_LABELS.clicks,
-      value: formatCount(funnel.clicks),
-      note: clickRate === null ? undefined : `${formatPercent(clickRate, 2)} of views`,
-    },
-    {
-      label: CONVERSION_KIND_LABELS.signup,
-      value: formatCount(funnel.signups),
-      note: signupRate === null ? undefined : `${formatPercent(signupRate)} of clicks`,
-    },
-    {
-      label: CONVERSION_KIND_LABELS.paid,
-      value: formatCount(funnel.paid),
-      note: funnel.paidViaCode > 0 ? `${funnel.paidViaCode} via code` : undefined,
-    },
-    { label: VALUE_LABEL, value: formatMoney(funnel.value, currency) },
-  ]
 }
 
 function followsPerView(funnel: Funnel): string {
