@@ -64,7 +64,7 @@ Written 2026-10-10 after the operator's second brief. The product in one sentenc
 
 ### Progress
 
-Updated 2026-10-16. Slices 1 to 14 are built and committed on `main`; slice 15 is next. The operator builds slices 10 to 16 in the main session, without multi-agent workflow runs.
+Updated 2026-10-16. Slices 1 to 15 are built and committed on `main`; slice 16 is next. The operator builds slices 10 to 16 in the main session, without multi-agent workflow runs.
 
 | Slice | State | Commits |
 | ----- | ----- | ------- |
@@ -82,7 +82,8 @@ Updated 2026-10-16. Slices 1 to 14 are built and committed on `main`; slice 15 i
 | 12 Analytics, top down | done | 81cc6c9 |
 | 13 Onboarding | done | 4cdf27c, 3050470 |
 | 14 Home dashboard | done | 38d5a1e |
-| 15 to 16 | to build | |
+| 15 Generated media | done | 2f53efe |
+| 16 Polish | to build | |
 
 How a slice is built: write a short brief of the data, agent and studio changes; build; run `pnpm quality:fix`, `pnpm quality:check`, `pnpm test` and `pnpm knip`; reset, push and seed the local backend (see CLAUDE.md); smoke test every new screen and action in Chrome; commit with explicit paths.
 
@@ -116,6 +117,7 @@ Small issues found while building slices 1 to 9, kept for the polish pass. Slice
 - Slice 11 part B smoke: the experiments table counts only replies and posts that went out, so a reply test reads 0 for days while its drafts wait, with no line saying why. The strategy page lists the seven video defaults for a persona that posts only on X. Deciding a reply test by hand with 0 exposures leaves a journal entry of zeros. The goal note still names the experiment the last review planned after the operator stopped it.
 - Slice 12 smoke: at phone width the funnel's bars shrink to nothing (its grid keeps a 9rem label and a 5rem value column), on the workspace report and the persona report alike, and the sidebar stays open beside the page. In What works a TikTok-only persona's videos read 0.00% clicks per view, because its clicks come through the bio, which no video owns; the lists could say so. The persona report's funnel now counts the window only (it counted every snapshot, click and conversion ever, under a "last 28 days" title), so its numbers dropped for older personas. Videos written before slice 12 carry no hook style and are left out of By hook style until they age out of the window.
 - Slice 13 smoke: the mock signals ignore the niche, so a new persona's first plan reacts to n8n posts ("React to: Show HN: I replaced my Zapier bill with n8n" for a Figma persona). The mock proposal's third pillar repeats the whole audience ("What founders who design their own product ask"). The look's voice problem shows before the operator has typed anything. References are added only at onboarding: an upload on the assets page never joins the look, and the settings change only the style. The onboarding fields' hints are read as part of their names ("Niche What the persona makes videos about."), as everywhere `Field` has a hint.
+- Slice 15 smoke: the mock writer never asks for a generated picture, so in mock mode a beat's picture only comes from the real writer or a script stored by hand; the Assets page's Generate is the mock path. A mock clip is the mock card held as a still, stored as an image. The prompt rules are word lists: a brand missing from the list or a person named in one word passes, and the real models' own policies are the second line. The Seedance request follows ModelArk's documented task API, unverified until the keys exist. The beat's picture line sits under its fields with no way to edit the prompt itself.
 - `private.episodes.rewrite` throws a plain Error on an idea; the studio hides the button, but it should be a `refusal()`.
 - Remove the leftover `evaluate_experiments` job kind: `pull_metrics` evaluates experiments now.
 
