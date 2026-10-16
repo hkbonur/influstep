@@ -9,6 +9,7 @@ import {
   EXPERIMENT_KIND_LABELS,
   POST_INTENT_BRIEFS,
   POST_INTENT_LABELS,
+  MEDIA_KINDS,
   PILLARS_MAX,
   PILLARS_MIN,
   PUBLICATION_TITLE_MAX,
@@ -32,6 +33,7 @@ import {
   PRESENTER_TOOL,
   type AccountPostSample,
   type ChatTurn,
+  type DraftBeat,
   type InterpretArgs,
   type LlmProvider,
   type PlanRow,
@@ -54,8 +56,19 @@ const MODEL = 'claude-opus-5-5'
 const scriptDraftSchema = z.object({
   title: z.string(),
   description: z.string(),
-  // The asset is a name from the brief's asset library, or empty when the beat shows none: structured outputs take no optional field.
-  shotPlan: z.array(z.object({ title: z.string(), voiceover: z.string(), tool: z.string(), url: z.string(), asset: z.string() })),
+  // The asset is a name from the brief's asset library, or empty when the beat shows none; a picture to generate is its kind
+  // ("image" or "clip") and its prompt, both empty when the beat asks for none: structured outputs take no optional field.
+  shotPlan: z.array(
+    z.object({
+      title: z.string(),
+      voiceover: z.string(),
+      tool: z.string(),
+      url: z.string(),
+      asset: z.string(),
+      generateKind: z.string(),
+      generatePrompt: z.string(),
+    })
+  ),
 })
 
 // One shape for every kind keeps the structured output simple; the card title is empty unless the post is an image post.
@@ -122,6 +135,7 @@ export const anthropicLlm: LlmProvider = {
             `Pillar: ${brief.pillar}`,
             memoryInstruction(brief.memory),
             assetsInstruction(brief),
+            generateInstruction(brief.sponsorName),
             defaultsInstruction(brief),
             variantInstruction(brief),
             sponsorInstruction(brief),
@@ -143,7 +157,7 @@ export const anthropicLlm: LlmProvider = {
     if (response.stop_reason === 'refusal') throw new Error('The model declined to write this script')
     if (!response.parsed_output) throw new Error('The model returned no parseable script')
     const { shotPlan, ...draft } = response.parsed_output
-    return { ...draft, shotPlan: shotPlan.map(({ asset, ...beat }) => (asset.trim() === '' ? beat : { ...beat, asset })) }
+    return { ...draft, shotPlan: shotPlan.map(draftBeatOf) }
   },
   async writePost(brief: PostBrief): Promise<PostDraft> {
     const response = await client().messages.parse({
@@ -531,6 +545,29 @@ function assetsInstruction(brief: ScriptBrief): string {
     `Your asset library, which a beat can show in place of its screen or you on camera:\n${lines.join('\n')}`,
     `Where a beat is better told by one of these, put its exact name in that beat's asset; an image is held and a clip is looped for the beat. Never put one on the ${brief.sponsorName} demo beat. Leave the asset empty on every other beat.`,
   ].join('\n')
+}
+
+/**
+ * A beat may ask the producer for a picture to generate, in place of an
+ * asset (shared media.ts). The rules are said here and checked after the
+ * draft: a prompt they refuse sends the draft back with the problem named.
+ */
+function generateInstruction(sponsorName: string): string {
+  return [
+    'Where no asset fits and a picture would tell a beat better than a screen or you on camera, the producer can generate one: set generateKind to "image" (a still) or "clip" (a few seconds of motion) and generatePrompt to what it shows, in one sentence, such as "a run history where every execution fails in red". Leave both empty otherwise, and never ask for an asset and a picture on one beat.',
+    `A generated picture never shows a real person, a brand other than ${sponsorName}, a real product's screen or a screenshot: a tool's real screen is recorded. Never ask for one on the ${sponsorName} demo beat. Ask for at most two per script.`,
+  ].join(' ')
+}
+
+/** A drafted beat as the writer's output names it: the asset by name, or the picture to generate, or neither. */
+function draftBeatOf(beat: z.infer<typeof scriptDraftSchema>['shotPlan'][number]): DraftBeat {
+  const { asset, generateKind, generatePrompt, ...rest } = beat
+  const kind = MEDIA_KINDS.find((candidate) => candidate === generateKind.trim())
+  return {
+    ...rest,
+    ...(asset.trim() === '' ? {} : { asset }),
+    ...(kind === undefined || generatePrompt.trim() === '' ? {} : { generate: { kind, prompt: generatePrompt } }),
+  }
 }
 
 /** The dimensions where the persona no longer does what it did at the start (shared `styleLines`); nothing while every one is the control. */

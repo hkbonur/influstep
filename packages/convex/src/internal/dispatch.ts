@@ -24,6 +24,7 @@ const BACKEND_RUNNERS: Partial<Record<JobKind, (ctx: ActionCtx, job: Doc<'jobs'>
   evaluate_experiments: (ctx, job) => ctx.runAction(internal.internal.agents.evaluateExperiments, payloadWith(job.payload, 'personaId')),
   import_x_history: (ctx, job) => ctx.runAction(internal.internal.agents.importXHistory, payloadWith(job.payload, 'personaId')),
   learn_voice: (ctx, job) => ctx.runAction(internal.internal.agents.learnVoice, payloadWith(job.payload, 'personaId')),
+  generate_media: (ctx, job) => ctx.runAction(internal.internal.media.generate, payloadWith(job.payload, 'generationId')),
   listen_x: (ctx, job) => ctx.runAction(internal.internal.replies.listen, payloadWith(job.payload, 'personaId')),
   write_replies: (ctx, job) => ctx.runAction(internal.internal.replies.writeReplies, payloadWith(job.payload, 'personaId')),
   // The review reads its persona from its own row.

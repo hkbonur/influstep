@@ -69,6 +69,7 @@ import { savePost } from '../core/posts'
 import { reportWindow } from '../core/report'
 import { lastCheck, logRepeatedQuestions, writeDailyBrief } from '../core/research'
 import { reviewStrategy as reviewStrategyRule, type ReviewOutcome } from '../core/strategy'
+import { requestEpisodeGenerations } from '../core/media'
 import { personaBriefOf } from '../core/personas'
 import { workspaceOf } from '../core/workspace'
 import { providersMode } from '../lib/env'
@@ -563,8 +564,10 @@ export const storeScript = internalMutation({
       updatedAt: Date.now(),
     })
     await applyEvent(ctx, args.episodeId, { type: 'script_written' })
+    // The pictures the beats asked for are made now; an auto-approving persona's script is approved once the last is in place.
+    const asked = await requestEpisodeGenerations(ctx, args.episodeId, Date.now())
     // A persona whose voice is still being made cannot record yet: the script waits for the operator, who approves it once it is made.
-    if (args.autoApprove && persona.voiceId !== undefined) await approveEpisode(ctx, args.episodeId)
+    if (args.autoApprove && asked === 0 && persona.voiceId !== undefined) await approveEpisode(ctx, args.episodeId)
     return { title: args.title }
   },
 })

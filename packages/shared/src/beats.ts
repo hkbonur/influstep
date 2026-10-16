@@ -1,4 +1,5 @@
 import type { SponsorSegment } from './episode-status'
+import type { MediaKind } from './media'
 
 /**
  * A video's script (docs/plan.md, slice 6): its beats. Each beat is what is
@@ -21,6 +22,12 @@ export interface Beat {
    * The writer places it by name; the producer shows it for the beat's length.
    */
   assetId?: string
+  /**
+   * A picture the producer generates for the beat (shared media.ts), asked for
+   * where the writer would otherwise name an asset. Once it is made, the beat
+   * shows it as its asset; `generationId` is the generation that makes it.
+   */
+  generate?: { kind: MediaKind; prompt: string; generationId?: string }
 }
 
 /** The spoken pace a script's length is measured at. */

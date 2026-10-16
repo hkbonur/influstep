@@ -6,6 +6,7 @@ import {
   isPlaceable,
   parseAssetTags,
   producedAssetName,
+  generationPromptProblem,
   sameAssetName,
   type AspectRatio,
   type AssetKind,
@@ -69,9 +70,11 @@ export async function writerAssets(ctx: Reader, personaId: Id<'personas'>): Prom
 
 /**
  * The writer's beats with each asset it asked for by name resolved to the
- * asset's id. A name the library does not hold, or an asset on the beat that
- * shows the sponsor (a demo shows the sponsor's own screen), is a problem
- * the writer retries on.
+ * asset's id, and each picture it asked to generate checked against the
+ * prompt rules (shared `generationPromptProblem`). A name the library does
+ * not hold, a beat that asks for both, a prompt the rules refuse, or a
+ * picture on the beat that shows the sponsor (a demo shows the sponsor's own
+ * screen) is a problem the writer retries on.
  */
 export function placeAssets(
   beats: readonly DraftBeat[],
@@ -80,15 +83,33 @@ export function placeAssets(
 ): { beats: StoredBeat[]; problems: string[] } {
   const problems: string[] = []
   const placed = beats.map((beat, index): StoredBeat => {
-    const { asset, ...rest } = beat
-    if (asset === undefined || asset.trim() === '') return rest
+    const { asset, generate, ...rest } = beat
     const n = index + 1
+    const asksAsset = asset !== undefined && asset.trim() !== ''
+    const showsSponsor = rest.tool.toLowerCase() === sponsorName.toLowerCase()
+    if (generate !== undefined) {
+      if (asksAsset) {
+        problems.push(`Beat ${n} asks for the asset "${asset}" and for a generated picture; ask for one of them.`)
+        return rest
+      }
+      if (showsSponsor) {
+        problems.push(`Beat ${n} shows ${sponsorName} on screen, so it cannot show a generated picture; its real screen shows there.`)
+        return rest
+      }
+      const problem = generationPromptProblem(generate.prompt, sponsorName)
+      if (problem !== null) {
+        problems.push(`Beat ${n}'s picture: ${problem}`)
+        return rest
+      }
+      return { ...rest, generate: { kind: generate.kind, prompt: generate.prompt.trim() } }
+    }
+    if (!asksAsset) return rest
     const found = assets.find((candidate) => sameAssetName(candidate.name, asset))
     if (!found) {
       problems.push(`Beat ${n} asks for the asset "${asset}", which is not in your asset library.`)
       return rest
     }
-    if (rest.tool.toLowerCase() === sponsorName.toLowerCase()) {
+    if (showsSponsor) {
       problems.push(`Beat ${n} shows ${sponsorName} on screen, so it cannot show "${found.name}"; place it in another beat.`)
       return rest
     }

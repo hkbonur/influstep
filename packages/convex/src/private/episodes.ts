@@ -132,6 +132,13 @@ export const get = query({
       value,
       discountCode: discountCode ? { code: discountCode.code, offer: discountCode.offer } : null,
       codesSent,
+      // Where each picture a beat asked to generate stands (core/media.ts), by generation id.
+      generations: (
+        await ctx.db
+          .query('generations')
+          .withIndex('by_episode', (q) => q.eq('episodeId', episode._id))
+          .collect()
+      ).map((generation) => ({ _id: generation._id, status: generation.status, error: generation.error ?? null })),
     }
   },
 })

@@ -1901,6 +1901,7 @@ const TABLES = {
   journal: true,
   memories: true,
   assets: true,
+  generations: true,
   directives: true,
   messages: true,
   checklistItems: true,

@@ -76,6 +76,7 @@ function ProvidersPage() {
               The researcher polls {POLLED_SOURCES}. Comments come from the publisher, which reads them on each platform, and problems from
               each persona's problem log.
             </p>
+            <MediaBudgets />
             <p className="mt-1.5 text-xs text-ash">
               Keys live in the Convex deployment's environment (backend) and in apps/runner/.env.local (voice, avatar, uploads). Voice,
               avatar and the publishers run on the runner, so the backend cannot see their keys.
@@ -214,5 +215,32 @@ function WorkspaceForm() {
         {state.status === 'saved' && <span className="text-xs text-ash">Saved</span>}
       </div>
     </form>
+  )
+}
+
+/**
+ * The media provider's daily budget per persona (docs/plan.md, slice 15),
+ * under the adapters: what each persona generated today against it. A job
+ * that would pass it fails with the budget in its error.
+ */
+function MediaBudgets() {
+  const budgets = useQuery(api.private.media.budgets, {})
+  if (budgets === undefined) return null
+  return (
+    <div className="mt-3 text-xs text-ash">
+      <p>
+        Generated media: each persona may make <span className="tabular">{budgets.budget.images}</span> images and{' '}
+        <span className="tabular">{budgets.budget.clipSeconds}</span> s of clips a day, in its own timezone.
+      </p>
+      {budgets.spend.length > 0 && (
+        <ul className="mt-1 space-y-0.5">
+          {budgets.spend.map((row) => (
+            <li key={row.personaId}>
+              {row.name}: <Mono>{row.images}</Mono> images, <Mono>{row.clipSeconds}</Mono> s of clips today
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }

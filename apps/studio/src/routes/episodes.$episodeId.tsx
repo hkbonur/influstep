@@ -275,6 +275,7 @@ function EpisodePage() {
                 episode={episode}
                 sponsorName={data.sponsorName}
                 assets={data.assets}
+                generations={data.generations}
               />
             )}
           </section>

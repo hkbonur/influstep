@@ -39,6 +39,7 @@ import { dayKey, hourAt, instantAt } from './dates'
 import { episodeEffectiveVariant, episodeVariant, plannedVariant } from './experiments'
 import { earliestPublishAt, formatFor, formatsFor, platformsOf, publishHourFor, publishOffset } from './formats'
 import { assertLengthFitsKind, assertPostFits, findXPublication } from './posts'
+import { pendingPictureProblem } from './media'
 import { workspaceOf } from './workspace'
 import { refusal } from '../lib/errors'
 
@@ -416,6 +417,8 @@ export async function approveEpisode(ctx: MutationCtx, episodeId: Id<'episodes'>
   if (!persona) throw new Error(`persona ${episode.personaId} not found`)
   const workspace = await workspaceOf(ctx, persona)
   if (episode.kind === 'video' && persona.voiceId === undefined) throw refusal(voiceMissing(persona))
+  const picture = await pendingPictureProblem(ctx, episode)
+  if (picture) throw refusal(picture)
 
   await ctx.db.patch(episodeId, { approvedAt: Date.now() })
   if (episode.kind === 'text' || episode.kind === 'thread') {

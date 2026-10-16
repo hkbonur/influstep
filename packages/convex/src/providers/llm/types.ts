@@ -13,6 +13,7 @@ import {
   type ExperimentKind,
   type PostIntent,
   type PostKind,
+  type MediaKind,
   type PersonaProposal,
   type PostLength,
   type ReplyOrigin,
@@ -94,7 +95,11 @@ export const PRESENTER_TOOL = 'presenter'
  * by its name, which the pipeline resolves to the asset's id
  * (core/assets.ts `placeAssets`).
  */
-export type DraftBeat = Omit<Beat, 'assetId'> & { asset?: string }
+/**
+ * A beat as the writer drafts it: an asset of the library asked for by name,
+ * or a picture to generate from a prompt (shared media.ts), never both.
+ */
+export type DraftBeat = Omit<Beat, 'assetId' | 'generate'> & { asset?: string; generate?: { kind: MediaKind; prompt: string } }
 
 export interface ScriptDraft {
   title: string

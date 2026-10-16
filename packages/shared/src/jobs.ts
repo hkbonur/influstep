@@ -59,6 +59,8 @@ export const JOB_KINDS = {
   post_reply: { role: 'publisher', runsOn: 'runner' },
   // Onboarding (shared appearance.ts): the voice provider makes a persona's spoken voice from the operator's description.
   design_voice: { role: 'producer', runsOn: 'runner' },
+  // Generated media (shared media.ts): the producer makes a still or a clip from a prompt with the media provider.
+  generate_media: { role: 'producer', runsOn: 'backend' },
   // Tasks the operator gives a persona in its chat (shared CHAT_TASKS): the role that owns the data answers there.
   research_brief: { role: 'researcher', runsOn: 'backend' },
   comment_digest: { role: 'publisher', runsOn: 'backend' },
@@ -87,6 +89,7 @@ export const JOB_KIND_LABELS: Record<JobKind, string> = {
   write_replies: 'Write replies',
   post_reply: 'Post a reply',
   design_voice: 'Make the voice',
+  generate_media: 'Generate a picture',
   research_brief: 'Research brief',
   comment_digest: 'Comment digest',
   analytics_summary: 'Analytics summary',

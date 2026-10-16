@@ -31,6 +31,8 @@ import {
   personaColorValidator,
   platformFormatValidator,
   appearanceStyleValidator,
+  generationStatusValidator,
+  mediaKindValidator,
   platformValidator,
   postIntentValidator,
   postLengthValidator,
@@ -433,6 +435,34 @@ export default defineSchema({
   // Engagement on X (shared replies.ts): one row per post the listener heard and the persona answered or passed
   // on, the engagement row. A reply to someone who engaged first may go out on its own; a reply to a post the
   // listener found waits as a draft until the operator posts it, one click per reply. Never deleted.
+  // Generated media (docs/plan.md, slice 15): one still or clip the media provider makes from a prompt, for a beat
+  // of an episode or for the operator on the Assets page. The daily budget counts the ones started today; a failed
+  // one costs nothing and can be started again. Done, it points at the producer's asset it made.
+  generations: defineTable({
+    personaId: v.id('personas'),
+    kind: mediaKindValidator,
+    // What was asked, in the writer's or the operator's words; the provider gets it in the persona's look.
+    prompt: v.string(),
+    episodeId: v.optional(v.id('episodes')),
+    // The beat of the episode that shows it, by position: the beats are edited, never added, removed or reordered.
+    beatIndex: v.optional(v.number()),
+    status: generationStatusValidator,
+    // Clip seconds it costs the budget; 0 for an image.
+    seconds: v.number(),
+    model: v.optional(v.string()),
+    assetId: v.optional(v.id('assets')),
+    error: v.optional(v.string()),
+    mock: v.optional(v.boolean()),
+    createdAt: v.number(),
+    // When it last started; the day's budget counts it by this.
+    startedAt: v.optional(v.number()),
+    doneAt: v.optional(v.number()),
+  })
+    .index('by_persona_started', ['personaId', 'startedAt'])
+    .index('by_persona_created', ['personaId', 'createdAt'])
+    .index('by_episode', ['episodeId'])
+    .index('by_asset', ['assetId']),
+
   replies: defineTable({
     personaId: v.id('personas'),
     origin: replyOriginValidator,

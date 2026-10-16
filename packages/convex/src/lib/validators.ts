@@ -6,6 +6,7 @@ import {
   ASPECT_RATIOS,
   ASSET_KINDS,
   ASSET_SOURCES,
+  GENERATION_STATUSES,
   CHECKLIST_STATUSES,
   CONVERSION_KINDS,
   CONVERSION_VIAS,
@@ -19,6 +20,7 @@ import {
   JOB_RUNTIMES,
   JOB_STATUSES,
   JOURNAL_ACTORS,
+  MEDIA_KINDS,
   JOURNAL_KINDS,
   MEMORY_KINDS,
   MEMORY_STATUSES,
@@ -50,6 +52,8 @@ export const episodeStatusValidator = literals(EPISODE_STATUSES)
 export const sponsorSegmentValidator = literals(SPONSOR_SEGMENTS)
 export const platformValidator = literals(PLATFORMS)
 export const appearanceStyleValidator = literals(APPEARANCE_STYLES)
+export const mediaKindValidator = literals(MEDIA_KINDS)
+export const generationStatusValidator = literals(GENERATION_STATUSES)
 export const aspectRatioValidator = literals(ASPECT_RATIOS)
 export const agentRoleValidator = literals(AGENT_ROLES)
 export const jobRuntimeValidator = literals(JOB_RUNTIMES)
@@ -196,7 +200,8 @@ export const beatValidator = v.object({
   tool: v.string(),
   url: v.string(),
   assetId: v.optional(v.id('assets')),
-}) satisfies Validator<Beat, 'required', keyof Beat>
+  generate: v.optional(v.object({ kind: mediaKindValidator, prompt: v.string(), generationId: v.optional(v.id('generations')) })),
+}) satisfies Validator<Beat, 'required', string>
 
 /** A beat as an episode stores it: the shared `Beat` with its asset's id checked. */
 export type StoredBeat = Infer<typeof beatValidator>

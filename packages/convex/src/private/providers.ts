@@ -36,6 +36,10 @@ export const status = query({
         POLAR_ACCESS_TOKEN: hasEnv('POLAR_ACCESS_TOKEN'),
         POLAR_ORGANIZATION_ID: hasEnv('POLAR_ORGANIZATION_ID'),
         YOUTUBE_API_KEY: hasEnv('YOUTUBE_API_KEY'),
+        OPENAI_API_KEY: hasEnv('OPENAI_API_KEY'),
+        ARK_API_KEY: hasEnv('ARK_API_KEY'),
+        ARK_BASE_URL: hasEnv('ARK_BASE_URL'),
+        SEEDANCE_MODEL: hasEnv('SEEDANCE_MODEL'),
         RUNNER_TOKEN: hasEnv('RUNNER_TOKEN'),
       },
       providers: [
@@ -59,6 +63,12 @@ export const status = query({
           hasReal: platformHasRealAdapter(platform),
           needs: platform === 'youtube' ? ['YOUTUBE_API_KEY'] : [],
         })),
+        {
+          name: 'media',
+          real: 'gpt-image-1 stills, Seedance clips',
+          hasReal: true,
+          needs: ['OPENAI_API_KEY', 'ARK_API_KEY', 'ARK_BASE_URL', 'SEEDANCE_MODEL'],
+        },
         { name: 'engagement', real: 'X API recent search and reply counts', hasReal: false, needs: [] as string[] },
         { name: 'voice', real: 'ElevenLabs (runner)', hasReal: false, needs: ['ELEVENLABS_API_KEY'] },
         { name: 'avatar', real: 'HeyGen or Higgsfield (runner)', hasReal: false, needs: [] as string[] },

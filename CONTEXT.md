@@ -237,6 +237,10 @@ _Avoid_: media, attachment, upload (that is how the operator adds one), file (th
 A persona's assets, the operator's uploads and what the producer made, newest first. Before every script the writer sees up to 30 of its images and clips, the operator's first, with their names, tags and notes.
 _Avoid_: media library, gallery, drive.
 
+**Generated picture**:
+A still or a short clip the producer generates from a prompt with the media provider (gpt-image-1 for stills, Seedance for clips), where a beat would otherwise show an asset, or for the operator on the Assets page. The writer asks for one in a beat in place of an asset, never on the sponsor's demo beat; it is made before recording, in the persona's look, saved to the asset library as the producer's, tagged generated, with the prompt and the model in its note, and the beat shows it as its asset. A video waits for its pictures before it can be approved. Nothing generated shows a real person, a brand other than Formstep, a real product's screen or a screenshot: a tool's real screen is recorded. Each persona has a daily budget of images and seconds of clips; a generation that would pass it fails with the budget in its error. `generations` in code.
+_Avoid_: AI art, render (that is the producer's cut of an episode), stock image.
+
 **Goal**:
 The one thing every persona works toward: paying Formstep customers. It is the workspace's, named from its sponsor; the strategy review aims experiments at it through the goal metric, and every review writes a goal note against it.
 _Avoid_: objective, target, north star, KPI.

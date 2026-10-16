@@ -4,11 +4,17 @@ import {
   ASSET_KIND_LABELS,
   ASSET_MAX_BYTES,
   ASSET_NOTE_MAX,
+  CLIP_SECONDS,
+  MEDIA_KINDS,
+  MEDIA_KIND_LABELS,
   assetFileProblem,
   assetNameFromFile,
   assetProblems,
+  budgetProblem,
+  generationPromptProblem,
   megabytes,
   parseAssetTags,
+  type MediaKind,
 } from '@influstep/shared'
 import { FileTextIcon } from '@phosphor-icons/react'
 import { Link, createFileRoute } from '@tanstack/react-router'
@@ -32,6 +38,7 @@ export const Route = createFileRoute('/personas/$personaId_/assets')({ component
  */
 type AssetsData = NonNullable<FunctionReturnType<typeof api.private.assets.list>>
 type Asset = AssetsData['assets'][number]
+type MediaData = NonNullable<FunctionReturnType<typeof api.private.media.forPersona>>
 
 /** What the file picker offers: the types the library takes (shared `assetKindOf`). */
 const ACCEPT = 'image/*,video/*,audio/*,application/pdf,text/*'
@@ -45,8 +52,10 @@ function AssetsPage() {
   const params = Route.useParams()
   const personaId = params.personaId as Id<'personas'>
   const data = useQuery(api.private.assets.list, { personaId })
-  if (data === null) return <p className="text-ash">This persona does not exist.</p>
-  if (data === undefined) return <Skeleton className="h-96" />
+  const media = useQuery(api.private.media.forPersona, { personaId })
+  if (data === null || media === null) return <p className="text-ash">This persona does not exist.</p>
+  if (data === undefined || media === undefined) return <Skeleton className="h-96" />
+  const prompts = new Map(media.assetPrompts.map((row) => [row.assetId, row.prompt]))
   const uploads = data.assets.filter((asset) => asset.source === 'operator')
   const made = data.assets.filter((asset) => asset.source === 'producer')
   return (
@@ -67,15 +76,18 @@ function AssetsPage() {
       />
       <div className="space-y-10">
         <UploadForm personaId={personaId} />
+        <GenerateForm personaId={personaId} media={media} />
         <AssetSection
           title="Your uploads"
           empty="Nothing uploaded yet. A screenshot, a logo or a short clip the writer can show."
           assets={uploads}
+          prompts={prompts}
         />
         <AssetSection
           title="Made by the producer"
-          empty={`Nothing made yet. Every render, voice track and post card of ${data.persona.name} lands here.`}
+          empty={`Nothing made yet. Every render, voice track, post card and generated picture of ${data.persona.name} lands here.`}
           assets={made}
+          prompts={prompts}
         />
       </div>
     </div>
@@ -215,7 +227,7 @@ function UploadForm(props: { personaId: Id<'personas'> }) {
  * focus moves to the status line under the heading, which stays mounted and
  * says what became of the asset.
  */
-function AssetSection(props: { title: string; empty: string; assets: Asset[] }) {
+function AssetSection(props: { title: string; empty: string; assets: Asset[]; prompts: Map<Id<'assets'>, string> }) {
   const statusRef = React.useRef<HTMLParagraphElement>(null)
   const [deleted, setDeleted] = React.useState<string | null>(null)
   const onDeleted = (message: string) => {
@@ -234,7 +246,7 @@ function AssetSection(props: { title: string; empty: string; assets: Asset[] }) 
       {props.assets.length > 0 && (
         <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {props.assets.map((asset) => (
-            <AssetCard key={asset._id} asset={asset} onDeleted={onDeleted} />
+            <AssetCard key={asset._id} asset={asset} prompt={props.prompts.get(asset._id) ?? null} onDeleted={onDeleted} />
           ))}
         </ul>
       )}
@@ -243,7 +255,7 @@ function AssetSection(props: { title: string; empty: string; assets: Asset[] }) 
 }
 
 /** One asset: its preview, its name, what it is, its tags and note, and Edit and Delete. */
-function AssetCard(props: { asset: Asset; onDeleted: (message: string) => void }) {
+function AssetCard(props: { asset: Asset; prompt: string | null; onDeleted: (message: string) => void }) {
   const asset = props.asset
   const [editing, setEditing] = React.useState(false)
   // Once an edit is saved or cancelled, focus goes back to Edit, which mounts again with the card's text.
@@ -297,6 +309,7 @@ function AssetCard(props: { asset: Asset; onDeleted: (message: string) => void }
               {plural(shownIn, 'that episode is', 'those episodes are')} measured or killed.
             </p>
           )}
+          {props.prompt !== null && <GenerateAgain assetId={asset._id} />}
           <CardActions asset={asset} focusEdit={edited} onEdit={() => setEditing(true)} onDeleted={props.onDeleted} />
         </>
       )}
@@ -415,6 +428,124 @@ function EditForm(props: { asset: Asset; onDone: () => void }) {
  * An asset a script that may still be recorded shows has no Delete, since the
  * backend keeps it; the card says why. A refusal shows under the answers.
  */
+/**
+ * A generated asset that missed: a new one from the same prompt joins the
+ * library beside it. The line under the button is a polite live region that
+ * stays mounted and says it is on its way, or why it was refused.
+ */
+function GenerateAgain(props: { assetId: Id<'assets'> }) {
+  const regenerate = useMutation(api.private.media.regenerateAsset)
+  const [state, setState] = React.useState<FormState | { status: 'queued' }>({ status: 'idle' })
+  const again = async () => {
+    if (state.status === 'saving') return
+    setState({ status: 'saving' })
+    try {
+      await regenerate({ assetId: props.assetId })
+      setState({ status: 'queued' })
+    } catch (caught) {
+      setState({ status: 'error', message: errorMessage(caught) })
+    }
+  }
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <Button size="sm" variant="outline" busy={state.status === 'saving'} onClick={() => void again()}>
+        Generate again
+      </Button>
+      <div aria-live="polite" className="text-[11px] text-ash">
+        {state.status === 'queued' && 'The producer is on it; the new one joins the library beside this one.'}
+        {state.status === 'error' && <ErrorLine>{state.message}</ErrorLine>}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * A picture from a prompt (docs/plan.md, slice 15): a still or a short clip
+ * the producer generates in the persona's look and saves here, tagged
+ * generated. The prompt is checked with the backend's own rules as the
+ * operator types; the day's budget sits beside the button, and what is being
+ * made or failed shows under the form.
+ */
+function GenerateForm(props: { personaId: Id<'personas'>; media: MediaData }) {
+  const generate = useMutation(api.private.media.generate)
+  const [kind, setKind] = React.useState<MediaKind>('image')
+  const [prompt, setPrompt] = React.useState('')
+  const [state, setState] = React.useState<FormState>({ status: 'idle' })
+  const { media } = props
+  const problem = prompt.trim() === '' ? null : generationPromptProblem(prompt, media.sponsorName)
+  const spent = budgetProblem(kind, media.spent)
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (state.status === 'saving' || problem !== null || prompt.trim() === '') return
+    setState({ status: 'saving' })
+    try {
+      await generate({ personaId: props.personaId, kind, prompt })
+      setPrompt('')
+      setState({ status: 'idle' })
+    } catch (caught) {
+      setState({ status: 'error', message: errorMessage(caught) })
+    }
+  }
+  return (
+    <section>
+      <SectionHeading>Generate</SectionHeading>
+      <form onSubmit={(event) => void submit(event)} className="card grid gap-3">
+        <div className="grid gap-3 sm:grid-cols-[9rem_1fr]">
+          <Field label="Kind">
+            <select className="field" value={kind} onChange={(event) => setKind(event.target.value === 'clip' ? 'clip' : 'image')}>
+              {MEDIA_KINDS.map((candidate) => (
+                <option key={candidate} value={candidate}>
+                  {candidate === 'clip' ? `Clip, ${CLIP_SECONDS} s` : MEDIA_KIND_LABELS[candidate]}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="What it shows">
+            <Textarea
+              rows={2}
+              value={prompt}
+              placeholder="A run history where every execution fails in red"
+              onChange={(event) => {
+                setPrompt(event.target.value)
+                if (state.status === 'error') setState({ status: 'idle' })
+              }}
+            />
+          </Field>
+        </div>
+        <div aria-live="polite">
+          {problem !== null && <ErrorLine>{problem}</ErrorLine>}
+          {state.status === 'error' && <ErrorLine>{state.message}</ErrorLine>}
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            type="submit"
+            variant="primary"
+            busy={state.status === 'saving'}
+            disabled={problem !== null || prompt.trim() === '' || spent !== null}
+          >
+            Generate
+          </Button>
+          <span className="tabular text-xs text-ash">
+            Today: {media.spent.images} of {media.budget.images} images, {media.spent.clipSeconds} of {media.budget.clipSeconds} s of clips.
+            {spent === null ? ' Never a real person, another brand or a real screen.' : ` ${spent}`}
+          </span>
+        </div>
+        {media.generations.length > 0 && (
+          <ul className="space-y-1 border-t border-mist pt-3 text-xs">
+            {media.generations.map((generation) => (
+              <li key={generation._id} className={generation.status === 'failed' ? 'text-signal-red-deep' : 'text-ash'}>
+                {generation.status === 'failed' ? 'Could not make' : 'Generating'} {MEDIA_KIND_LABELS[generation.kind].toLowerCase()}:{' '}
+                <q>{generation.prompt}</q>
+                {generation.error && ` · ${generation.error}`}
+              </li>
+            ))}
+          </ul>
+        )}
+      </form>
+    </section>
+  )
+}
+
 function CardActions(props: { asset: Asset; focusEdit: boolean; onEdit: () => void; onDeleted: (message: string) => void }) {
   const remove = useMutation(api.private.assets.remove)
   const [confirming, setConfirming] = React.useState(false)

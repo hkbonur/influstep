@@ -5,9 +5,11 @@ import {
   spokenScript,
   spokenSeconds,
   spokenWordCount,
+  MEDIA_KIND_LABELS,
   textEditable,
   type Beat,
   type EpisodeStatus,
+  type GenerationStatus,
 } from '@influstep/shared'
 import { useMutation } from 'convex/react'
 import React from 'react'
@@ -24,11 +26,19 @@ interface BeatAsset {
   name: string
 }
 
+/** Where a picture a beat asked to generate stands (private.episodes.get `generations`). */
+interface BeatGeneration {
+  _id: string
+  status: GenerationStatus
+  error: string | null
+}
+
 interface ScriptEditorProps {
   episode: Doc<'episodes'>
   sponsorName: string
   /** The assets the beats show (private.episodes.get `assets`). */
   assets: BeatAsset[]
+  generations: BeatGeneration[]
 }
 
 /**
@@ -41,7 +51,15 @@ export function ScriptEditor(props: ScriptEditorProps) {
   const beats = props.episode.shotPlan
   if (beats === undefined) return <p className="text-ash">The writer writes the beats when it scripts the episode.</p>
   if (!textEditable(props.episode.status)) return <ScriptReadView episode={props.episode} beats={beats} />
-  return <BeatsForm episode={props.episode} beats={beats} sponsorName={props.sponsorName} assets={props.assets} />
+  return (
+    <BeatsForm
+      episode={props.episode}
+      beats={beats}
+      sponsorName={props.sponsorName}
+      assets={props.assets}
+      generations={props.generations}
+    />
+  )
 }
 
 /**
@@ -52,7 +70,13 @@ export function ScriptEditor(props: ScriptEditorProps) {
  * types. The page keys the form on the saved beats, so a save that goes
  * through remounts it clean.
  */
-function BeatsForm(props: { episode: Doc<'episodes'>; beats: Beat[]; sponsorName: string; assets: BeatAsset[] }) {
+function BeatsForm(props: {
+  episode: Doc<'episodes'>
+  beats: Beat[]
+  sponsorName: string
+  assets: BeatAsset[]
+  generations: BeatGeneration[]
+}) {
   const update = useMutation(api.private.episodes.updateBeats)
   const [title, setTitle] = React.useState(props.episode.title)
   const [drafts, setDrafts] = React.useState<BeatDraft[]>(() =>
@@ -96,6 +120,15 @@ function BeatsForm(props: { episode: Doc<'episodes'>; beats: Beat[]; sponsorName
               shows={beatAssetName(beat, props.assets)}
               onChange={(change) => setBeat(index, change)}
             />
+            {beat.generate && (
+              <BeatPicture
+                episodeId={props.episode._id}
+                index={index}
+                generate={beat.generate}
+                placed={beat.assetId !== undefined}
+                generation={props.generations.find((generation) => generation._id === beat.generate?.generationId) ?? null}
+              />
+            )}
           </li>
         ))}
       </ol>
@@ -171,7 +204,7 @@ function BeatFields(props: {
         )}
         {props.shows !== null && (
           <p id={screenId} className="text-[11px] text-ash">
-            Shows {props.shows}, from the asset library
+            Shows {props.shows}, {props.beat.generate ? 'generated for this beat' : 'from the asset library'}
           </p>
         )}
         {props.screen && (
@@ -180,6 +213,65 @@ function BeatFields(props: {
           </p>
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * A picture the beat asked the producer to generate: being made, made (the
+ * beat's asset line names it), or not made, with why. Generate again asks
+ * for a new one from the same prompt; the one it had stays in the library.
+ * The line is a polite live region that stays mounted, so the change from
+ * being made to made or failed is heard.
+ */
+function BeatPicture(props: {
+  episodeId: Doc<'episodes'>['_id']
+  index: number
+  generate: NonNullable<Beat['generate']>
+  placed: boolean
+  generation: BeatGeneration | null
+}) {
+  const regenerate = useMutation(api.private.media.regenerateForBeat)
+  const [state, setState] = React.useState<FormState>({ status: 'idle' })
+  const kind = MEDIA_KIND_LABELS[props.generate.kind].toLowerCase()
+  const article = props.generate.kind === 'image' ? 'an' : 'a'
+  const making = !props.placed && props.generation?.status !== 'failed'
+  const again = async () => {
+    if (state.status === 'saving') return
+    setState({ status: 'saving' })
+    try {
+      await regenerate({ episodeId: props.episodeId, beatIndex: props.index })
+      setState({ status: 'idle' })
+    } catch (caught) {
+      setState({ status: 'error', message: errorMessage(caught) })
+    }
+  }
+  return (
+    <div aria-live="polite" className="mt-1.5 ml-[1.75rem] grid gap-1 text-[11px] text-ash">
+      {/* Once placed, the beat's asset line names the picture, whose name is its prompt; this line only waits or explains. */}
+      {!props.placed && (
+        <p>
+          {making && (
+            <>
+              Generating {article} {kind}:{' '}
+            </>
+          )}
+          {!making && (
+            <span className="text-signal-red-deep">
+              Could not make the {kind}: {props.generation?.error}{' '}
+            </span>
+          )}
+          <q>{props.generate.prompt}</q>
+        </p>
+      )}
+      {!making && (
+        <div>
+          <Button type="button" size="sm" variant="ghost" busy={state.status === 'saving'} onClick={again}>
+            Generate again
+          </Button>
+        </div>
+      )}
+      {state.status === 'error' && <ErrorLine>{state.message}</ErrorLine>}
     </div>
   )
 }
