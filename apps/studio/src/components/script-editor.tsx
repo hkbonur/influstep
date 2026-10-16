@@ -153,7 +153,12 @@ function BeatsForm(props: {
           )}
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <Button type="submit" variant="primary" busy={state.status === 'saving'} disabled={!dirty || problems.length > 0}>
+          <Button
+            type="submit"
+            variant={dirty ? 'primary' : 'outline'}
+            busy={state.status === 'saving'}
+            disabled={!dirty || problems.length > 0}
+          >
             Save beats
           </Button>
           <SpokenLength beats={edited} lengthSec={props.episode.format?.lengthSec} />

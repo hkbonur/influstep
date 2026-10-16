@@ -45,18 +45,15 @@ function RepliesPage() {
         title={`Replies of ${persona.name}`}
         lead={
           data.onX
-            ? `A reply to a stranger's post waits for you. A reply to someone who engaged first goes out on its own when ${persona.name} publishes on its own.`
+            ? persona.autoPublish
+              ? 'A reply to a stranger waits for you; a reply to someone who engaged first goes out on its own.'
+              : 'Every reply waits for you: post it as it is, edit it, or skip it.'
             : undefined
         }
         actions={
-          <>
-            <LinkButton to="/personas/$personaId/memory" params={{ personaId }} size="sm" variant="ghost">
-              Memory
-            </LinkButton>
-            <LinkButton to="/personas/$personaId" params={{ personaId }} size="sm" variant="ghost">
-              Open persona
-            </LinkButton>
-          </>
+          <LinkButton to="/personas/$personaId" params={{ personaId }} size="sm" variant="ghost">
+            Open persona
+          </LinkButton>
         }
       />
       {!data.onX && (
@@ -77,7 +74,6 @@ function RepliesPage() {
 
 function Replies(props: { data: OnX }) {
   const data = props.data
-  const persona = data.persona
   // One status line for the page: posting, skipping or asking moves the card the button sat in to another section.
   const statusRef = React.useRef<HTMLParagraphElement>(null)
   const [status, setStatus] = React.useState<string | null>(null)
@@ -121,23 +117,19 @@ function Replies(props: { data: OnX }) {
         </section>
       )}
 
-      <section>
-        <SectionHeading count={data.goingOut.length}>Going out</SectionHeading>
-        {data.goingOut.length === 0 && (
-          <p className="text-ash">
-            {persona.autoPublish
-              ? 'Nothing going out. A reply to someone who mentioned or answered the persona goes out on its own, within the budget.'
-              : `Nothing going out. ${persona.name} publishes nothing on its own, so every reply waits for you.`}
-          </p>
-        )}
-        <ul className="divide-y divide-mist border-y border-mist">
-          {data.goingOut.map((reply) => (
-            <li key={reply._id} className="py-4">
-              <GoingOutRow reply={reply} onDone={onDone} />
-            </li>
-          ))}
-        </ul>
-      </section>
+      {/* The lead already says what goes out on its own, so an empty Going out says nothing new. */}
+      {data.goingOut.length > 0 && (
+        <section>
+          <SectionHeading count={data.goingOut.length}>Going out</SectionHeading>
+          <ul className="divide-y divide-mist border-y border-mist">
+            {data.goingOut.map((reply) => (
+              <li key={reply._id} className="py-4">
+                <GoingOutRow reply={reply} onDone={onDone} />
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section>
         <SectionHeading count={data.sent.length}>Sent</SectionHeading>
@@ -151,17 +143,20 @@ function Replies(props: { data: OnX }) {
         </ul>
       </section>
 
-      <section>
-        <SectionHeading count={data.skipped.length}>Skipped</SectionHeading>
-        {data.skipped.length === 0 && <p className="text-ash">Nothing skipped.</p>}
-        <ul className="divide-y divide-mist border-y border-mist">
-          {data.skipped.map((reply) => (
-            <li key={reply._id} className="py-4">
-              <SkippedRow reply={reply} onDone={onDone} />
-            </li>
-          ))}
-        </ul>
-      </section>
+      {data.skipped.length > 0 && (
+        <details>
+          <summary className="eyebrow w-fit cursor-pointer hover:text-graphite">
+            Skipped <span className="tabular">({data.skipped.length})</span>
+          </summary>
+          <ul className="mt-3 divide-y divide-mist border-y border-mist">
+            {data.skipped.map((reply) => (
+              <li key={reply._id} className="py-4">
+                <SkippedRow reply={reply} onDone={onDone} />
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
 
       <MockNote when={all.some((reply) => reply.mock)}>
         Mock listener: these posts are generated, not heard on X, and a sent reply's numbers are generated, not measured.
@@ -234,7 +229,7 @@ function BudgetLine(props: { data: OnX }) {
 function TargetPost(props: { reply: Reply }) {
   const target = props.reply.target
   return (
-    <div className="border-l-2 border-mist pl-3">
+    <div className="rounded-lg bg-paper-warm px-3 py-2">
       <p className="flex flex-wrap items-baseline gap-x-2 text-[11px] text-ash">
         <span className="font-medium text-graphite">{target.author.name}</span>
         <span className="font-mono">@{target.author.handle}</span>

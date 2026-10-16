@@ -23,7 +23,7 @@ import React from 'react'
 import { PostEditor } from '@/components/post-editor'
 import { type DraftEdit, type DraftEdits, PublicationsSection, unsavedPlatforms } from '@/components/publish-package'
 import { ScriptEditor } from '@/components/script-editor'
-import { JobDot, PlatformGlyphs, PostKindIcon, PostShape, SponsorPill, StatusPill } from '@/components/status'
+import { JobDot, PostKindIcon, PostShape, SponsorPill, StatusPill } from '@/components/status'
 import { AttributionNote, Button, ErrorLine, Eyebrow, type FormState, Input, MockNote, Mono, PageHeader, Skeleton } from '@/components/ui'
 import { cn } from '@/lib/cn'
 import { errorMessage } from '@/lib/errors'
@@ -123,35 +123,38 @@ function EpisodePage() {
     }
   }
   const packageNotice = approval.status === 'approved' && approval.episodeId === episodeId ? queuedLine(approval.queued) : null
+  const failedJobs = data.jobs.filter((job) => job.status === 'failed').length
 
   return (
     <>
       <PageHeader
         title={episode.title}
         lead={
-          <>
-            <Link to="/personas/$personaId" params={{ personaId: persona._id }} className="hover:underline">
-              {persona.name}
-            </Link>{' '}
-            <Mono className="text-ash">@{persona.handle}</Mono> ·{' '}
-            {formatDay(episode.plannedFor, { weekday: 'long', month: 'long', day: 'numeric' })} · <StatusPill status={episode.status} />{' '}
-            <SponsorPill segment={episode.sponsorSegment} /> <PlatformGlyphs platforms={episode.platforms} />
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <StatusPill status={episode.status} />
+            <SponsorPill segment={episode.sponsorSegment} />
+            <span>
+              <Link to="/personas/$personaId" params={{ personaId: persona._id }} className="text-graphite hover:underline">
+                {persona.name}
+              </Link>
+              {' · '}
+              {formatDay(episode.plannedFor, { weekday: 'long', month: 'long', day: 'numeric' })}
+              {episode.format && (
+                <>
+                  {' · '}
+                  <span className="tabular">{formatLength(episode.format.lengthSec)}</span>,{' '}
+                  {DELIVERY_LABELS[episode.format.delivery].toLowerCase()}
+                </>
+              )}
+            </span>
             {isPost(episode.kind) && (
-              <span className="ml-1 inline-flex items-center gap-1 whitespace-nowrap text-graphite">
+              <span className="inline-flex items-center gap-1 whitespace-nowrap text-graphite">
                 <PostKindIcon kind={episode.kind} showLabel />
               </span>
             )}
             {/* What the planner asked of the post, as plain text: the writer reads it, the operator edits the post itself. */}
-            <PostShape intent={episode.intent} length={episode.length} className="ml-2 text-xs whitespace-nowrap" />
-            {episode.format && (
-              <>
-                {' '}
-                <Mono className="whitespace-nowrap text-ash">
-                  {formatLength(episode.format.lengthSec)} · {DELIVERY_LABELS[episode.format.delivery]}
-                </Mono>
-              </>
-            )}
-          </>
+            <PostShape intent={episode.intent} length={episode.length} className="text-xs whitespace-nowrap" />
+          </span>
         }
         actions={
           <>
@@ -254,11 +257,10 @@ function EpisodePage() {
             />
           )}
           <section>
-            <Eyebrow className="mb-3">{isPost(episode.kind) ? 'Post' : 'Script'}</Eyebrow>
-            <p className="mb-3 text-ash">
-              Concept: {episode.concept}
-              {episode.pillar && <span> · pillar: {episode.pillar}</span>}
-            </p>
+            <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+              <Eyebrow>{isPost(episode.kind) ? 'Post' : 'Script'}</Eyebrow>
+              <ConceptLine concept={episode.concept} title={episode.title} pillar={episode.pillar} />
+            </div>
             {isPost(episode.kind) ? (
               // Keyed on the post it edits, like the script editor: a saved or rewritten post remounts it.
               <PostEditor
@@ -284,6 +286,26 @@ function EpisodePage() {
         </div>
 
         <div className="space-y-8">
+          <section>
+            <Eyebrow className="mb-3">Schedule</Eyebrow>
+            <div className="flex items-center gap-2">
+              <Input
+                type="date"
+                value={day ?? episode.plannedFor}
+                onChange={(event) => setDay(event.target.value)}
+                className="w-auto"
+                disabled={terminal}
+                aria-label="Planned day"
+              />
+              {/* Only once a new day is picked: until then there is nothing to move. */}
+              {!terminal && day !== null && day !== episode.plannedFor && (
+                <Button size="sm" onClick={run(() => reschedule({ episodeId, plannedFor: day }))}>
+                  Move
+                </Button>
+              )}
+            </div>
+          </section>
+
           {/*
             Before there are publications: a video's renders, if any, and where its publications will come from. Once they
             exist the package shows each render in its block. An image post's one render is its card, shown in the post editor.
@@ -331,27 +353,6 @@ function EpisodePage() {
             </section>
           )}
 
-          <section>
-            <Eyebrow className="mb-3">Schedule</Eyebrow>
-            <div className="flex items-center gap-2">
-              <Input
-                type="date"
-                value={day ?? episode.plannedFor}
-                onChange={(event) => setDay(event.target.value)}
-                className="w-auto"
-                disabled={terminal}
-                aria-label="Planned day"
-              />
-              <Button
-                size="sm"
-                disabled={terminal || !day || day === episode.plannedFor}
-                onClick={run(() => reschedule({ episodeId, plannedFor: day ?? episode.plannedFor }))}
-              >
-                Move
-              </Button>
-            </div>
-          </section>
-
           {(data.experiment || data.signals.length > 0) && (
             <section>
               <Eyebrow className="mb-3">Why this episode</Eyebrow>
@@ -382,30 +383,49 @@ function EpisodePage() {
             </section>
           )}
 
-          <section>
-            <Eyebrow className="mb-3">Jobs</Eyebrow>
-            <ul className="space-y-1.5 font-mono text-[11px]">
-              {data.jobs.map((job) => (
-                <li key={job._id} className="flex items-start gap-2">
-                  <JobDot status={job.status} className="mt-1" />
-                  <span className="text-graphite">{job.kind}</span>
-                  <span className="text-ash">
-                    {job.runsOn} · {job.status} · {relativeTime(job.finishedAt ?? job.startedAt ?? job.createdAt)}
-                  </span>
-                  {job.status === 'failed' && (
-                    <button type="button" className="ml-auto text-ink hover:underline" onClick={run(() => retryJob({ jobId: job._id }))}>
-                      retry
-                    </button>
-                  )}
-                  {job.error && <span className="basis-full text-signal-red-deep">{job.error}</span>}
-                </li>
-              ))}
-            </ul>
-          </section>
+          {data.jobs.length > 0 && (
+            // Open while a job failed: its error and Retry are the thing to act on. Otherwise a record, folded away.
+            <details className="group" open={failedJobs > 0}>
+              <summary className="eyebrow w-fit cursor-pointer hover:text-graphite">
+                Jobs <span className="tabular">({data.jobs.length})</span>
+                {failedJobs > 0 && <span className="ml-2 tracking-normal text-signal-red-deep normal-case">{failedJobs} failed</span>}
+              </summary>
+              <ul className="mt-3 space-y-1.5 font-mono text-[11px]">
+                {data.jobs.map((job) => (
+                  <li key={job._id} className="flex items-start gap-2">
+                    <JobDot status={job.status} className="mt-1" />
+                    <span className="text-graphite">{job.kind}</span>
+                    <span className="text-ash">
+                      {job.runsOn} · {job.status} · {relativeTime(job.finishedAt ?? job.startedAt ?? job.createdAt)}
+                    </span>
+                    {job.status === 'failed' && (
+                      <button type="button" className="ml-auto text-ink hover:underline" onClick={run(() => retryJob({ jobId: job._id }))}>
+                        retry
+                      </button>
+                    )}
+                    {job.error && <span className="basis-full text-signal-red-deep">{job.error}</span>}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
           <MockNote when={mock} />
         </div>
       </div>
     </>
+  )
+}
+
+/** The concept and the pillar it serves; a concept that only repeats the title is left out. */
+function ConceptLine(props: { concept: string; title: string; pillar: string | undefined }) {
+  const concept = props.concept.trim() === props.title.trim() ? null : props.concept
+  if (concept === null && !props.pillar) return null
+  return (
+    <p className="text-xs text-ash">
+      {concept && <>Concept: {concept}</>}
+      {concept && props.pillar && ' · '}
+      {props.pillar && <>Pillar: {props.pillar}</>}
+    </p>
   )
 }
 
@@ -468,10 +488,10 @@ function PlatformsSection(props: { episodeId: Id<'episodes'>; platforms: Platfor
  */
 function CodeInForce(props: { code: { code: string; offer: string } | null }) {
   if (props.code === null) return <p className="mt-2 text-sm text-ash">No discount code in force.</p>
+
   return (
-    <p className="mt-2 text-sm">
-      Code in force: <Mono>{props.code.code}</Mono> <span className="text-ash">({props.code.offer})</span>. A description carries the code
-      in force when it goes out.
+    <p className="mt-2 text-sm" title="A description carries the code in force when it goes out.">
+      Goes out with <Mono>{props.code.code}</Mono> <span className="text-ash">({props.code.offer})</span>
     </p>
   )
 }
@@ -519,11 +539,14 @@ function Snapshots(props: {
 }
 
 function ShotsSection(props: { shots: EpisodeData['episode']['shots']; assets: EpisodeData['assets']; personaId: Id<'personas'> }) {
+  if (props.shots.length === 0) return null
+  // The shots speak the script's lines again, so they stay folded: what is new here is how each is recorded.
   return (
-    <section>
-      <Eyebrow className="mb-3">Shots</Eyebrow>
-      {props.shots.length === 0 && <p className="text-ash">The writer adds shots with the script.</p>}
-      <ol className="space-y-2">
+    <details className="group">
+      <summary className="eyebrow w-fit cursor-pointer hover:text-graphite">
+        Shots <span className="tabular">({props.shots.length})</span>
+      </summary>
+      <ol className="mt-3 space-y-2">
         {props.shots.map((shot, index) => (
           <li key={shot.id} className="flex gap-3 text-sm">
             <span className="tabular w-5 shrink-0 font-mono text-xs text-ash">{index + 1}</span>
@@ -563,7 +586,7 @@ function ShotsSection(props: { shots: EpisodeData['episode']['shots']; assets: E
           </li>
         ))}
       </ol>
-    </section>
+    </details>
   )
 }
 

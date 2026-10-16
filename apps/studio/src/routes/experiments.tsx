@@ -39,7 +39,7 @@ function ExperimentsPage() {
     <>
       <PageHeader
         title="Experiments"
-        lead="One running experiment per persona, picked by its weekly strategy review or set up by you. Every planned video or X post, or every reply the listener keeps, carries a variant of the dimension under test; the analyst decides after each measurement window."
+        lead="One running experiment per persona. Each new episode, post or reply carries a variant; the analyst decides once each has enough."
         actions={
           <Button variant="primary" onClick={() => setCreating((value) => !value)}>
             {creating ? 'Close' : 'New experiment'}
@@ -160,7 +160,7 @@ function ExperimentCard(props: { experiment: ExperimentRow }) {
             return (
               <tr key={variant.key} className={cn('border-t border-mist', { 'font-medium': winner })}>
                 <td className="py-1.5">
-                  <Mono>{variant.key}</Mono> <span className="ml-1">{variant.label}</span>
+                  <span title={variant.key}>{variant.label}</span>
                   {variant.isControl && <span className="ml-1 text-xs text-ash">control</span>}
                   {winner && (
                     <Pill tint="field-green" className="ml-2">

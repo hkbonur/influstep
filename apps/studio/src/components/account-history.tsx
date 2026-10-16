@@ -61,12 +61,18 @@ export function HistorySection(props: {
       <p ref={statusRef} tabIndex={-1} aria-live="polite" className="mt-1 text-xs">
         <ClearStatus clearing={props.clearing} cleared={cleared && props.totals.count === 0} />
       </p>
-      <p className="mt-1 max-w-[65ch] text-xs text-ash">Importing only reads: Influstep never posts, likes or follows while it imports.</p>
-      <div className="mt-4 grid gap-4 lg:grid-cols-3">
-        <ArchiveUpload key={`archive-${clears}`} personaId={props.personaId} />
-        <PastePosts key={`paste-${clears}`} personaId={props.personaId} />
-        <ImportFromX personaId={props.personaId} job={props.importJob} mock={props.mock} />
-      </div>
+      {/* Open while there is nothing to learn from; once there is a history, adding to it is the rare step. */}
+      <details className="group mt-4" open={props.totals.count === 0}>
+        <summary className="w-fit cursor-pointer text-sm font-medium hover:underline">Import more posts</summary>
+        <p className="mt-1 max-w-[65ch] text-xs text-ash">
+          Importing only reads: Influstep never posts, likes or follows while it imports.
+        </p>
+        <div className="mt-3 grid gap-4 lg:grid-cols-3">
+          <ArchiveUpload key={`archive-${clears}`} personaId={props.personaId} />
+          <PastePosts key={`paste-${clears}`} personaId={props.personaId} />
+          <ImportFromX personaId={props.personaId} job={props.importJob} mock={props.mock} />
+        </div>
+      </details>
     </section>
   )
 }

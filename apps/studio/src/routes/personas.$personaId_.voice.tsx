@@ -49,6 +49,9 @@ type Job = Doc<'jobs'>
 /** How many of the account's best originals the examples section lists after the examples, which all come first. */
 const TOP_POSTS_LIMIT = 20
 
+/** How many of those the list shows before Show more. */
+const TOP_POSTS_SHOWN = 5
+
 /** Emoji and hashtag habits as plain words. */
 const HABIT_WORDS: Record<Habit, string> = { never: 'Never', rare: 'Rarely', often: 'Often' }
 
@@ -67,7 +70,7 @@ function VoicePage() {
   const header = (
     <PageHeader
       title={`Voice of ${persona.name}`}
-      lead="How the account writes on X, learned from its own posts. Every X post is written in this voice."
+      lead="How the account writes on X, learned from its own posts."
       actions={
         <LinkButton to="/personas/$personaId" params={{ personaId }} variant="ghost">
           Open persona
@@ -335,7 +338,12 @@ function VoiceForm(props: { personaId: Id<'personas'>; voice: Voice }) {
         )}
       </div>
       {state.status === 'error' && <ErrorLine>{state.message}</ErrorLine>}
-      <Button type="submit" variant="primary" busy={state.status === 'saving'} disabled={!dirty || problems.length > 0}>
+      <Button
+        type="submit"
+        variant={dirty ? 'primary' : 'outline'}
+        busy={state.status === 'saving'}
+        disabled={!dirty || problems.length > 0}
+      >
         Save
       </Button>
     </form>
@@ -356,17 +364,19 @@ function ExamplesSection(props: { posts: Doc<'accountPosts'>[] }) {
   const examples = props.posts.filter((post) => post.example)
   const others = props.posts.filter((post) => !post.example)
   const full = examples.length >= VOICE_EXAMPLES_MAX
+  const [showAll, setShowAll] = React.useState(false)
+  // The best few are enough to pick from; the rest wait behind Show more.
+  const shown = showAll ? others : others.slice(0, TOP_POSTS_SHOWN)
   const rows = [
     ...examples.map((post) => <AccountPostRow key={post._id} post={post} full={full} />),
     others.length > 0 && <TopPostsSeparator key="top-posts" />,
-    ...others.map((post) => <AccountPostRow key={post._id} post={post} full={full} />),
+    ...shown.map((post) => <AccountPostRow key={post._id} post={post} full={full} />),
   ]
   return (
     <section>
       <Eyebrow className="mb-1">Examples</Eyebrow>
       <p className="mb-3 max-w-[65ch] text-xs text-ash">
-        The writer reads these as the account's own posts, to imitate in style and never to copy.{' '}
-        <span className="tabular">{examples.length}</span> of {VOICE_EXAMPLES_MAX}
+        The writer imitates these in style, never copies them. <span className="tabular">{examples.length}</span> of {VOICE_EXAMPLES_MAX}
         {examples.length < VOICE_EXAMPLES_MIN && `; mark at least ${VOICE_EXAMPLES_MIN}`}
         {full && '; untick one to mark another'}.
       </p>
@@ -374,6 +384,11 @@ function ExamplesSection(props: { posts: Doc<'accountPosts'>[] }) {
       {props.posts.length > 0 && (
         // Without examples the separator opens the list, so the list draws no line above it.
         <ul className={cn('divide-y divide-mist border-b border-mist', { 'border-t': examples.length > 0 })}>{rows}</ul>
+      )}
+      {others.length > shown.length && (
+        <Button size="sm" variant="ghost" className="mt-2" onClick={() => setShowAll(true)}>
+          Show <span className="tabular">{others.length - shown.length}</span> more
+        </Button>
       )}
     </section>
   )

@@ -25,7 +25,7 @@ export interface CalendarEpisode {
   error?: string
   /** An idea the writer is on now (core `scriptBeingWritten`); false for every other status. */
   writing: boolean
-  persona: { _id: Doc<'personas'>['_id']; name: string; handle: string }
+  persona: { _id: Doc<'personas'>['_id']; name: string; handle: string; color: Doc<'personas'>['color'] }
 }
 
 /** Seven days from `weekStart`, every persona, episodes ordered by publish time. */
@@ -60,7 +60,7 @@ export const week = query({
           variantKey: episode.variantKey,
           error: episode.error,
           writing: episode.status === 'idea' && (await scriptBeingWritten(ctx, episode._id)),
-          persona: { _id: persona._id, name: persona.name, handle: persona.handle },
+          persona: { _id: persona._id, name: persona.name, handle: persona.handle, color: persona.color },
         })
       }
       episodes.sort((a, b) => a.scheduledAt - b.scheduledAt)

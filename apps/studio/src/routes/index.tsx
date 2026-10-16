@@ -9,7 +9,7 @@ import { EpisodeCard } from '@/components/episode-card'
 import { HomeOverview } from '@/components/home-overview'
 import { Button, Empty, PageHeader, Pill, Skeleton } from '@/components/ui'
 import { cn } from '@/lib/cn'
-import { addDays, formatDay, todayKey, weekStart } from '@/lib/format'
+import { addDays, formatDay, plural, todayKey, weekStart } from '@/lib/format'
 
 const searchSchema = z.object({
   week: z
@@ -37,6 +37,7 @@ function CalendarPage() {
   const total = data?.days.reduce((sum, day) => sum + day.episodes.length, 0) ?? 0
   const loud =
     data?.days.flatMap((day) => day.episodes).filter((episode) => waitsOnOperator(episode.status) || episode.status === 'failed') ?? []
+  const thisWeek = week === weekStart(today)
 
   const plan = async () => {
     setPlanning(true)
@@ -55,18 +56,6 @@ function CalendarPage() {
     <>
       <PageHeader
         title="Calendar"
-        lead={
-          loud.length > 0 ? (
-            <>
-              <span className="text-ink">
-                {loud.length} episode{loud.length === 1 ? '' : 's'}
-              </span>{' '}
-              need{loud.length === 1 ? 's' : ''} you this week: {summarize(loud.map((episode) => episode.status))}.
-            </>
-          ) : (
-            'Every persona’s plan for the week. Blue and amber wait on you, red failed, green goes out on its own.'
-          )
-        }
         actions={
           <>
             <select
@@ -91,21 +80,35 @@ function CalendarPage() {
 
       <HomeOverview />
 
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <Button size="sm" onClick={() => setWeek(addDays(week, -7))} aria-label="Previous week">
-          ←
-        </Button>
-        <Button size="sm" onClick={() => setWeek(weekStart(today))} disabled={week === weekStart(today)}>
-          This week
-        </Button>
-        <Button size="sm" onClick={() => setWeek(addDays(week, 7))} aria-label="Next week">
-          →
-        </Button>
-        <span className="ml-2 text-sm text-graphite">
+      <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+        <h2 className="text-base font-semibold">
           {formatDay(week, { month: 'long', day: 'numeric' })} to{' '}
           {formatDay(addDays(week, 6), { month: 'long', day: 'numeric', year: 'numeric' })}
-        </span>
-        <span className="tabular ml-auto text-xs text-ash">{total} episodes</span>
+        </h2>
+        <div className="flex items-center gap-1">
+          <Button size="sm" variant="ghost" onClick={() => setWeek(addDays(week, -7))} aria-label="Previous week">
+            ←
+          </Button>
+          {!thisWeek && (
+            <Button size="sm" variant="ghost" onClick={() => setWeek(weekStart(today))}>
+              This week
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" onClick={() => setWeek(addDays(week, 7))} aria-label="Next week">
+            →
+          </Button>
+        </div>
+        {data && total > 0 && (
+          <p className="tabular ml-auto text-xs text-ash">
+            {total} {plural(total, 'episode', 'episodes')}
+            {loud.length > 0 && (
+              <>
+                {' · '}
+                <span className="text-graphite">{summarize(loud.map((episode) => episode.status))}</span>
+              </>
+            )}
+          </p>
+        )}
       </div>
 
       {!data && (
@@ -123,8 +126,7 @@ function CalendarPage() {
             </Button>
           }
         >
-          Nothing is planned for this week. The writer plans as many slots as each persona publishes a week, from this week's signals and
-          the persona's pillars; you approve each script.
+          Nothing planned this week. The writer plans from the signals and each persona's pillars; you approve each script.
         </Empty>
       )}
       {data && total > 0 && (
@@ -150,13 +152,17 @@ function CalendarPage() {
         </div>
       )}
 
-      <footer className="mt-6 flex flex-wrap gap-2">
-        {EPISODE_STATUSES.map((status) => (
-          <Pill key={status} tint={EPISODE_STATUS_TINTS[status]}>
-            {EPISODE_STATUS_LABELS[status]}
-          </Pill>
-        ))}
-      </footer>
+      {/* The legend is for learning the dots once; after that it is noise, so it stays folded. */}
+      <details className="mt-6 text-xs text-ash">
+        <summary className="w-fit cursor-pointer hover:text-graphite">What the colors mean</summary>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {EPISODE_STATUSES.map((status) => (
+            <Pill key={status} tint={EPISODE_STATUS_TINTS[status]}>
+              {EPISODE_STATUS_LABELS[status]}
+            </Pill>
+          ))}
+        </div>
+      </details>
     </>
   )
 }

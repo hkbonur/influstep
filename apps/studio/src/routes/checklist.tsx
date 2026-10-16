@@ -16,7 +16,7 @@ function ChecklistPage() {
   const done = items?.filter((item) => item.status === 'done') ?? []
   return (
     <>
-      <PageHeader title="Checklist" lead="Everything that waits on you, across personas. Ticking an item resumes the episode it blocks." />
+      <PageHeader title="Checklist" lead="What only you can do. Ticking an item resumes the episode it blocks." />
       {!items && <Skeleton className="h-40" />}
       {items && open.length === 0 && (
         <Empty>Nothing waits on you. The agents will add an item here when they hit a sign-in or a missing key.</Empty>

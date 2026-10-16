@@ -126,9 +126,11 @@ function Earned(props: { earned: Overview['earned'] }) {
               </li>
             ))}
           </ul>
-          <p className="mt-2 text-xs text-ash">
-            Estimated: paid conversions times the value of one, first touch, and short of visitors who declined cookies.{' '}
-            {earned.mock && 'Mock numbers. '}
+          <p
+            className="mt-2 text-xs text-ash"
+            title="Paid conversions times the value of one, first touch, short of visitors who declined cookies."
+          >
+            An estimate, first touch.{earned.mock && ' Mock numbers.'}{' '}
             <Link to="/reports" className={ROW_LINK}>
               Reports
             </Link>

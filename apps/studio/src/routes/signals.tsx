@@ -39,6 +39,8 @@ function SignalsPage() {
     .filter((signal) => !search.source || signal.source === search.source)
     .map((signal) => ({ signal, freshness: signalFreshness(signal, now) }))
     .sort((a, b) => b.freshness - a.freshness)
+  const warm = rows.filter((row) => !isCold(row.freshness))
+  const cold = rows.filter((row) => isCold(row.freshness))
   const counts = new Map<SignalSource, number>()
   for (const signal of signals ?? []) counts.set(signal.source, (counts.get(signal.source) ?? 0) + 1)
 
@@ -46,7 +48,7 @@ function SignalsPage() {
     <>
       <PageHeader
         title="Signals"
-        lead={`What the researcher found this fortnight, freshest first. Freshness halves every ${FRESHNESS_HALF_LIFE_DAYS} days; one click makes an episode from a signal.`}
+        lead={`What the researcher found, freshest first. Freshness halves every ${FRESHNESS_HALF_LIFE_DAYS} days.`}
         actions={
           <>
             <select
@@ -89,17 +91,30 @@ function SignalsPage() {
       </div>
       {!signals && <Skeleton className="h-40" />}
       {signals && rows.length === 0 && <Empty>No signals here. The researcher polls every hour; poll now to see it work.</Empty>}
-      {rows.length > 0 && (
+      {warm.length > 0 && (
         // A column head for the numbers; each row also names its number for screen readers, so the head is hidden from them.
         <div aria-hidden className="grid grid-cols-[3.5rem_1fr] gap-x-4 pb-1 text-[11px] text-ash">
           <span className="text-right">Freshness</span>
         </div>
       )}
       <ol className="divide-y divide-mist border-y border-mist">
-        {rows.map((row) => (
-          <SignalRow key={row.signal._id} signal={row.signal} freshness={row.freshness} now={now} />
+        {warm.map((row) => (
+          <SignalRow key={row.signal._id} signal={row.signal} freshness={row.freshness} now={now} showPersona={!personaId} />
         ))}
       </ol>
+      {/* Too old to plan from; kept in reach, out of the way. */}
+      {cold.length > 0 && (
+        <details className="mt-4">
+          <summary className="eyebrow w-fit cursor-pointer hover:text-graphite">
+            Cold <span className="tabular">({cold.length})</span>
+          </summary>
+          <ol className="mt-2 divide-y divide-mist border-y border-mist">
+            {cold.map((row) => (
+              <SignalRow key={row.signal._id} signal={row.signal} freshness={row.freshness} now={now} showPersona={!personaId} />
+            ))}
+          </ol>
+        </details>
+      )}
       <div className="mt-3">
         <MockNote when={rows.some((row) => row.signal.mock)}>Mock providers: these signals are a fixed set, not fetched.</MockNote>
       </div>
@@ -136,7 +151,7 @@ function sinceWords(signal: SignalRowData, now: number): string {
   return relativeTime(signal.foundAt, Math.max(now, signal.foundAt))
 }
 
-function SignalRow(props: { signal: SignalRowData; freshness: number; now: number }) {
+function SignalRow(props: { signal: SignalRowData; freshness: number; now: number; showPersona: boolean }) {
   const dismiss = useMutation(api.private.signals.dismiss)
   const makeEpisode = useMutation(api.private.signals.makeEpisode)
   const [picking, setPicking] = React.useState(false)
@@ -157,7 +172,7 @@ function SignalRow(props: { signal: SignalRowData; freshness: number; now: numbe
     }
   }
   return (
-    <li className="grid grid-cols-[3.5rem_minmax(0,1fr)] gap-x-4 gap-y-2 py-3 sm:grid-cols-[3.5rem_minmax(0,1fr)_auto]">
+    <li className="group grid grid-cols-[3.5rem_minmax(0,1fr)] gap-x-4 gap-y-2 py-3 sm:grid-cols-[3.5rem_minmax(0,1fr)_auto]">
       <div className="flex flex-col items-end pt-px">
         <Mono className="text-ink">
           <span className="sr-only">Freshness </span>
@@ -166,11 +181,21 @@ function SignalRow(props: { signal: SignalRowData; freshness: number; now: numbe
         {isCold(props.freshness) && <span className="text-[11px] text-ash">cold</span>}
       </div>
       <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-ash">{SIGNAL_SOURCE_LABELS[signal.source]}</span>
-          <span className="tabular font-mono text-[11px] text-ash">score {Math.round(signal.score)}</span>
-          <span className="text-[11px] text-ash">{sinceWords(signal, props.now)}</span>
-          {signal.status === 'used' && <Pill tint="ink">Used</Pill>}
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-ash">
+          <span>{SIGNAL_SOURCE_LABELS[signal.source]}</span>
+          <span aria-hidden>·</span>
+          <span title={`Score ${Math.round(signal.score)}`}>{sinceWords(signal, props.now)}</span>
+          {props.showPersona && (
+            <>
+              <span aria-hidden>·</span>
+              <Mono className="text-[11px]">@{signal.personaHandle}</Mono>
+            </>
+          )}
+          {signal.status === 'used' && (
+            <Pill tint="fog" className="ml-1">
+              Used
+            </Pill>
+          )}
         </div>
         {/* A problem comes from the persona's own problem log, so there is no page to open. */}
         {signal.source === 'problems' ? (
@@ -180,13 +205,17 @@ function SignalRow(props: { signal: SignalRowData; freshness: number; now: numbe
             {signal.title}
           </a>
         )}
-        <p className="mt-0.5 line-clamp-2 text-ash">{signal.summary}</p>
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ash">
-          <Mono>@{signal.personaHandle}</Mono>
-          <span>{signal.topics.join(' · ')}</span>
-        </div>
+        <p className="mt-0.5 line-clamp-1 text-ash" title={signal.summary}>
+          {signal.summary}
+        </p>
       </div>
-      <div className="col-start-2 flex items-start gap-2 sm:col-start-3">
+      {/* With a mouse the actions wait until the row is pointed at or focused, so forty rows do not read as eighty buttons; on touch they stay. */}
+      <div
+        className={cn('col-start-2 flex items-start gap-2 sm:col-start-3', {
+          'pointer-fine:opacity-0 pointer-fine:transition-opacity pointer-fine:group-focus-within:opacity-100 pointer-fine:group-hover:opacity-100':
+            !picking,
+        })}
+      >
         {picking ? (
           <>
             <Input

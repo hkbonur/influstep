@@ -103,7 +103,12 @@ export function PostEditor(props: PostEditorProps) {
         </div>
         <div className="flex items-center gap-3">
           {!locked && (
-            <Button type="submit" variant="primary" busy={state.status === 'saving'} disabled={!dirty || problems.length > 0}>
+            <Button
+              type="submit"
+              variant={dirty ? 'primary' : 'outline'}
+              busy={state.status === 'saving'}
+              disabled={!dirty || problems.length > 0}
+            >
               Save post
             </Button>
           )}

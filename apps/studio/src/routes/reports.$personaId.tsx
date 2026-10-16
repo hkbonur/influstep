@@ -1,11 +1,18 @@
 import { api } from '@influstep/convex/_generated/api'
 import type { Id } from '@influstep/convex/_generated/dataModel'
-import { CONVERSION_KIND_LABELS, EXPERIMENT_KIND_LABELS, METRIC_LABELS, PLATFORM_LABELS, VALUE_LABEL } from '@influstep/shared'
+import {
+  CONVERSION_KIND_LABELS,
+  EXPERIMENT_KIND_LABELS,
+  METRIC_LABELS,
+  PLATFORM_LABELS,
+  SPONSOR_SEGMENT_LABELS,
+  VALUE_LABEL,
+} from '@influstep/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useQuery } from 'convex/react'
 import type { FunctionReturnType } from 'convex/server'
 import { Funnel, MetricStrip, Trend, reportStrip } from '@/components/charts'
-import { PlatformGlyphs, SponsorPill, StatusPill } from '@/components/status'
+import { PlatformGlyphs, StatusPill } from '@/components/status'
 import { AttributionNote, Empty, Eyebrow, LinkButton, MockNote, Mono, PageHeader, Pill, Skeleton } from '@/components/ui'
 import { cn } from '@/lib/cn'
 import { formatCount, formatDay, formatMoney, formatNumber, formatPercent, plural } from '@/lib/format'
@@ -109,7 +116,9 @@ function ReportPage() {
             </div>
           </section>
 
-          {report.engagement && <EngagementBlock personaId={personaId} engagement={report.engagement} windowDays={report.windowDays} />}
+          {report.engagement && (
+            <EngagementBlock personaId={personaId} engagement={report.engagement} windowDays={report.windowDays} mockSaid={funnel.mock} />
+          )}
 
           <section>
             <Eyebrow className="mb-3">Top episodes</Eyebrow>
@@ -155,8 +164,9 @@ function ReportPage() {
                   <div className="tabular mt-1 flex flex-wrap gap-x-5 gap-y-1 text-xs text-graphite">
                     {experiment.stats.map((stat) => (
                       <span key={stat.key}>
-                        <Mono>{stat.key}</Mono> {stat.exposures > 0 ? formatPercent(stat.rate, 2) : 'no data'}{' '}
-                        <span className="text-ash">({stat.episodes} ep.)</span>
+                        {experiment.variants.find((variant) => variant.key === stat.key)?.label ?? stat.key}{' '}
+                        <span className="text-ink">{stat.exposures > 0 ? formatPercent(stat.rate, 2) : 'no data'}</span>{' '}
+                        <span className="text-ash">· {stat.episodes} ep.</span>
                       </span>
                     ))}
                   </div>
@@ -166,9 +176,12 @@ function ReportPage() {
             </ul>
           </section>
 
-          <section>
-            <Eyebrow className="mb-3">Episodes</Eyebrow>
-            <div className="overflow-x-auto">
+          {/* Every row of the window, for checking a number; the leaders are above, so the table stays folded. */}
+          <details>
+            <summary className="eyebrow w-fit cursor-pointer hover:text-graphite">
+              All episodes <span className="tabular">({report.episodes.length})</span>
+            </summary>
+            <div className="mt-3 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="text-xs text-ash">
                   <tr className="text-left">
@@ -194,11 +207,15 @@ function ReportPage() {
                         <Link to="/episodes/$episodeId" params={{ episodeId: episode._id }} className="hover:underline">
                           {episode.title}
                         </Link>
-                        <span className="ml-2 inline-flex gap-1 align-middle">
-                          <StatusPill status={episode.status} />
-                          <SponsorPill segment={episode.sponsorSegment} />
-                          {episode.variantKey && <Pill tint="fog">{episode.variantKey}</Pill>}
-                        </span>
+                        {/* Measured is where a past episode ends up, so only another status is worth a pill. */}
+                        {episode.status !== 'measured' && (
+                          <span className="ml-2 align-middle">
+                            <StatusPill status={episode.status} />
+                          </span>
+                        )}
+                        {episode.sponsorSegment !== 'none' && (
+                          <span className="ml-2 text-xs text-ash">{SPONSOR_SEGMENT_LABELS[episode.sponsorSegment]}</span>
+                        )}
                       </td>
                       <td className="py-1.5 pl-3 text-right">{formatCount(episode.views)}</td>
                       <td className="py-1.5 pl-3 text-right">{formatCount(episode.follows)}</td>
@@ -213,7 +230,7 @@ function ReportPage() {
                 </tbody>
               </table>
             </div>
-          </section>
+          </details>
 
           <section>
             <Eyebrow className="mb-3">Discount codes</Eyebrow>
@@ -255,7 +272,7 @@ function ReportPage() {
  * follows per measured reply, and the replies that brought the most
  * followers. A persona without X has no block.
  */
-function EngagementBlock(props: { personaId: Id<'personas'>; engagement: Engagement; windowDays: number }) {
+function EngagementBlock(props: { personaId: Id<'personas'>; engagement: Engagement; windowDays: number; mockSaid: boolean }) {
   const engagement = props.engagement
   const repliesLink = (
     <Link
@@ -323,7 +340,8 @@ function EngagementBlock(props: { personaId: Id<'personas'>; engagement: Engagem
               </ol>
             )}
           </div>
-          <MockNote when={engagement.mock} />
+          {/* Said once at the top when the funnel is mock too. */}
+          <MockNote when={engagement.mock && !props.mockSaid} />
         </div>
       )}
     </section>

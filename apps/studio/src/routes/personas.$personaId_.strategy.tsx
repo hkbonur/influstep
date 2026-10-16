@@ -267,43 +267,64 @@ function Defaults(props: { persona: Doc<'personas'>; learnings: Learning[]; runn
   const style = effectiveStyle({}, stored)
   const onX = props.persona.formats.some((format) => format.platform === 'x')
   const kinds = EXPERIMENT_KINDS.filter((kind) => onX || EXPERIMENT_SUBJECT[kind] === 'video')
+  const rows = kinds.map((kind) => {
+    const testedNow = props.runningKind === kind
+    if (kind === 'publish_time') {
+      return {
+        kind,
+        changed: false,
+        testedNow,
+        row: (
+          <DefaultRow
+            key={kind}
+            label={EXPERIMENT_KIND_LABELS[kind]}
+            value={`${catalogControl(kind).label} (as before)`}
+            testedNow={testedNow}
+          >
+            Decided tests move the hours below.
+          </DefaultRow>
+        ),
+      }
+    }
+    const variant = style[kind]
+    const decided = stored?.find((entry) => entry.kind === kind)
+    const learning =
+      decided?.experimentId === undefined
+        ? undefined
+        : props.learnings.find((entry) => entry.status === 'active' && entry.evidence.experimentId === decided.experimentId)
+    return {
+      kind,
+      changed: !variant.isControl,
+      testedNow,
+      row: (
+        <DefaultRow
+          key={kind}
+          label={EXPERIMENT_KIND_LABELS[kind]}
+          value={variant.isControl ? `${variant.label} (as before)` : variant.label}
+          since={decided?.since}
+          testedNow={testedNow}
+        >
+          {learning?.text}
+        </DefaultRow>
+      ),
+    }
+  })
+  // What a decision changed, or what a test puts in play, is what the operator reads; the rest is the catalog's usual.
+  const lead = rows.filter((entry) => entry.changed || entry.testedNow)
+  const usual = rows.filter((entry) => !entry.changed && !entry.testedNow)
   return (
     <section>
       <SectionHeading>Defaults</SectionHeading>
-      <dl className="divide-y divide-mist border-y border-mist">
-        {kinds.map((kind) => {
-          const testedNow = props.runningKind === kind
-          if (kind === 'publish_time') {
-            return (
-              <DefaultRow
-                key={kind}
-                label={EXPERIMENT_KIND_LABELS[kind]}
-                value={`${catalogControl(kind).label} (as before)`}
-                testedNow={testedNow}
-              >
-                Decided tests move the hours below.
-              </DefaultRow>
-            )
-          }
-          const variant = style[kind]
-          const decided = stored?.find((entry) => entry.kind === kind)
-          const learning =
-            decided?.experimentId === undefined
-              ? undefined
-              : props.learnings.find((entry) => entry.status === 'active' && entry.evidence.experimentId === decided.experimentId)
-          return (
-            <DefaultRow
-              key={kind}
-              label={EXPERIMENT_KIND_LABELS[kind]}
-              value={variant.isControl ? `${variant.label} (as before)` : variant.label}
-              since={decided?.since}
-              testedNow={testedNow}
-            >
-              {learning?.text}
-            </DefaultRow>
-          )
-        })}
-      </dl>
+      {lead.length === 0 && <p className="mb-2 text-ash">Every dimension is at its usual setting.</p>}
+      {lead.length > 0 && <dl className="divide-y divide-mist border-y border-mist">{lead.map((entry) => entry.row)}</dl>}
+      {usual.length > 0 && (
+        <details className="mt-3">
+          <summary className="cursor-pointer text-xs text-ash hover:text-ink">
+            {lead.length === 0 ? 'Show them' : `${usual.length} more as before`}
+          </summary>
+          <dl className="mt-2 divide-y divide-mist border-y border-mist">{usual.map((entry) => entry.row)}</dl>
+        </details>
+      )}
     </section>
   )
 }
@@ -415,13 +436,13 @@ function Learnings(props: { persona: Doc<'personas'>; learnings: Learning[]; nam
         </details>
       )}
       <p className="mt-3 text-xs text-ash">
-        The rules and facts you gave {props.persona.name}, and its goal notes and problems, are on the{' '}
+        Rules, facts and problems are in{' '}
         <Link
           to="/personas/$personaId/memory"
           params={{ personaId: props.persona._id }}
           className="underline decoration-fog hover:text-ink hover:decoration-ink"
         >
-          Memory page
+          Memory
         </Link>
         .
       </p>
@@ -486,23 +507,56 @@ function Journal(props: {
               </p>
               <p className="mt-0.5">{entry.text}</p>
               <p className="mt-0.5 text-xs text-ash">{entry.reason}</p>
-              {entry.evidence.numbers.length > 0 && (
-                <dl className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px]">
-                  {entry.evidence.numbers.map((number) => (
-                    <div key={number.label} className="flex gap-1.5">
-                      <dt className="text-ash">{number.label}</dt>
-                      <dd className="tabular font-mono text-graphite">{formatNumber(number.value)}</dd>
-                    </div>
-                  ))}
-                </dl>
-              )}
-              <EvidenceLinks entry={entry} titles={titles} signalTitles={signalTitles} names={props.names} />
+              <JournalDetails entry={entry} titles={titles} signalTitles={signalTitles} names={props.names} />
             </li>
           ))}
         </ol>
       )}
     </section>
   )
+}
+
+/**
+ * The numbers and the evidence an entry rests on, folded: the sentence and its
+ * reason say what changed and why, and these are there to check it.
+ */
+function JournalDetails(props: {
+  entry: JournalEntry
+  titles: Map<Id<'episodes'>, string>
+  signalTitles: Map<Id<'signals'>, string>
+  names: ExperimentNames
+}) {
+  const numbers = props.entry.evidence.numbers
+  const evidence = <EvidenceLinks entry={props.entry} titles={props.titles} signalTitles={props.signalTitles} names={props.names} />
+  if (numbers.length === 0 && !hasEvidence(props.entry, props.titles, props.signalTitles, props.names)) return null
+  return (
+    <details className="mt-1">
+      <summary className="w-fit cursor-pointer text-[11px] text-ash hover:text-ink">Numbers and evidence</summary>
+      {numbers.length > 0 && (
+        <dl className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px]">
+          {numbers.map((number) => (
+            <div key={number.label} className="flex gap-1.5">
+              <dt className="text-ash">{number.label}</dt>
+              <dd className="tabular font-mono text-graphite">{formatNumber(number.value)}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {evidence}
+    </details>
+  )
+}
+
+function hasEvidence(
+  entry: JournalEntry,
+  titles: Map<Id<'episodes'>, string>,
+  signalTitles: Map<Id<'signals'>, string>,
+  names: ExperimentNames
+): boolean {
+  const experimentId = entry.evidence.experimentId
+  if (experimentId !== undefined && names.has(experimentId)) return true
+  if (entry.evidence.episodeIds.some((episodeId) => titles.has(episodeId))) return true
+  return entry.evidence.signalIds.some((signalId) => signalTitles.has(signalId))
 }
 
 /**

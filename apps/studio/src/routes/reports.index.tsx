@@ -28,7 +28,7 @@ function WorkspaceReport() {
     <>
       <PageHeader
         title={`Reports, last ${report.windowDays} days`}
-        lead="Every persona together. Open a persona for its days, its episodes and its experiments."
+        lead="Every persona together. Open one for its days, episodes and experiments."
       />
       {report.personas.length === 0 && <Empty>No personas to report on.</Empty>}
       {report.personas.length > 0 && (
@@ -168,8 +168,7 @@ function WhatWorks(props: { report: Report }) {
       <Eyebrow className="mb-1">What works</Eyebrow>
       <p className="mb-4 max-w-[65ch] text-xs text-ash">
         <span className="tabular">{whatWorks.videos}</span> measured {plural(whatWorks.videos, 'video', 'videos')} of the last{' '}
-        {props.report.whatWorksDays} days, every persona together, ranked by value per video, then clicks per view. Each persona's strategy
-        review moves its pillar weights on the same numbers.
+        {props.report.whatWorksDays} days, ranked by value per video. The strategy reviews weigh pillars on the same numbers.
       </p>
       {whatWorks.videos === 0 && <p className="text-ash">No video has been measured in that time yet.</p>}
       {whatWorks.videos > 0 && (

@@ -12,14 +12,16 @@ import type { FunctionReturnType } from 'convex/server'
 import { cn } from '@/lib/cn'
 import { formatTime } from '@/lib/format'
 import { ideaLine } from '@/lib/ideas'
+import { PersonaAvatar } from './persona-avatar'
 import { PlatformGlyphs, PostKindIcon, PostShape, TINT_CLASS } from './status'
 
 export type CalendarEpisode = FunctionReturnType<typeof api.private.calendar.week>['days'][number]['episodes'][number]
 
 /**
  * One episode on the calendar. The status is a wash and a dot; title at
- * weight 500; persona handle in mono; the episode's own platforms on the last
- * row, since an episode can go to fewer platforms than its persona has (DESIGN.md).
+ * weight 500; one meta row under it with the persona's avatar, the publish
+ * time and the episode's own platforms, since an episode can go to fewer
+ * platforms than its persona has (DESIGN.md).
  * A post shows its kind icon and its first line where a video shows its title,
  * and under it what the planner asked of it: the intent and the length. An
  * idea has no words yet, so it says when the writer gets to them, or that it is
@@ -61,15 +63,19 @@ export function EpisodeCard(props: { episode: CalendarEpisode }) {
           {episode.status === 'idea' && (
             <div className={cn('mt-0.5 text-[11px] text-ash', { 'pl-5': isPost(episode.kind) })}>{ideaLine(episode, episode.writing)}</div>
           )}
-          <div className="mt-1 flex items-center justify-between gap-2">
-            <span className="truncate font-mono text-[11px] text-ash">@{episode.persona.handle}</span>
-            <span className="tabular shrink-0 text-[11px] text-ash">{formatTime(episode.scheduledAt)}</span>
+          {episode.sponsorSegment !== 'none' && (
+            <div className={cn('mt-0.5 truncate text-[11px] text-ash', { 'pl-5': isPost(episode.kind) })}>
+              {SPONSOR_SEGMENT_LABELS[episode.sponsorSegment]}
+            </div>
+          )}
+          {episode.error && <div className="mt-1 line-clamp-1 font-mono text-[11px] text-signal-red-deep">{episode.error}</div>}
+          {/* One meta row: whose it is (the avatar's color, its name for screen readers), when, and where it goes. */}
+          <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-ash">
+            <PersonaAvatar color={episode.persona.color} state="idle" size={14} />
+            <span className="sr-only">{episode.persona.name},</span>
+            <span className="tabular shrink-0">{formatTime(episode.scheduledAt)}</span>
+            <PlatformGlyphs platforms={episode.platforms} bare className="ml-auto" />
           </div>
-          <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-ash">
-            <PlatformGlyphs platforms={episode.platforms} />
-            {episode.sponsorSegment !== 'none' && <span className="truncate">{SPONSOR_SEGMENT_LABELS[episode.sponsorSegment]}</span>}
-          </div>
-          {episode.error && <div className="mt-1 line-clamp-2 font-mono text-[11px] text-signal-red-deep">{episode.error}</div>}
         </div>
       </div>
     </Link>

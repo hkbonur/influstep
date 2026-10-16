@@ -28,8 +28,8 @@ function ProvidersPage() {
         title="Providers"
         lead={
           <>
-            The backend runs in <Mono>{status.mode}</Mono> mode. Set <Mono>PROVIDERS_MODE=real</Mono> on the Convex deployment and the
-            runner to switch; an adapter without a key fails loudly instead of pretending.
+            Running in <Mono>{status.mode}</Mono> mode. Set <Mono>PROVIDERS_MODE=real</Mono> on the Convex deployment and the runner to
+            switch.
           </>
         }
       />
@@ -40,8 +40,8 @@ function ProvidersPage() {
             <table className="w-full text-sm">
               <thead className="text-xs text-ash">
                 <tr className="text-left">
-                  <th className="w-44 py-1 font-medium">Provider</th>
-                  <th className="w-56 py-1 font-medium">Real adapter</th>
+                  <th className="py-1 pr-4 font-medium">Provider</th>
+                  <th className="py-1 pr-4 font-medium">Real adapter</th>
                   <th className="py-1 font-medium">Needs</th>
                 </tr>
               </thead>
@@ -50,10 +50,10 @@ function ProvidersPage() {
                   const missing = provider.needs.filter((key) => !status.keys[key as keyof typeof status.keys])
                   return (
                     <tr key={provider.name} className="border-t border-mist">
-                      <td className="py-1.5 whitespace-nowrap">
+                      <td className="py-1.5 pr-4 whitespace-nowrap">
                         <Mono>{provider.name}</Mono>
                       </td>
-                      <td className="py-1.5 whitespace-nowrap">
+                      <td className="py-1.5 pr-4">
                         {provider.real}
                         {!provider.hasReal && <span className="ml-1 text-xs whitespace-nowrap text-ash">mock only</span>}
                       </td>
@@ -72,24 +72,23 @@ function ProvidersPage() {
                 })}
               </tbody>
             </table>
-            <p className="mt-3 text-xs text-ash">
-              The researcher polls {POLLED_SOURCES}. Comments come from the publisher, which reads them on each platform, and problems from
-              each persona's problem log.
-            </p>
-            <MediaBudgets />
-            <p className="mt-1.5 text-xs text-ash">
-              Keys live in the Convex deployment's environment (backend) and in apps/runner/.env.local (voice, avatar, uploads). Voice,
-              avatar and the publishers run on the runner, so the backend cannot see their keys.
-            </p>
+            <details className="mt-3 text-xs text-ash">
+              <summary className="w-fit cursor-pointer hover:text-graphite">Where keys live, sources and budgets</summary>
+              <p className="mt-1.5">
+                Keys live in the Convex deployment's environment (backend) and in apps/runner/.env.local (voice, avatar, uploads). Voice,
+                avatar and the publishers run on the runner, so the backend cannot see their keys. An adapter without its key fails loudly
+                instead of pretending.
+              </p>
+              <p className="mt-1.5">
+                The researcher polls {POLLED_SOURCES}. Comments come from the publisher, which reads them on each platform, and problems
+                from each persona's problem log.
+              </p>
+              <MediaBudgets />
+            </details>
           </section>
         </div>
 
         <div className="space-y-10">
-          <section>
-            <Eyebrow className="mb-3">Workspace</Eyebrow>
-            <WorkspaceForm />
-          </section>
-
           <section>
             <Eyebrow className="mb-3">Runner</Eyebrow>
             {!runner && <p className="text-ash">No runner has checked in. Start one with pnpm --filter @influstep/runner dev.</p>}
@@ -116,8 +115,13 @@ function ProvidersPage() {
           </section>
 
           <section>
-            <Eyebrow className="mb-3">Recent jobs</Eyebrow>
-            <ul className="space-y-1.5 font-mono text-[11px]">
+            <Eyebrow className="mb-3">Workspace</Eyebrow>
+            <WorkspaceForm />
+          </section>
+
+          <details>
+            <summary className="eyebrow w-fit cursor-pointer hover:text-graphite">Recent jobs</summary>
+            <ul className="mt-3 space-y-1.5 font-mono text-[11px]">
               {status.recentJobs.map((job) => (
                 <li key={job._id} className="flex flex-wrap items-center gap-2">
                   <span
@@ -144,7 +148,7 @@ function ProvidersPage() {
                 </li>
               ))}
             </ul>
-          </section>
+          </details>
         </div>
       </div>
     </>

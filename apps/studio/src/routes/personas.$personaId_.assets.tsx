@@ -53,21 +53,28 @@ function AssetsPage() {
   const personaId = params.personaId as Id<'personas'>
   const data = useQuery(api.private.assets.list, { personaId })
   const media = useQuery(api.private.media.forPersona, { personaId })
+  // Unset until the operator opens or closes a form, so an empty library can start with Upload open.
+  const [open, setOpen] = React.useState<AddForm | 'none' | null>(null)
   if (data === null || media === null) return <p className="text-ash">This persona does not exist.</p>
   if (data === undefined || media === undefined) return <Skeleton className="h-96" />
   const prompts = new Map(media.assetPrompts.map((row) => [row.assetId, row.prompt]))
   const uploads = data.assets.filter((asset) => asset.source === 'operator')
   const made = data.assets.filter((asset) => asset.source === 'producer')
+  const adding = open ?? (data.assets.length === 0 ? 'upload' : null)
+  const toggle = (form: AddForm) => setOpen(adding === form ? 'none' : form)
   return (
     <div className="max-w-[64rem]">
       <PageHeader
         title={`Assets of ${data.persona.name}`}
-        lead="The writer can show an image or a clip in a beat by asking for its name, and the producer places it. Audio and documents stay here."
+        lead="The writer shows an image or a clip in a beat by asking for it by name."
         actions={
           <>
-            <LinkButton to="/personas/$personaId/memory" params={{ personaId }} size="sm" variant="ghost">
-              Memory
-            </LinkButton>
+            <Button size="sm" aria-expanded={adding === 'upload'} onClick={() => toggle('upload')}>
+              Upload
+            </Button>
+            <Button size="sm" aria-expanded={adding === 'generate'} onClick={() => toggle('generate')}>
+              Generate
+            </Button>
             <LinkButton to="/personas/$personaId" params={{ personaId }} size="sm" variant="ghost">
               Open persona
             </LinkButton>
@@ -75,8 +82,10 @@ function AssetsPage() {
         }
       />
       <div className="space-y-10">
-        <UploadForm personaId={personaId} />
-        <GenerateForm personaId={personaId} media={media} />
+        {/* The library leads; a form opens only when the operator adds something, or when there is nothing to browse yet. */}
+        {adding === 'upload' && <UploadForm personaId={personaId} onClose={() => toggle('upload')} />}
+        {adding === 'generate' && <GenerateForm personaId={personaId} media={media} onClose={() => toggle('generate')} />}
+        <Generations generations={media.generations} />
         <AssetSection
           title="Your uploads"
           empty="Nothing uploaded yet. A screenshot, a logo or a short clip the writer can show."
@@ -94,6 +103,8 @@ function AssetsPage() {
   )
 }
 
+type AddForm = 'upload' | 'generate'
+
 function SectionHeading(props: { children: React.ReactNode }) {
   return <h2 className="eyebrow mb-3">{props.children}</h2>
 }
@@ -103,7 +114,7 @@ function SectionHeading(props: { children: React.ReactNode }) {
  * The file, the name, the tags and the note are checked with the backend's own
  * words before anything is sent; the name starts as the file's.
  */
-function UploadForm(props: { personaId: Id<'personas'> }) {
+function UploadForm(props: { personaId: Id<'personas'>; onClose: () => void }) {
   const generateUploadUrl = useMutation(api.private.assets.generateUploadUrl)
   const add = useMutation(api.private.assets.add)
   const [file, setFile] = React.useState<File | null>(null)
@@ -152,8 +163,7 @@ function UploadForm(props: { personaId: Id<'personas'> }) {
     }
   }
   return (
-    <section>
-      <SectionHeading>Upload</SectionHeading>
+    <section aria-label="Upload">
       <form onSubmit={(event) => void submit(event)} className="card grid gap-3 sm:grid-cols-2">
         <Field label="File" className="sm:col-span-2">
           <input
@@ -208,8 +218,11 @@ function UploadForm(props: { personaId: Id<'personas'> }) {
           <Button type="submit" variant="primary" busy={state.status === 'saving'}>
             Upload
           </Button>
+          <Button variant="ghost" onClick={props.onClose}>
+            Cancel
+          </Button>
           <p id={hintId} className="text-xs text-ash">
-            Images, clips, audio, PDFs and text, up to {megabytes(ASSET_MAX_BYTES)} MB. The writer sees the name, the tags and the note.
+            Images, clips, audio, PDFs and text, up to {megabytes(ASSET_MAX_BYTES)} MB.
           </p>
         </div>
         {state.status === 'error' && (
@@ -466,7 +479,7 @@ function GenerateAgain(props: { assetId: Id<'assets'> }) {
  * operator types; the day's budget sits beside the button, and what is being
  * made or failed shows under the form.
  */
-function GenerateForm(props: { personaId: Id<'personas'>; media: MediaData }) {
+function GenerateForm(props: { personaId: Id<'personas'>; media: MediaData; onClose: () => void }) {
   const generate = useMutation(api.private.media.generate)
   const generatePortrait = useMutation(api.private.media.generatePortrait)
   // A portrait is an image the look leads with: every avatar take is animated from it.
@@ -490,8 +503,7 @@ function GenerateForm(props: { personaId: Id<'personas'>; media: MediaData }) {
     }
   }
   return (
-    <section>
-      <SectionHeading>Generate</SectionHeading>
+    <section aria-label="Generate">
       <form onSubmit={(event) => void submit(event)} className="card grid gap-3">
         <div className="grid gap-3 sm:grid-cols-[9rem_1fr]">
           <Field label="Kind">
@@ -538,24 +550,32 @@ function GenerateForm(props: { personaId: Id<'personas'>; media: MediaData }) {
           >
             Generate
           </Button>
+          <Button variant="ghost" onClick={props.onClose}>
+            Cancel
+          </Button>
           <span className="tabular text-xs text-ash">
             Today: {media.spent.images} of {media.budget.images} images, {media.spent.clipSeconds} of {media.budget.clipSeconds} s of clips.
             {spent === null ? ' Never a real person, another brand or a real screen.' : ` ${spent}`}
           </span>
         </div>
-        {media.generations.length > 0 && (
-          <ul className="space-y-1 border-t border-mist pt-3 text-xs">
-            {media.generations.map((generation) => (
-              <li key={generation._id} className={generation.status === 'failed' ? 'text-signal-red-deep' : 'text-ash'}>
-                {generation.status === 'failed' ? 'Could not make' : 'Generating'} {MEDIA_KIND_LABELS[generation.kind].toLowerCase()}:{' '}
-                <q>{generation.prompt}</q>
-                {generation.error && ` · ${generation.error}`}
-              </li>
-            ))}
-          </ul>
-        )}
       </form>
     </section>
+  )
+}
+
+/** What the producer is making for this page, or could not make in the last day; shown with the form open or closed. */
+function Generations(props: { generations: MediaData['generations'] }) {
+  // Stays mounted while empty, so the first generation appearing is announced.
+  return (
+    <ul aria-live="polite" className={props.generations.length === 0 ? 'hidden' : 'space-y-1 text-xs'}>
+      {props.generations.map((generation) => (
+        <li key={generation._id} className={generation.status === 'failed' ? 'text-signal-red-deep' : 'text-ash'}>
+          {generation.status === 'failed' ? 'Could not make' : 'Generating'} {MEDIA_KIND_LABELS[generation.kind].toLowerCase()}:{' '}
+          <q>{generation.prompt}</q>
+          {generation.error && ` · ${generation.error}`}
+        </li>
+      ))}
+    </ul>
   )
 }
 

@@ -73,12 +73,7 @@ export function PublicationsSection(props: {
   return (
     <section>
       <Eyebrow className="mb-3">{listOnly ? 'Publications' : 'Publish package'}</Eyebrow>
-      {waiting && (
-        <p className="mb-2 max-w-[65ch] text-sm">
-          Nothing goes out until you approve it.
-          {props.kind === 'video' && ' The lines around each description are added when it goes out, with the code in force then.'}
-        </p>
-      )}
+      {waiting && <p className="mb-2 max-w-[65ch] text-sm text-ash">Nothing goes out until you approve it.</p>}
       {/*
         Stays mounted, so the reason Approve and schedule is off is announced as it appears and as it clears, and so is
         what approving did. It takes focus after approval, since the button that had it leaves the page.
@@ -289,6 +284,8 @@ function DraftForm(props: { publication: Publication; edit: DraftEdit | undefine
       else await updateDraft({ publicationId: publication._id, title: draft.title, body: draft.body })
       props.onEdit(null)
       setState({ status: 'idle' })
+      // Save leaves with the edit, so focus goes back to the field instead of falling to the page.
+      document.getElementById(titleId)?.focus()
     } catch (caught) {
       setState({ status: 'error', message: errorMessage(caught) })
     }
@@ -341,16 +338,17 @@ function DraftForm(props: { publication: Publication; edit: DraftEdit | undefine
           <FooterLines footer={publication.footer} sent={publication.sent} />
         </>
       )}
-      <div className="flex items-center gap-2">
-        <Button type="submit" size="sm" busy={state.status === 'saving'} disabled={!dirty}>
-          Save
-        </Button>
-        {dirty && (
+      {/* Only while the text differs from what is saved: four idle Save buttons would read as four things to do. */}
+      {(dirty || state.status === 'saving') && (
+        <div className="flex items-center gap-2">
+          <Button type="submit" size="sm" busy={state.status === 'saving'}>
+            Save
+          </Button>
           <Button size="sm" variant="ghost" onClick={discard}>
             Discard
           </Button>
-        )}
-      </div>
+        </div>
+      )}
       <div id={errorId} aria-live="polite">
         {state.status === 'error' && <ErrorLine>{state.message}</ErrorLine>}
       </div>
@@ -386,13 +384,18 @@ function CountedField(props: { id: string; label: string; length: number; limit:
  */
 function FooterLines(props: { footer: Footer | null; sent: boolean }) {
   if (props.footer === null) return <ErrorLine>The lines added to this description are missing.</ErrorLine>
+  // The same lines on every platform, so they stay folded until the operator wants to read exactly what viewers get.
   return (
-    <div className="rounded-lg bg-paper-warm px-3 py-2.5 text-xs leading-relaxed text-graphite">
-      <p className="mb-1 text-[11px] font-medium text-ash">{props.sent ? 'Added when it went out' : 'Added when it goes out'}</p>
-      <FooterText lines={props.footer.above} />
-      <p className="my-1 text-ash italic">The description</p>
-      <FooterText lines={props.footer.below} />
-    </div>
+    <details className="group text-xs">
+      <summary className="w-fit cursor-pointer text-ash hover:text-graphite">
+        {props.sent ? 'Added when it went out' : 'Added when it goes out'}
+      </summary>
+      <div className="mt-1.5 rounded-lg bg-paper-warm px-3 py-2.5 leading-relaxed text-graphite">
+        <FooterText lines={props.footer.above} />
+        <p className="my-1 text-ash italic">The description</p>
+        <FooterText lines={props.footer.below} />
+      </div>
+    </details>
   )
 }
 

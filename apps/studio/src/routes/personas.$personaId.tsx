@@ -7,6 +7,7 @@ import {
   PRESENTER_FACES,
   PRESENTER_FACE_LABELS,
   EPISODE_KIND_LABELS,
+  SPONSOR_SEGMENT_LABELS,
   bioPath,
   formatLength,
   isPost,
@@ -17,6 +18,7 @@ import {
   type PlatformFormat,
   type Voice,
 } from '@influstep/shared'
+import { CaretRightIcon } from '@phosphor-icons/react'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
 import type { FunctionReturnType } from 'convex/server'
@@ -24,7 +26,7 @@ import React from 'react'
 import { FormatFields } from '@/components/format-fields'
 import { PersonaColorSwatches, PersonaMascot, personaAvatarState } from '@/components/persona-avatar'
 import { PersonaChat } from '@/components/persona-chat'
-import { JobDot, PlatformGlyphs, PostKindIcon, SponsorPill, StatusPill } from '@/components/status'
+import { JobDot, PlatformGlyphs, PostKindIcon, StatusPill } from '@/components/status'
 import {
   Button,
   CheckboxField,
@@ -45,17 +47,7 @@ import {
 import { assetCounts } from '@/lib/assets'
 import { cn } from '@/lib/cn'
 import { errorMessage } from '@/lib/errors'
-import {
-  formatCount,
-  formatDate,
-  formatDateTime,
-  formatDay,
-  formatHour,
-  formatMoney,
-  languageName,
-  plural,
-  relativeTime,
-} from '@/lib/format'
+import { formatCount, formatDate, formatDay, formatHour, formatMoney, languageName, plural, relativeTime, todayKey } from '@/lib/format'
 import { ideaLine } from '@/lib/ideas'
 import { PROBLEMS_SHOWN, briefTime, splitBrief } from '@/lib/research'
 import { useNow } from '@/lib/use-now'
@@ -64,33 +56,70 @@ export const Route = createFileRoute('/personas/$personaId')({ component: Person
 
 type PersonaData = NonNullable<FunctionReturnType<typeof api.private.personas.get>>
 
-type HeaderActionKey = 'poll' | 'plan' | 'metrics' | 'pause'
-type HeaderActionState =
-  | { status: 'idle' }
-  | { status: 'busy'; key: HeaderActionKey }
-  | { status: 'done'; message: string }
-  | { status: 'error'; message: string }
+type HeaderActionKey = 'plan' | 'metrics' | 'pause'
 
 /**
  * The persona's own numbers in its header, over the report's window: what it
  * earned, the paid conversions behind that, and its views, linked to its
  * report, so the operator does not have to open it to see if the persona works.
  */
-function PersonaNumbers(props: { personaId: Id<'personas'>; numbers: PersonaData['numbers'] }) {
+function PersonaNumbers(props: { personaId: Id<'personas'>; numbers: PersonaData['numbers']; refresh: React.ReactNode }) {
   const { numbers } = props
   return (
-    <Link to="/reports/$personaId" params={{ personaId: props.personaId }} className="group mt-1 block w-fit">
-      <span className="tabular font-medium text-ink">{formatMoney(numbers.value, numbers.currency)}</span>
-      <span className="text-ash"> earned from </span>
-      <span className="tabular text-graphite">{numbers.paid}</span>
-      <span className="text-ash"> paid · </span>
-      <span className="tabular text-graphite">{formatCount(numbers.views)}</span>
-      <span className="text-ash group-hover:underline">
-        {' '}
-        views, last {numbers.days} days{numbers.mock ? ' (mock)' : ''}
-      </span>
-    </Link>
+    <span className="mt-1 flex flex-wrap items-center gap-x-2">
+      <Link to="/reports/$personaId" params={{ personaId: props.personaId }} className="group w-fit">
+        <span className="tabular font-medium text-ink">{formatMoney(numbers.value, numbers.currency)}</span>
+        <span className="text-ash"> earned from </span>
+        <span className="tabular text-graphite">{numbers.paid}</span>
+        <span className="text-ash"> paid · </span>
+        <span className="tabular text-graphite">{formatCount(numbers.views)}</span>
+        <span className="text-ash group-hover:underline">
+          {' '}
+          views, last {numbers.days} days{numbers.mock ? ' (mock)' : ''}
+        </span>
+      </Link>
+      {props.refresh}
+    </span>
   )
+}
+
+type QueuedAction<Key extends string> =
+  | { status: 'idle' }
+  | { status: 'busy'; key: Key }
+  | { status: 'done'; message: string }
+  | { status: 'error'; message: string }
+
+/** One queued request at a time: busy while it is out, then what it queued or why it was refused. */
+function useQueuedAction<Key extends string>() {
+  const [state, setState] = React.useState<QueuedAction<Key>>({ status: 'idle' })
+  const run = async (key: Key, request: () => Promise<unknown>, done: string) => {
+    if (state.status === 'busy') return
+    setState({ status: 'busy', key })
+    try {
+      await request()
+      setState({ status: 'done', message: done })
+    } catch (caught) {
+      setState({ status: 'error', message: errorMessage(caught) })
+    }
+  }
+  const busy = (key: Key) => state.status === 'busy' && state.key === key
+  return { state, run, busy }
+}
+
+/** Stays mounted, so what an action queued, or why it was refused, is heard where the operator's focus already is. */
+function QueuedLine(props: { state: QueuedAction<string>; className?: string }) {
+  return (
+    <div aria-live="polite" className={cn('text-xs', props.className)}>
+      {props.state.status === 'done' && <p className="text-ash">{props.state.message}</p>}
+      {props.state.status === 'error' && <ErrorLine>{props.state.message}</ErrorLine>}
+    </div>
+  )
+}
+
+/** Past the day and done with: measured, published or killed. Everything else is still ahead of the operator. */
+function isEarlier(episode: PersonaData['episodes'][number], today: string): boolean {
+  if (episode.plannedFor >= today) return false
+  return episode.status === 'measured' || episode.status === 'published' || episode.status === 'killed'
 }
 
 function PersonaPage() {
@@ -99,30 +128,21 @@ function PersonaPage() {
   const data = useQuery(api.private.personas.get, { personaId })
   const setPaused = useMutation(api.private.personas.setPaused)
   const planWeek = useMutation(api.private.personas.planWeek)
-  const pollSignals = useMutation(api.private.personas.pollSignals)
   const pullMetrics = useMutation(api.private.personas.pullMetrics)
   const retireDiscountCode = useMutation(api.private.personas.retireDiscountCode)
   const [settings, setSettings] = React.useState(false)
-  const [action, setAction] = React.useState<HeaderActionState>({ status: 'idle' })
-
-  /** One header action at a time: busy while its request is out, then what it queued or why it was refused, under the header. */
-  const run = async (key: HeaderActionKey, request: () => Promise<unknown>, done: string) => {
-    if (action.status === 'busy') return
-    setAction({ status: 'busy', key })
-    try {
-      await request()
-      setAction({ status: 'done', message: done })
-    } catch (caught) {
-      setAction({ status: 'error', message: errorMessage(caught) })
-    }
-  }
-  const busy = (key: HeaderActionKey) => action.status === 'busy' && action.key === key
+  const { state: action, run, busy } = useQueuedAction<HeaderActionKey>()
+  const today = todayKey()
 
   if (data === undefined) return <Skeleton className="h-96" />
   if (data === null) return <p className="text-ash">This persona does not exist.</p>
   const { persona } = data
   const providersMock =
     data.jobs.some((job) => job.kind === 'pull_metrics') && data.episodes.some((episode) => episode.renders.some((render) => render.mock))
+  // Soonest first, so the next thing to go out leads; the past stays folded under it.
+  const upcoming = data.episodes.filter((episode) => !isEarlier(episode, today)).sort((a, b) => a.plannedFor.localeCompare(b.plannedFor))
+  const earlier = data.episodes.filter((episode) => isEarlier(episode, today))
+  const failedJobs = data.jobs.filter((job) => job.status === 'failed').length
 
   return (
     <>
@@ -146,27 +166,27 @@ function PersonaPage() {
                     <Pill tint="alert-amber">Paused</Pill>
                   </>
                 )}
-                <PersonaNumbers personaId={personaId} numbers={data.numbers} />
+                <PersonaNumbers
+                  personaId={personaId}
+                  numbers={data.numbers}
+                  refresh={
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 px-1.5 text-ash hover:text-ink"
+                      busy={busy('metrics')}
+                      onClick={() =>
+                        run('metrics', () => pullMetrics({ personaId }), 'Queued for the analyst: the numbers refresh shortly.')
+                      }
+                    >
+                      Refresh
+                    </Button>
+                  }
+                />
               </>
             }
             actions={
               <>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  busy={busy('poll')}
-                  onClick={() => run('poll', () => pollSignals({ personaId }), 'Queued for the researcher: new signals shortly.')}
-                >
-                  Poll signals
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  busy={busy('metrics')}
-                  onClick={() => run('metrics', () => pullMetrics({ personaId }), 'Queued for the analyst: the numbers refresh shortly.')}
-                >
-                  Pull metrics
-                </Button>
                 <Button
                   size="sm"
                   busy={busy('plan')}
@@ -199,63 +219,40 @@ function PersonaPage() {
               </>
             }
           />
-          {/* Stays mounted, so what an action queued, or why it was refused, is heard where the operator's focus already is. */}
-          <div aria-live="polite" className="-mt-4 mb-4 text-xs">
-            {action.status === 'done' && <p className="text-ash">{action.message}</p>}
-            {action.status === 'error' && <ErrorLine>{action.message}</ErrorLine>}
-          </div>
+          <QueuedLine state={action} className="-mt-4 mb-4" />
         </div>
       </div>
       {settings && <SettingsForm persona={persona} onDone={() => setSettings(false)} />}
 
-      <div className="grid gap-8 xl:grid-cols-[1fr_1.4fr_0.8fr] xl:gap-6">
+      <div className="grid gap-8 xl:grid-cols-[1fr_1.4fr_0.8fr] xl:gap-8">
         <div className="flex max-h-[70vh] min-h-[28rem] flex-col">
           <Eyebrow className="mb-3">Chat</Eyebrow>
           <PersonaChat persona={persona} messages={data.messages} directives={data.directives} episodes={data.episodes} jobs={data.jobs} />
         </div>
 
         <div>
-          <Eyebrow className="mb-3">Episodes</Eyebrow>
+          <Eyebrow className="mb-3">Coming up</Eyebrow>
           {data.episodes.length === 0 && <p className="text-ash">No episodes yet. Plan the week to get {persona.episodesPerWeek}.</p>}
-          {data.episodes.length > 0 && (
-            <ol className="divide-y divide-mist border-y border-mist">
-              {data.episodes.map((episode) => (
-                <li key={episode._id} className={cn('flex items-start gap-3 py-2.5', { 'opacity-60': episode.status === 'killed' })}>
-                  <span className="tabular w-16 shrink-0 pt-0.5 font-mono text-xs text-ash">
-                    {formatDay(episode.plannedFor, { month: 'short', day: 'numeric' })}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <Link
-                      to="/episodes/$episodeId"
-                      params={{ episodeId: episode._id }}
-                      className="flex items-center gap-1.5 font-medium hover:underline"
-                    >
-                      {isPost(episode.kind) && <PostKindIcon kind={episode.kind} className="shrink-0 text-graphite" />}
-                      <span className="line-clamp-1">{episode.title}</span>
-                    </Link>
-                    <p className="line-clamp-1 text-xs text-ash">
-                      {episode.status === 'idea' ? ideaLine(episode, episode.writing) : episode.hook || episode.concept}
-                    </p>
-                    {episode.error && <p className="mt-0.5 line-clamp-1 font-mono text-[11px] text-signal-red-deep">{episode.error}</p>}
-                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                      <PlatformGlyphs platforms={episode.platforms} />
-                      <SponsorPill segment={episode.sponsorSegment} />
-                      {episode.variantKey && <Pill tint="fog">{episode.variantKey}</Pill>}
-                    </div>
-                  </div>
-                  <StatusPill status={episode.status} />
-                </li>
-              ))}
-            </ol>
+          {data.episodes.length > 0 && upcoming.length === 0 && <p className="text-ash">Nothing planned ahead. Plan this week.</p>}
+          {upcoming.length > 0 && <EpisodeList episodes={upcoming} />}
+          {earlier.length > 0 && (
+            <details className="group mt-4">
+              <summary className="eyebrow w-fit cursor-pointer hover:text-graphite">
+                Earlier <span className="tabular">({earlier.length})</span>
+              </summary>
+              <div className="mt-3">
+                <EpisodeList episodes={earlier} />
+              </div>
+            </details>
           )}
           <MockNote when={providersMock} />
         </div>
 
         <div className="space-y-8">
           <section>
-            <Eyebrow className="mb-3">Checklist</Eyebrow>
-            {data.checklist.length === 0 && <p className="text-ash">Nothing waits on you.</p>}
-            <ul className="space-y-3">
+            <Eyebrow className="mb-3">Waits on you</Eyebrow>
+            {data.checklist.length === 0 && <p className="text-xs text-ash">Nothing. {persona.name} is working on its own.</p>}
+            <ul className="space-y-4">
               {data.checklist.map((item) => (
                 <ChecklistRow
                   key={item._id}
@@ -266,11 +263,13 @@ function PersonaPage() {
             </ul>
           </section>
 
-          {data.replies && <RepliesSummary personaId={personaId} replies={data.replies} />}
+          <PersonaPages persona={persona} replies={data.replies} />
 
-          <section>
-            <Eyebrow className="mb-3">Profile</Eyebrow>
-            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
+          <ResearchSummary personaId={personaId} />
+
+          <details className="group">
+            <summary className="eyebrow w-fit cursor-pointer hover:text-graphite">Profile</summary>
+            <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
               {persona.audience && (
                 <>
                   <dt className="text-ash">Audience</dt>
@@ -309,16 +308,6 @@ function PersonaPage() {
               <dd>
                 <SpokenVoiceLine persona={persona} voiceJob={data.voiceJob} />
               </dd>
-              {persona.formats.some((format) => format.platform === 'x') && (
-                <>
-                  <dt className="text-ash">Voice</dt>
-                  <dd>
-                    <Link to="/personas/$personaId/voice" params={{ personaId }} className="hover:underline">
-                      {persona.voice ? voiceSummary(persona.voice) : 'Not learned yet'}
-                    </Link>
-                  </dd>
-                </>
-              )}
               <dt className="text-ash">Sponsor dial</dt>
               <dd className="tabular">
                 {Math.round(persona.sponsorDial * 100)}% after {persona.sponsorRampEpisodes} episodes
@@ -378,141 +367,170 @@ function PersonaPage() {
                 </>
               )}
             </dl>
-          </section>
+          </details>
 
-          <StrategySummary persona={persona} />
-
-          <ResearchSummary personaId={personaId} />
-
-          <MemorySummary personaId={personaId} />
-
-          <AssetsSummary personaId={personaId} />
-
-          <section>
-            <Eyebrow className="mb-3">Recent jobs</Eyebrow>
-            <ul className="space-y-1 font-mono text-[11px]">
-              {data.jobs.map((job) => (
-                <li key={job._id} className="flex items-center gap-2">
-                  <JobDot status={job.status} />
-                  <span className="text-graphite">{job.kind}</span>
-                  <span className="text-ash">{job.role}</span>
-                  <span className="ml-auto text-ash">{relativeTime(job.finishedAt ?? job.startedAt ?? job.createdAt)}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
+          {data.jobs.length > 0 && (
+            <details className="group">
+              <summary className="eyebrow w-fit cursor-pointer hover:text-graphite">
+                Recent jobs
+                {/* A failure is the one thing in here worth opening for, so it shows on the closed summary. */}
+                {failedJobs > 0 && <span className="ml-2 text-signal-red-deep normal-case tracking-normal">{failedJobs} failed</span>}
+              </summary>
+              <ul className="mt-3 space-y-1 font-mono text-[11px]">
+                {data.jobs.map((job) => (
+                  <li key={job._id} className="flex items-center gap-2">
+                    <JobDot status={job.status} />
+                    <span className="text-graphite">{job.kind}</span>
+                    <span className="text-ash">{job.role}</span>
+                    <span className="ml-auto text-ash">{relativeTime(job.finishedAt ?? job.startedAt ?? job.createdAt)}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
         </div>
       </div>
     </>
   )
 }
 
-/**
- * Two lines under the checklist, for a persona on X: how many replies wait
- * for the operator and go out on their own, and today's budget, linking the
- * Replies page, where each one is posted (DESIGN.md, Persona page).
- */
-function RepliesSummary(props: { personaId: Id<'personas'>; replies: NonNullable<PersonaData['replies']> }) {
-  const replies = props.replies
-  const lines = [`${replies.waiting} waiting for you`, ...(replies.goingOut > 0 ? [`${replies.goingOut} going out`] : [])]
+/** A persona's episodes as rows: day, title, its first line (or when the writer gets to it), and its status. */
+function EpisodeList(props: { episodes: PersonaData['episodes'] }) {
   return (
-    <section>
-      <Eyebrow className="mb-3">Replies</Eyebrow>
-      <Link to="/personas/$personaId/replies" params={{ personaId: props.personaId }} className="group block space-y-0.5 text-xs">
-        <span className="tabular block group-hover:underline">{lines.join(' · ')}</span>
-        <span className="tabular block text-ash">
-          {replies.budget === 0
-            ? 'Replies are off: the budget is 0'
-            : `${replies.sentToday} of ${replies.budget} ${plural(replies.budget, 'reply', 'replies')} sent today`}
-        </span>
-      </Link>
-    </section>
+    <ol className="divide-y divide-mist border-y border-mist">
+      {props.episodes.map((episode) => (
+        <li key={episode._id} className={cn('flex items-start gap-3 py-2.5', { 'opacity-60': episode.status === 'killed' })}>
+          <span className="tabular w-14 shrink-0 pt-0.5 font-mono text-xs text-ash">
+            {formatDay(episode.plannedFor, { month: 'short', day: 'numeric' })}
+          </span>
+          <div className="min-w-0 flex-1">
+            <Link
+              to="/episodes/$episodeId"
+              params={{ episodeId: episode._id }}
+              className="flex items-center gap-1.5 font-medium hover:underline"
+            >
+              {isPost(episode.kind) && <PostKindIcon kind={episode.kind} className="shrink-0 text-graphite" />}
+              <span className="line-clamp-1">{episode.title}</span>
+            </Link>
+            <p className="line-clamp-1 text-xs text-ash">
+              {episode.status === 'idea' ? ideaLine(episode, episode.writing) : episode.hook || episode.concept}
+              {episode.sponsorSegment !== 'none' && <> · {SPONSOR_SEGMENT_LABELS[episode.sponsorSegment]}</>}
+            </p>
+            {episode.error && <p className="mt-0.5 line-clamp-1 font-mono text-[11px] text-signal-red-deep">{episode.error}</p>}
+          </div>
+          <StatusPill status={episode.status} />
+        </li>
+      ))}
+    </ol>
   )
 }
 
 /**
- * Two lines under the profile: what the persona is testing now and when its
- * strategy was last reviewed, linking the strategy page, where the defaults,
- * pillar weights and journal live (DESIGN.md, Persona page).
+ * The persona's own pages as one list, each with the one line that says
+ * whether it is worth opening now: what waits in the replies, what is being
+ * tested, what the persona keeps, what its library holds, and its X voice.
  */
-function StrategySummary(props: { persona: Doc<'personas'> }) {
+function PersonaPages(props: { persona: Doc<'personas'>; replies: PersonaData['replies'] }) {
+  const personaId = props.persona._id
+  const onX = props.persona.formats.some((format) => format.platform === 'x')
+  return (
+    <nav aria-label={`${props.persona.name}'s pages`}>
+      <ul className="divide-y divide-mist border-y border-mist text-sm">
+        {props.replies && (
+          <PageRow to="/personas/$personaId/replies" personaId={personaId} label="Replies">
+            <RepliesLine replies={props.replies} />
+          </PageRow>
+        )}
+        <PageRow to="/personas/$personaId/strategy" personaId={personaId} label="Strategy">
+          <StrategyLine persona={props.persona} />
+        </PageRow>
+        <PageRow to="/personas/$personaId/memory" personaId={personaId} label="Memory">
+          <MemoryLine personaId={personaId} />
+        </PageRow>
+        <PageRow to="/personas/$personaId/assets" personaId={personaId} label="Assets">
+          <AssetsLine personaId={personaId} />
+        </PageRow>
+        {onX && (
+          <PageRow to="/personas/$personaId/voice" personaId={personaId} label="Voice on X">
+            {props.persona.voice ? voiceSummary(props.persona.voice) : <span className="text-alert-amber-deep">Not learned yet</span>}
+          </PageRow>
+        )}
+      </ul>
+    </nav>
+  )
+}
+
+function PageRow(props: {
+  to:
+    | '/personas/$personaId/replies'
+    | '/personas/$personaId/strategy'
+    | '/personas/$personaId/memory'
+    | '/personas/$personaId/assets'
+    | '/personas/$personaId/voice'
+  personaId: Id<'personas'>
+  label: string
+  children: React.ReactNode
+}) {
+  return (
+    <li>
+      <Link to={props.to} params={{ personaId: props.personaId }} className="group flex items-baseline gap-3 py-2">
+        <span className="w-20 shrink-0 font-medium group-hover:underline">{props.label}</span>
+        <span className="min-w-0 flex-1 truncate text-right text-xs text-ash">{props.children}</span>
+        <CaretRightIcon aria-hidden size={12} className="shrink-0 self-center text-smoke group-hover:text-ink" />
+      </Link>
+    </li>
+  )
+}
+
+/** What waits for the operator, in amber like every other count that waits on them, and today's budget. */
+function RepliesLine(props: { replies: NonNullable<PersonaData['replies']> }) {
+  const replies = props.replies
+  if (replies.budget === 0) return <>Off: the budget is 0</>
+  return (
+    <>
+      {replies.waiting > 0 && <span className="tabular text-alert-amber-deep">{replies.waiting} waiting · </span>}
+      {replies.goingOut > 0 && <span className="tabular">{replies.goingOut} going out · </span>}
+      <span className="tabular">
+        {replies.sentToday} of {replies.budget} sent today
+      </span>
+    </>
+  )
+}
+
+/** What the persona tests now; when it was last reviewed is on hover, the strategy page says it in full. */
+function StrategyLine(props: { persona: Doc<'personas'> }) {
   const experiments = useQuery(api.private.experiments.list, { personaId: props.persona._id })
   // The strategy review keeps one experiment running per persona, so the first running one is the one.
   const running = experiments?.find((experiment) => experiment.status === 'running')
   const reviewedAt = props.persona.strategy?.reviewedAt
+  if (experiments === undefined) return <Skeleton className="ml-auto h-3 w-32" />
   return (
-    <section>
-      <Eyebrow className="mb-3">Strategy</Eyebrow>
-      <Link to="/personas/$personaId/strategy" params={{ personaId: props.persona._id }} className="group block space-y-0.5 text-xs">
-        {experiments === undefined && <Skeleton className="h-4 w-40" />}
-        {experiments !== undefined && (
-          <span className="block group-hover:underline">{running ? `Testing ${running.name}` : 'Nothing being tested'}</span>
-        )}
-        <span className="block text-ash">{reviewedAt === undefined ? 'Not reviewed yet' : `Reviewed ${formatDate(reviewedAt)}`}</span>
-      </Link>
-    </section>
+    <span title={reviewedAt === undefined ? 'Not reviewed yet' : `Reviewed ${formatDate(reviewedAt)}`}>
+      {running ? `Testing ${running.name}` : 'Nothing being tested'}
+    </span>
   )
 }
 
-/**
- * Two lines under the research: how many rules, facts and learnings the
- * persona holds and when it last kept something, linking the Memory page,
- * where every entry is with its evidence (DESIGN.md, Persona page).
- */
-function MemorySummary(props: { personaId: Id<'personas'> }) {
+/** How many rules, facts and learnings the persona holds. */
+function MemoryLine(props: { personaId: Id<'personas'> }) {
   const memory = useQuery(api.private.memory.list, { personaId: props.personaId })
-  return (
-    <section>
-      <Eyebrow className="mb-3">Memory</Eyebrow>
-      <Link to="/personas/$personaId/memory" params={{ personaId: props.personaId }} className="group block space-y-0.5 text-xs">
-        {memory === undefined && <Skeleton className="h-4 w-40" />}
-        {memory === null && <span className="block text-ash">This persona does not exist.</span>}
-        {memory !== undefined && memory !== null && <MemoryLines entries={memory.entries} />}
-      </Link>
-    </section>
-  )
-}
-
-/** The asset library in the Memory section's two-line form, one link to the assets page. */
-function AssetsSummary(props: { personaId: Id<'personas'> }) {
-  const library = useQuery(api.private.assets.list, { personaId: props.personaId })
-  return (
-    <section>
-      <Eyebrow className="mb-3">Assets</Eyebrow>
-      <Link to="/personas/$personaId/assets" params={{ personaId: props.personaId }} className="group block space-y-0.5 text-xs">
-        {library === undefined && <Skeleton className="h-4 w-40" />}
-        {library === null && <span className="block text-ash">This persona does not exist.</span>}
-        {library !== undefined && library !== null && (
-          <>
-            <span className="block group-hover:underline">{assetCounts(library.assets)}</span>
-            <span className="block text-ash">
-              {/* Newest first from the backend. */}
-              {library.assets[0] === undefined
-                ? 'Upload what the writer can show'
-                : `Last added ${formatDate(library.assets[0].createdAt)}`}
-            </span>
-          </>
-        )}
-      </Link>
-    </section>
-  )
-}
-
-function MemoryLines(props: { entries: NonNullable<FunctionReturnType<typeof api.private.memory.list>>['entries'] }) {
-  const active = props.entries.filter((entry) => entry.status === 'active')
+  if (memory === undefined) return <Skeleton className="ml-auto h-3 w-32" />
+  if (memory === null) return null
+  const active = memory.entries.filter((entry) => entry.status === 'active')
   const count = (kind: MemoryKind, one: string, other: string) => {
     const n = active.filter((entry) => entry.kind === kind).length
     return n === 0 ? [] : [`${n} ${plural(n, one, other)}`]
   }
   const counts = [...count('rule', 'rule', 'rules'), ...count('fact', 'fact', 'facts'), ...count('learning', 'learning', 'learnings')]
-  // Newest first from the backend.
-  const [newest] = props.entries
-  return (
-    <>
-      <span className="block group-hover:underline">{counts.length === 0 ? 'No rules, facts or learnings yet' : counts.join(', ')}</span>
-      <span className="block text-ash">{newest === undefined ? 'Nothing kept yet' : `Last kept ${formatDate(newest.createdAt)}`}</span>
-    </>
-  )
+  return <>{counts.length === 0 ? 'Nothing kept yet' : counts.join(', ')}</>
+}
+
+/** The asset library counted by kind. */
+function AssetsLine(props: { personaId: Id<'personas'> }) {
+  const library = useQuery(api.private.assets.list, { personaId: props.personaId })
+  if (library === undefined) return <Skeleton className="ml-auto h-3 w-32" />
+  if (library === null) return null
+  return <>{library.assets.length === 0 ? 'Upload what the writer can show' : assetCounts(library.assets)}</>
 }
 
 type Research = FunctionReturnType<typeof api.private.research.get>
@@ -527,10 +545,24 @@ const RESEARCH_CLOCK_MS = 60_000
  */
 function ResearchSummary(props: { personaId: Id<'personas'> }) {
   const research = useQuery(api.private.research.get, { personaId: props.personaId })
+  const pollSignals = useMutation(api.private.personas.pollSignals)
+  const { state, run, busy } = useQueuedAction<'poll'>()
   const now = useNow(RESEARCH_CLOCK_MS)
   return (
     <section>
-      <Eyebrow className="mb-3">Research</Eyebrow>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <Eyebrow>Research</Eyebrow>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 px-1.5 text-ash hover:text-ink"
+          busy={busy('poll')}
+          onClick={() => run('poll', () => pollSignals({ personaId: props.personaId }), 'Queued for the researcher: new signals shortly.')}
+        >
+          Poll signals
+        </Button>
+      </div>
+      <QueuedLine state={state} className="mb-2" />
       {research === undefined && <Skeleton className="h-4 w-40" />}
       {research !== undefined && (
         <div className="space-y-3 text-xs">
@@ -627,30 +659,34 @@ function ChecklistRow(props: {
         onChange={() => complete({ itemId: props.item._id })}
       />
       <div className="min-w-0 flex-1">
-        <p className="font-medium">{props.item.title}</p>
-        <p className="text-xs text-ash">{props.item.why}</p>
-        {props.episodeTitle && <p className="mt-0.5 font-mono text-[11px] text-ash">unblocks: {props.episodeTitle}</p>}
-        <div className="mt-1.5 flex gap-2">
-          {props.item.action?.kind === 'open_browser' && (
-            <Button size="sm" onClick={act}>
-              Open browser
-            </Button>
-          )}
-          {props.item.action?.kind === 'set_provider_key' && (
-            <LinkButton to="/providers" size="sm">
-              Set {props.item.action.key}
-            </LinkButton>
-          )}
-          {/* A page the operator reads and acts on by hand; the runner never opens it. */}
-          {props.item.action?.kind === 'visit' && (
-            <ExternalLinkButton href={props.item.action.url} size="sm">
-              Open
-            </ExternalLinkButton>
-          )}
-        </div>
+        <p className="leading-snug font-medium">{props.item.title}</p>
+        {/* Two lines are enough to know what to do; the Checklist page has the rest. */}
+        <p className="mt-0.5 line-clamp-2 text-xs text-ash" title={props.item.why}>
+          {props.item.why}
+        </p>
+        {props.episodeTitle && <p className="mt-0.5 truncate text-[11px] text-ash">Unblocks {props.episodeTitle}</p>}
+        {props.item.action && (
+          <div className="mt-2 flex gap-2">
+            {props.item.action.kind === 'open_browser' && (
+              <Button size="sm" onClick={act}>
+                Open browser
+              </Button>
+            )}
+            {props.item.action.kind === 'set_provider_key' && (
+              <LinkButton to="/providers" size="sm">
+                Set {props.item.action.key}
+              </LinkButton>
+            )}
+            {/* A page the operator reads and acts on by hand; the runner never opens it. */}
+            {props.item.action.kind === 'visit' && (
+              <ExternalLinkButton href={props.item.action.url} size="sm">
+                Open
+              </ExternalLinkButton>
+            )}
+          </div>
+        )}
         {error && <ErrorLine>{error}</ErrorLine>}
       </div>
-      <span className="shrink-0 text-[11px] text-ash">{formatDateTime(props.item.createdAt)}</span>
     </li>
   )
 }

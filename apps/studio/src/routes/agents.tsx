@@ -38,7 +38,7 @@ function AgentsPage() {
   const now = useNow(CLOCK_MS)
   return (
     <>
-      <PageHeader title="Agents" lead="Five workers serve every persona. Each takes jobs from its queue." />
+      <PageHeader title="Agents" lead="Five workers serve every persona, each from its own queue." />
       <AgentList board={board} personas={personas} now={now} />
     </>
   )
@@ -69,7 +69,7 @@ function AgentSection(props: { agent: Agent; runnerOnline: boolean; roster: Rost
   const headingId = React.useId()
   const more = agent.queued.count - agent.queued.next.length
   return (
-    <section aria-labelledby={headingId} className="grid gap-x-8 gap-y-4 py-6 lg:grid-cols-[12rem_minmax(0,1fr)]">
+    <section aria-labelledby={headingId} className="grid gap-x-8 gap-y-4 py-5 lg:grid-cols-[12rem_minmax(0,1fr)]">
       <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 lg:flex-col lg:justify-start">
         <h2 id={headingId} className="text-base font-semibold">
           {AGENT_ROLE_LABELS[agent.role]}
@@ -87,10 +87,10 @@ function AgentSection(props: { agent: Agent; runnerOnline: boolean; roster: Rost
             ))}
           </ul>
         )}
-        <div className="grid gap-x-8 gap-y-5 md:grid-cols-2">
-          <JobGroup title="Next" count={agent.queued.count}>
-            {agent.queued.next.length === 0 && <p className="py-2 text-ash">Nothing queued.</p>}
-            {agent.queued.next.length > 0 && (
+        {/* An empty queue is already said by the state line, so Next shows only when something waits in it. */}
+        <div className={cn('grid gap-x-8 gap-y-5', { 'md:grid-cols-2': agent.queued.count > 0 })}>
+          {agent.queued.count > 0 && (
+            <JobGroup title="Next" count={agent.queued.count}>
               <ul className="divide-y divide-mist">
                 {agent.queued.next.map((job) => (
                   <li key={job._id} className="flex items-start gap-3 py-2">
@@ -99,13 +99,13 @@ function AgentSection(props: { agent: Agent; runnerOnline: boolean; roster: Rost
                   </li>
                 ))}
               </ul>
-            )}
-            {more > 0 && (
-              <p className="pt-1 text-xs text-ash">
-                <span className="tabular">{more}</span> more in the queue
-              </p>
-            )}
-          </JobGroup>
+              {more > 0 && (
+                <p className="pt-1 text-xs text-ash">
+                  <span className="tabular">{more}</span> more in the queue
+                </p>
+              )}
+            </JobGroup>
+          )}
           <JobGroup title="Last">
             {agent.recent.length === 0 && <p className="py-2 text-ash">Nothing finished yet.</p>}
             {agent.recent.length > 0 && (

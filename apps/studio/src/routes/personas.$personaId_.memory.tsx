@@ -8,6 +8,7 @@ import React from 'react'
 import { Button, ErrorLine, Field, type FormState, Input, LinkButton, PageHeader, Skeleton } from '@/components/ui'
 import { errorMessage } from '@/lib/errors'
 import { formatDate } from '@/lib/format'
+import { splitBrief } from '@/lib/research'
 import { ACTOR_WORDS } from '@/lib/strategy'
 
 // `$personaId_`: the same /personas/:id/memory address, outside the persona page's route, like the strategy and voice
@@ -79,7 +80,7 @@ function MemoryPage() {
     <div className="max-w-[48rem]">
       <PageHeader
         title={`Memory of ${persona.name}`}
-        lead="The writer reads the goal note, the rules, the facts and the learnings before every script and post."
+        lead="What the writer reads before every script and post."
         actions={
           <>
             <LinkButton to="/personas/$personaId/strategy" params={{ personaId }} size="sm" variant="ghost">
@@ -163,8 +164,10 @@ function RememberForm(props: { persona: Doc<'personas'> }) {
         </Button>
       </form>
       <p id="remember-count" className="mt-1.5 text-xs text-ash">
-        <span className="tabular">{text.trim().length}</span> of {MEMORY_TEXT_MAX} characters. {props.persona.name} reads rules and facts
-        before every script and post, until you forget them.
+        <span className="tabular">
+          {text.trim().length} / {MEMORY_TEXT_MAX}
+        </span>
+        . Kept until you forget it.
       </p>
       {state.status === 'error' && (
         <div className="mt-2">
@@ -211,8 +214,7 @@ function EntryRow(props: { entry: Entry; persona: Doc<'personas'>; names: Eviden
   return (
     <li className="flex items-start gap-3">
       <div className="min-w-0 flex-1">
-        {/* A brief is written line by line. */}
-        <p className={entry.kind === 'brief' ? 'whitespace-pre-line' : undefined}>{entry.text}</p>
+        {entry.kind === 'brief' ? <BriefText text={entry.text} /> : <p>{entry.text}</p>}
         <p className="mt-0.5 text-[11px] text-ash">
           {formatDate(entry.createdAt)} · {ACTOR_WORDS[entry.actor]}
           <StatusWords entry={entry} />
@@ -290,29 +292,58 @@ function EvidenceLinks(props: { entry: Entry; persona: Doc<'personas'>; names: E
   })
   if (message === undefined && experimentName === undefined && episodes.length === 0 && signals.length === 0) return null
   const linkClass = 'underline decoration-fog hover:text-ink hover:decoration-ink'
+  const count = (message === undefined ? 0 : 1) + (experimentName === undefined ? 0 : 1) + episodes.length + signals.length
+  // Folded: the sentence and who wrote it are what the operator reads; the evidence is there to check it.
   return (
-    <p className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-ash">
-      <span>Evidence</span>
-      {message !== undefined && (
-        <Link to="/personas/$personaId" params={{ personaId: props.persona._id }} className={linkClass}>
-          You said in the chat, {formatDate(message.createdAt)}: "{message.text}"
-        </Link>
-      )}
-      {experimentName !== undefined && (
-        <Link to="/experiments" className={linkClass}>
-          {experimentName}
-        </Link>
-      )}
-      {episodes.map((episode) => (
-        <Link key={episode.episodeId} to="/episodes/$episodeId" params={{ episodeId: episode.episodeId }} className={linkClass}>
-          {episode.title}
-        </Link>
+    <details className="mt-1 text-[11px] text-ash">
+      <summary className="w-fit cursor-pointer hover:text-ink">
+        Evidence <span className="tabular">({count})</span>
+      </summary>
+      <p className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+        {message !== undefined && (
+          <Link to="/personas/$personaId" params={{ personaId: props.persona._id }} className={linkClass}>
+            You said in the chat, {formatDate(message.createdAt)}: "{message.text}"
+          </Link>
+        )}
+        {experimentName !== undefined && (
+          <Link to="/experiments" className={linkClass}>
+            {experimentName}
+          </Link>
+        )}
+        {episodes.map((episode) => (
+          <Link key={episode.episodeId} to="/episodes/$episodeId" params={{ episodeId: episode.episodeId }} className={linkClass}>
+            {episode.title}
+          </Link>
+        ))}
+        {signals.map((signal) => (
+          <Link key={signal.signalId} to="/signals" search={{ persona: props.persona._id }} className={linkClass}>
+            {signal.title}
+          </Link>
+        ))}
+      </p>
+    </details>
+  )
+}
+
+/** A brief is written line by line: its first lines, and the rest folded under them, as on the persona page. */
+function BriefText(props: { text: string }) {
+  const lines = splitBrief(props.text)
+  return (
+    <div>
+      {lines.head.map((line, index) => (
+        // The brief's lines never move, so their place keys them; a line can repeat.
+        <p key={`${index}:${line}`}>{line}</p>
       ))}
-      {signals.map((signal) => (
-        <Link key={signal.signalId} to="/signals" search={{ persona: props.persona._id }} className={linkClass}>
-          {signal.title}
-        </Link>
-      ))}
-    </p>
+      {lines.rest.length > 0 && (
+        <details className="mt-1">
+          <summary className="w-fit cursor-pointer text-xs text-ash hover:text-ink">Whole brief</summary>
+          <div className="mt-1">
+            {lines.rest.map((line, index) => (
+              <p key={`${index}:${line}`}>{line}</p>
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
   )
 }

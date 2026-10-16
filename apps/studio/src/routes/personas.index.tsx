@@ -14,7 +14,7 @@ function PersonasPage() {
     <>
       <PageHeader
         title="Personas"
-        lead="Each persona is a profile its five agents work for. Compare them in Reports."
+        lead="Each persona is a profile the five agents work for."
         actions={
           <LinkButton to="/onboarding" search={{ count: 1 }} variant="primary">
             New persona
@@ -38,7 +38,7 @@ function PersonasPage() {
                 />
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <Link to="/personas/$personaId" params={{ personaId: persona._id }} className="font-medium hover:underline">
+                    <Link to="/personas/$personaId" params={{ personaId: persona._id }} className="text-base font-medium hover:underline">
                       {persona.name}
                     </Link>
                     {/* The avatar shows the thinking dots but is hidden from screen readers; this says it in words. */}
@@ -68,14 +68,9 @@ function PersonasPage() {
                 <Count label="Failed" value={persona.counts.failed} tone={persona.counts.failed > 0 ? 'red' : undefined} />
                 <Count label="Checklist" value={persona.counts.checklist} tone={persona.counts.checklist > 0 ? 'amber' : undefined} />
               </dl>
-              <div className="flex gap-2">
-                <LinkButton to="/reports/$personaId" params={{ personaId: persona._id }}>
-                  Report
-                </LinkButton>
-                <LinkButton to="/personas/$personaId" params={{ personaId: persona._id }} variant="ghost">
-                  Open
-                </LinkButton>
-              </div>
+              <LinkButton to="/reports/$personaId" params={{ personaId: persona._id }} variant="ghost" size="sm">
+                Report
+              </LinkButton>
             </div>
           ))}
         </div>
@@ -90,6 +85,8 @@ function Count(props: { label: string; value: number; tone?: 'blue' | 'red' | 'a
       <dt className="text-ash">{props.label}</dt>
       <dd
         className={cn('tabular text-base font-medium', {
+          // A zero is nothing to look at, so it recedes and the counts that matter stand out.
+          'text-smoke': props.value === 0,
           'text-note-blue-deep': props.tone === 'blue',
           'text-signal-red-deep': props.tone === 'red',
           'text-alert-amber-deep': props.tone === 'amber',

@@ -95,14 +95,18 @@ export function SponsorPill(props: { segment: SponsorSegment }) {
 
 const GLYPH: Record<Platform, string> = { youtube: 'YT', tiktok: 'TT', instagram: 'IG', x: 'X' }
 
-export function PlatformGlyphs(props: { platforms: readonly Platform[] }) {
+/** `bare` drops the chips for tight rows (calendar cards), where four chips would not fit beside the time. */
+export function PlatformGlyphs(props: { platforms: readonly Platform[]; className?: string; bare?: boolean }) {
   return (
-    <span className="inline-flex gap-1" aria-label={props.platforms.map((platform) => PLATFORM_LABELS[platform]).join(', ')}>
+    <span
+      className={cn('inline-flex shrink-0', props.bare ? 'gap-1.5' : 'gap-1', props.className)}
+      aria-label={props.platforms.map((platform) => PLATFORM_LABELS[platform]).join(', ')}
+    >
       {props.platforms.map((platform) => (
         <span
           key={platform}
           title={PLATFORM_LABELS[platform]}
-          className="rounded-sm bg-hairline-strong px-1 font-mono text-[10px] leading-4 text-graphite"
+          className={cn('font-mono text-[10px] leading-4', props.bare ? 'text-ash' : 'rounded-sm bg-hairline-strong px-1 text-graphite')}
         >
           {GLYPH[platform]}
         </span>
