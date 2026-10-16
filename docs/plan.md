@@ -64,7 +64,7 @@ Written 2026-10-10 after the operator's second brief. The product in one sentenc
 
 ### Progress
 
-Updated 2026-10-16. Slices 1 to 12 are built and committed on `main`; slice 13 is next. The operator builds slices 10 to 16 in the main session, without multi-agent workflow runs.
+Updated 2026-10-16. Slices 1 to 13 are built and committed on `main`; slice 14 is next. The operator builds slices 10 to 16 in the main session, without multi-agent workflow runs.
 
 | Slice | State | Commits |
 | ----- | ----- | ------- |
@@ -80,13 +80,16 @@ Updated 2026-10-16. Slices 1 to 12 are built and committed on `main`; slice 13 i
 | 10 Memory and assets | done | 3b67ebf, d178ddf |
 | 11 Engagement on X | done | 6865f41, b7e73ed |
 | 12 Analytics, top down | done | 81cc6c9 |
-| 13 to 16 | to build | |
+| 13 Onboarding | done | 4cdf27c, 3050470 |
+| 14 to 16 | to build | |
 
 How a slice is built: write a short brief of the data, agent and studio changes; build; run `pnpm quality:fix`, `pnpm quality:check`, `pnpm test` and `pnpm knip`; reset, push and seed the local backend (see CLAUDE.md); smoke test every new screen and action in Chrome; commit with explicit paths.
 
 #### Open questions for the operator
 
 - Overriding an experiment that is already decided is refused today, and the "Decide myself" form shows only while the experiment runs. Should the operator be able to change a decision later?
+- Slice 13 reads the look's styles as a presenter style (cartoon, photoreal, or none: screen only with a voice), and "Loom-style with a small corner avatar" as the existing Screen with avatar delivery a presenter can use. Confirm, or make Loom-style a style of its own.
+- No avatar provider exists yet: an avatar take is a card with the first reference as the presenter's portrait, in mock and real mode alike, and says so on the card. Which provider should make real takes (HeyGen, Synthesia, D-ID, or a video model from slice 15), and should real mode refuse avatar deliveries until its key is set (ADR 0002)?
 - Slice 9 made "link first" the control of the description format experiment, so a description now puts the tracked link before the code by default (it was code first). Confirm, or make "code first" the control.
 
 #### Slice 16 backlog
@@ -111,6 +114,7 @@ Small issues found while building slices 1 to 9, kept for the polish pass. Slice
 - Slice 11 smoke: the replies page can show two status lines at once (Listen now's and the page's). Post reply stays on once the budget is spent and only refuses on click. The mock listener can hear the same author twice in a day. The persona header has no Replies button; the page is reached from the Replies section and the report.
 - Slice 11 part B smoke: the experiments table counts only replies and posts that went out, so a reply test reads 0 for days while its drafts wait, with no line saying why. The strategy page lists the seven video defaults for a persona that posts only on X. Deciding a reply test by hand with 0 exposures leaves a journal entry of zeros. The goal note still names the experiment the last review planned after the operator stopped it.
 - Slice 12 smoke: at phone width the funnel's bars shrink to nothing (its grid keeps a 9rem label and a 5rem value column), on the workspace report and the persona report alike, and the sidebar stays open beside the page. In What works a TikTok-only persona's videos read 0.00% clicks per view, because its clicks come through the bio, which no video owns; the lists could say so. The persona report's funnel now counts the window only (it counted every snapshot, click and conversion ever, under a "last 28 days" title), so its numbers dropped for older personas. Videos written before slice 12 carry no hook style and are left out of By hook style until they age out of the window.
+- Slice 13 smoke: the mock signals ignore the niche, so a new persona's first plan reacts to n8n posts ("React to: Show HN: I replaced my Zapier bill with n8n" for a Figma persona). The mock proposal's third pillar repeats the whole audience ("What founders who design their own product ask"). The look's voice problem shows before the operator has typed anything. References are added only at onboarding: an upload on the assets page never joins the look, and the settings change only the style. The onboarding fields' hints are read as part of their names ("Niche What the persona makes videos about."), as everywhere `Field` has a hint.
 - `private.episodes.rewrite` throws a plain Error on an idea; the studio hides the button, but it should be a `refusal()`.
 - Remove the leftover `evaluate_experiments` job kind: `pull_metrics` evaluates experiments now.
 
