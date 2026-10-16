@@ -6,6 +6,7 @@ import { useMutation, useQuery } from 'convex/react'
 import React from 'react'
 import { z } from 'zod'
 import { EpisodeCard } from '@/components/episode-card'
+import { HomeOverview } from '@/components/home-overview'
 import { Button, Empty, PageHeader, Pill, Skeleton } from '@/components/ui'
 import { cn } from '@/lib/cn'
 import { addDays, formatDay, todayKey, weekStart } from '@/lib/format'
@@ -87,6 +88,8 @@ function CalendarPage() {
           </>
         }
       />
+
+      <HomeOverview />
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <Button size="sm" onClick={() => setWeek(addDays(week, -7))} aria-label="Previous week">
