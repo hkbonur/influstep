@@ -64,7 +64,7 @@ Written 2026-10-10 after the operator's second brief. The product in one sentenc
 
 ### Progress
 
-Updated 2026-10-13. Slices 1 to 11 are built and committed on `main`; slice 12 is next. The operator builds slices 10 to 16 in the main session, without multi-agent workflow runs.
+Updated 2026-10-16. Slices 1 to 12 are built and committed on `main`; slice 13 is next. The operator builds slices 10 to 16 in the main session, without multi-agent workflow runs.
 
 | Slice | State | Commits |
 | ----- | ----- | ------- |
@@ -79,7 +79,8 @@ Updated 2026-10-13. Slices 1 to 11 are built and committed on `main`; slice 12 i
 | 9 Fresh research, like a real creator | done | 2814bf2 |
 | 10 Memory and assets | done | 3b67ebf, d178ddf |
 | 11 Engagement on X | done | 6865f41, b7e73ed |
-| 12 to 16 | to build | |
+| 12 Analytics, top down | done | 81cc6c9 |
+| 13 to 16 | to build | |
 
 How a slice is built: write a short brief of the data, agent and studio changes; build; run `pnpm quality:fix`, `pnpm quality:check`, `pnpm test` and `pnpm knip`; reset, push and seed the local backend (see CLAUDE.md); smoke test every new screen and action in Chrome; commit with explicit paths.
 
@@ -109,6 +110,7 @@ Small issues found while building slices 1 to 9, kept for the polish pass. Slice
 - Slice 10 assets: the writer places assets in video beats only; an image post never uses one from the library. The Made by the producer section and the persona page's Assets count read the whole library with a URL for every file, with no page size. A clip's preview on the Assets page stays blank in a background tab (Chrome holds back media there); check it in a foreground tab at polish time.
 - Slice 11 smoke: the replies page can show two status lines at once (Listen now's and the page's). Post reply stays on once the budget is spent and only refuses on click. The mock listener can hear the same author twice in a day. The persona header has no Replies button; the page is reached from the Replies section and the report.
 - Slice 11 part B smoke: the experiments table counts only replies and posts that went out, so a reply test reads 0 for days while its drafts wait, with no line saying why. The strategy page lists the seven video defaults for a persona that posts only on X. Deciding a reply test by hand with 0 exposures leaves a journal entry of zeros. The goal note still names the experiment the last review planned after the operator stopped it.
+- Slice 12 smoke: at phone width the funnel's bars shrink to nothing (its grid keeps a 9rem label and a 5rem value column), on the workspace report and the persona report alike, and the sidebar stays open beside the page. In What works a TikTok-only persona's videos read 0.00% clicks per view, because its clicks come through the bio, which no video owns; the lists could say so. The persona report's funnel now counts the window only (it counted every snapshot, click and conversion ever, under a "last 28 days" title), so its numbers dropped for older personas. Videos written before slice 12 carry no hook style and are left out of By hook style until they age out of the window.
 - `private.episodes.rewrite` throws a plain Error on an idea; the studio hides the button, but it should be a `refusal()`.
 - Remove the leftover `evaluate_experiments` job kind: `pull_metrics` evaluates experiments now.
 
