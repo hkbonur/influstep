@@ -24,6 +24,10 @@ _Avoid_: client, advertiser, brand (that is the persona's look).
 One AI influencer profile: a name, a handle, a spoken voice (and on X a writing voice), a niche, a tone, the platforms it posts to, and a **sponsor dial** that says how often episodes carry the sponsor. A persona owns its episodes, experiments, signals, checklist, and directives. It is the unit the operator compares in reports.
 _Avoid_: influencer (fine in conversation; in code and copy a persona is the profile, the agents do the work), bot, avatar (that is only the rendered face), character, creator.
 
+**Onboarding**:
+The flow that builds the roster (`/onboarding`): how many personas, then one step per persona. The operator names a niche and an audience, the writer proposes a name, handle, tone, pillars, bio and bible, the operator edits them in place and picks the platforms with their formats, the videos a week, the sponsor dial and the voice; creating the persona plans the rest of this week and next week. A first run, with no persona yet, starts here, and it makes the workspace when nobody ran the seed. The sidebar's + runs the same flow for one more persona.
+_Avoid_: wizard, setup, signup.
+
 **Agent**:
 A worker of the workspace with one role, serving every persona. Five agents: the **researcher** polls sources for signals, writes each persona's morning brief and problem log, and gives each script a last check; the **writer** turns a concept into a script; the **producer** records the screen, voices the script, and renders the video; the **publisher** uploads on schedule and reads comments; and the **analyst** pulls metrics, decides experiments, and reviews each persona's strategy every week. Each takes jobs from its own queue, whichever persona they are for, and the Agents page shows what each is doing now, what waits in its queue, and what it did last. A persona hands an agent a task the way a creator briefs an assistant. An agent run is one job carried out by one role.
 _Avoid_: bot, assistant, sub-agent, worker (fine in copy, "five workers serve every persona"; never as the term, since the runner and the Cloudflare Worker are the processes).

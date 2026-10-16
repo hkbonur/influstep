@@ -75,6 +75,9 @@ export default defineSchema({
     color: personaColorValidator,
     handle: v.string(),
     niche: v.string(),
+    // Who the persona talks to, asked for at onboarding (docs/plan.md, slice 13) and read by the writer.
+    // Absent on a persona created before onboarding asked for it.
+    audience: v.optional(v.string()),
     tone: v.string(),
     bio: v.string(),
     // The persona "bible": how it speaks, what it never says. Read by the writer.

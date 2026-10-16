@@ -5,6 +5,7 @@ import {
   WORDS_PER_SECOND,
   lengthProblem,
   namesSponsor,
+  handleFromName,
   parseChatIntent,
   replyRuleCovers,
   xLength,
@@ -12,6 +13,7 @@ import {
   type Delivery,
   type Habit,
   type LengthMix,
+  type PersonaProposal,
   type PostIntent,
   type PostLength,
   type ReplyOrigin,
@@ -23,6 +25,7 @@ import {
   type LlmProvider,
   type PostBrief,
   type PostDraft,
+  type ProposalBrief,
   type ReplyBrief,
   type ReplyDraft,
   type ScriptBrief,
@@ -100,6 +103,9 @@ export const mockLlm: LlmProvider = {
       summary: `${brief.persona.name} mostly writes ${mostly}, in a ${brief.persona.tone} tone. Learned from ${stats.sampleSize} of the account's own posts.`,
       traits: [`Mostly ${mostly}`, EMOJI_TRAITS[stats.emoji], HASHTAG_TRAITS[stats.hashtags], `Tone: ${brief.persona.tone}`],
     }
+  },
+  async proposePersona(brief) {
+    return proposalFor(brief)
   },
   async reply(args) {
     const last = args.history.at(-1)
@@ -526,5 +532,75 @@ function hostOf(url: string): string {
     return new URL(url).hostname.replace(/^www\./, '')
   } catch {
     return url
+  }
+}
+
+/** One first name per initial, so a mock persona's name can rhyme with its topic ("Nora Notion"). */
+const FIRST_NAMES = [
+  'Ada',
+  'Ben',
+  'Cleo',
+  'Dev',
+  'Eli',
+  'Fay',
+  'Gus',
+  'Hana',
+  'Ivo',
+  'Jade',
+  'Kai',
+  'Lena',
+  'Max',
+  'Nora',
+  'Otto',
+  'Pia',
+  'Quinn',
+  'Rosa',
+  'Sami',
+  'Tess',
+  'Uma',
+  'Vik',
+  'Wren',
+  'Xan',
+  'Yara',
+  'Zed',
+]
+
+const SMALL_WORDS = new Set(['a', 'an', 'and', 'the', 'for', 'of', 'in', 'on', 'to', 'with', 'how', 'your', 'small'])
+
+function titleCase(word: string): string {
+  return word.charAt(0).toUpperCase() + word.slice(1)
+}
+
+/**
+ * A mock proposal, deterministic from the niche: the niche's first real word
+ * is the topic, the name pairs it with a first name of the same initial (the
+ * next one along when the roster already has that name), and the pillars,
+ * bio and bible are templates around the topic and the audience.
+ */
+function proposalFor(brief: ProposalBrief): PersonaProposal {
+  const words = brief.niche.split(/[^A-Za-z0-9]+/).filter((word) => word.length > 0)
+  const topicWord = words.find((word) => !SMALL_WORDS.has(word.toLowerCase())) ?? words[0] ?? 'Craft'
+  const topic = titleCase(topicWord)
+  const taken = new Set(brief.roster.map((persona) => persona.name))
+  const start = Math.max(
+    0,
+    FIRST_NAMES.findIndex((first) => first.startsWith(topic.charAt(0).toUpperCase()))
+  )
+  const firstName =
+    FIRST_NAMES.map((_, offset) => FIRST_NAMES[(start + offset) % FIRST_NAMES.length] ?? 'Ada').find(
+      (candidate) => !taken.has(`${candidate} ${topic}`)
+    ) ?? 'Ada'
+  const name = `${firstName} ${topic}`
+  return {
+    name,
+    handle: handleFromName(name),
+    tone: 'plain, friendly, specific',
+    pillars: [`${topic} how-tos`, `${topic} mistakes and fixes`, `What ${brief.audience} ask`],
+    bio: `${topic} for ${brief.audience}, one short video at a time.`,
+    bible: [
+      `${firstName} talks to ${brief.audience} as "you" and shows the screen before explaining it.`,
+      'Short sentences. One idea per video. Admits when a tool is the wrong choice.',
+      `Never says "game changer" or "insane". Mentions ${brief.sponsorName} only in its own words, never as an ad read.`,
+    ].join(' '),
   }
 }

@@ -11,10 +11,11 @@ import {
   retireDiscountCode as retireDiscountCodeRule,
 } from '../core/discounts'
 import { openXChecklist } from '../core/checklist'
-import { bioLinkOf, createTrackedLink, reconcilePlatformDrop, scriptBeingWritten } from '../core/episodes'
+import { bioLinkOf, reconcilePlatformDrop, scriptBeingWritten } from '../core/episodes'
 import { assertFormats, platformsOf } from '../core/formats'
 import { workingPersonaIds } from '../core/jobs'
 import { replySummary } from '../core/replies'
+import { createPersona } from '../core/personas'
 import { requireWorkspace, workspaceOf } from '../core/workspace'
 import { enqueueJob } from '../jobs/queue'
 import { personaColorValidator, platformFormatValidator } from '../lib/validators'
@@ -25,6 +26,7 @@ const personaFields = {
   color: personaColorValidator,
   handle: v.string(),
   niche: v.string(),
+  audience: v.optional(v.string()),
   tone: v.string(),
   bio: v.string(),
   bible: v.string(),
@@ -163,22 +165,7 @@ export const get = query({
 
 export const create = mutation({
   args: personaFields,
-  handler: async (ctx, args) => {
-    assertFormats(args.formats)
-    const workspace = await requireWorkspace(ctx)
-    const taken = await ctx.db
-      .query('personas')
-      .withIndex('by_handle', (q) => q.eq('handle', args.handle))
-      .first()
-    if (taken) throw refusal(`The handle ${args.handle} is taken.`)
-    const personaId = await ctx.db.insert('personas', { ...args, workspaceId: workspace._id, paused: false, createdAt: Date.now() })
-    const persona = await ctx.db.get(personaId)
-    if (!persona) throw new Error('persona vanished')
-    await createTrackedLink(ctx, { persona, target: workspace.sponsorUrl })
-    if (platformsOf(persona).includes('x')) await openXChecklist(ctx, persona)
-    await enqueueJob(ctx, { kind: 'poll_signals', payload: { personaId }, personaId })
-    return personaId
-  },
+  handler: async (ctx, args) => (await createPersona(ctx, await requireWorkspace(ctx), args))._id,
 })
 
 /**

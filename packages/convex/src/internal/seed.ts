@@ -549,6 +549,7 @@ export const write = internalMutation({
       color: 'teal',
       handle: 'ada.automates',
       niche: 'n8n and workflow automation for small teams',
+      audience: 'people at small companies who automate their own busywork',
       tone: 'calm, precise, a little dry',
       bio: 'One n8n fix a day. No fluff, no plugins you do not need.',
       bible:
@@ -572,6 +573,7 @@ export const write = internalMutation({
       color: 'clay',
       handle: 'max.builds.agents',
       niche: 'Claude Code, MCP, and agents that do real work',
+      audience: 'developers who want agents in production, not demos',
       tone: 'curious, fast, honest about failures',
       bio: 'I build an AI agent a week and show you where it broke.',
       bible:

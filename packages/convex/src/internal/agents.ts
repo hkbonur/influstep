@@ -69,6 +69,7 @@ import { savePost } from '../core/posts'
 import { reportWindow } from '../core/report'
 import { lastCheck, logRepeatedQuestions, writeDailyBrief } from '../core/research'
 import { reviewStrategy as reviewStrategyRule, type ReviewOutcome } from '../core/strategy'
+import { personaBriefOf } from '../core/personas'
 import { workspaceOf } from '../core/workspace'
 import { providersMode } from '../lib/env'
 import { analyticsProvider } from '../providers/analytics'
@@ -419,14 +420,7 @@ export const writeScript = internalAction({
     const formats = formatsFor(persona, episode.platforms)
     const format = resolveEpisodeFormat(formats)
     const brief: ScriptBrief = {
-      persona: {
-        name: persona.name,
-        handle: persona.handle,
-        niche: persona.niche,
-        tone: persona.tone,
-        bible: persona.bible,
-        pillars: persona.pillars,
-      },
+      persona: personaBriefOf(persona),
       concept: episode.concept,
       pillar: episode.pillar ?? persona.pillars[0] ?? '',
       sponsorSegment: episode.sponsorSegment,
@@ -587,14 +581,7 @@ async function writePost(ctx: ActionCtx, context: EpisodeContext, kind: PostKind
   // A post planned before intents and lengths existed has neither and is written to its kind alone.
   const length = episode.length ?? null
   const brief: PostBrief = {
-    persona: {
-      name: persona.name,
-      handle: persona.handle,
-      niche: persona.niche,
-      tone: persona.tone,
-      bible: persona.bible,
-      pillars: persona.pillars,
-    },
+    persona: personaBriefOf(persona),
     kind,
     concept: episode.concept,
     pillar: episode.pillar ?? persona.pillars[0] ?? '',
@@ -1040,14 +1027,7 @@ export const learnVoice = internalAction({
     const reading: VoiceReading = await ctx.runQuery(internal.internal.agents.voiceReading, { personaId, read: VOICE_READ_POSTS })
     const stats = voiceStatsOf(voiceSampleOf(reading.counts))
     const draft = await llmProvider().learnVoice({
-      persona: {
-        name: persona.name,
-        handle: persona.handle,
-        niche: persona.niche,
-        tone: persona.tone,
-        bible: persona.bible,
-        pillars: persona.pillars,
-      },
+      persona: personaBriefOf(persona),
       stats,
       top: reading.top.map(sampleOf),
       newest: reading.newest.map(sampleOf),
@@ -1278,17 +1258,6 @@ async function insertPersonaMessage(
 function errorText(error: unknown): string {
   if (error instanceof ConvexError && typeof error.data === 'string') return error.data
   return error instanceof Error ? error.message : String(error)
-}
-
-function personaBriefOf(persona: Doc<'personas'>): ScriptBrief['persona'] {
-  return {
-    name: persona.name,
-    handle: persona.handle,
-    niche: persona.niche,
-    tone: persona.tone,
-    bible: persona.bible,
-    pillars: persona.pillars,
-  }
 }
 
 // ---------------------------------------------------------------------------

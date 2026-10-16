@@ -183,6 +183,12 @@ function PersonaPage() {
           <section>
             <Eyebrow className="mb-3">Profile</Eyebrow>
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
+              {persona.audience && (
+                <>
+                  <dt className="text-ash">Audience</dt>
+                  <dd>{persona.audience}</dd>
+                </>
+              )}
               <dt className="text-ash">Cadence</dt>
               <dd className="tabular">
                 {persona.episodesPerWeek} a week, {persona.timezone}
@@ -587,6 +593,8 @@ function SettingsForm(props: { persona: Doc<'personas'>; onDone: () => void }) {
         color,
         handle: props.persona.handle,
         niche: text('niche'),
+        // Cleared, the persona has no audience: the writer then reads the niche alone.
+        audience: text('audience') || undefined,
         tone: text('tone'),
         bio: text('bio'),
         bible: text('bible'),
@@ -619,6 +627,9 @@ function SettingsForm(props: { persona: Doc<'personas'>; onDone: () => void }) {
         </Field>
         <Field label="Niche" className="lg:col-span-2">
           <Input name="niche" defaultValue={p.niche} required />
+        </Field>
+        <Field label="Audience" className="sm:col-span-2 lg:col-span-3" hint="Who it talks to. The writer reads it with the niche.">
+          <Input name="audience" defaultValue={p.audience ?? ''} />
         </Field>
         <div className="sm:col-span-2 lg:col-span-3">
           <PersonaColorSwatches value={color} onChange={setColor} taken={takenColors} />

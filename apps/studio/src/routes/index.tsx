@@ -1,7 +1,7 @@
 import { EPISODE_STATUSES, EPISODE_STATUS_LABELS, EPISODE_STATUS_TINTS, waitsOnOperator, type EpisodeStatus } from '@influstep/shared'
 import { api } from '@influstep/convex/_generated/api'
 import type { Id } from '@influstep/convex/_generated/dataModel'
-import { createFileRoute } from '@tanstack/react-router'
+import { Navigate, createFileRoute } from '@tanstack/react-router'
 import { useMutation, useQuery } from 'convex/react'
 import React from 'react'
 import { z } from 'zod'
@@ -46,6 +46,9 @@ function CalendarPage() {
       setPlanning(false)
     }
   }
+
+  // The first run has no roster: the calendar has nothing to show, so the operator builds one first.
+  if (personas !== undefined && personas.length === 0) return <Navigate to="/onboarding" replace />
 
   return (
     <>

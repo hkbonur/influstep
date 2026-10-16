@@ -16,6 +16,7 @@ import {
   type HeardOutcome,
   type WrittenReply,
 } from '../core/replies'
+import { personaBriefOf } from '../core/personas'
 import { workspaceOf } from '../core/workspace'
 import { enqueueJob } from '../jobs/queue'
 import { providersMode } from '../lib/env'
@@ -127,14 +128,7 @@ export const writeReplies = internalAction({
 function briefFor(context: WritingContext, reply: Doc<'replies'>, style: ReplyBrief['style']): ReplyBrief {
   const { persona } = context
   return {
-    persona: {
-      name: persona.name,
-      handle: persona.handle,
-      niche: persona.niche,
-      tone: persona.tone,
-      bible: persona.bible,
-      pillars: persona.pillars,
-    },
+    persona: personaBriefOf(persona),
     origin: reply.origin,
     post: { text: reply.target.text, author: reply.target.author },
     pillar: reply.pillar ?? null,

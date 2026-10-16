@@ -9,6 +9,8 @@ import {
   EXPERIMENT_KIND_LABELS,
   POST_INTENT_BRIEFS,
   POST_INTENT_LABELS,
+  PILLARS_MAX,
+  PILLARS_MIN,
   PUBLICATION_TITLE_MAX,
   THREAD_PARTS_MAX,
   THREAD_PARTS_MIN,
@@ -20,6 +22,7 @@ import {
   formatLength,
   type ChatIntent,
   type Habit,
+  type PersonaProposal,
   type ReplyOrigin,
 } from '@influstep/shared'
 import type { WriterMemory } from '../../core/memory'
@@ -34,6 +37,7 @@ import {
   type PlanRow,
   type PostBrief,
   type PostDraft,
+  type ProposalBrief,
   type ReplyBrief,
   type ReplyDraft,
   type ScriptBrief,
@@ -75,6 +79,16 @@ const voiceDraftSchema = z.object({
   traits: z.array(z.string()),
 })
 
+// Structured outputs drop array bounds, so the pillar count is said in the prompt; the operator edits the proposal anyway.
+const personaProposalSchema = z.object({
+  name: z.string(),
+  handle: z.string(),
+  tone: z.string(),
+  pillars: z.array(z.string()),
+  bio: z.string(),
+  bible: z.string(),
+})
+
 function client(): Anthropic {
   return new Anthropic({ apiKey: requireEnv('ANTHROPIC_API_KEY') })
 }
@@ -82,6 +96,7 @@ function client(): Anthropic {
 function personaSystem(persona: ScriptBrief['persona']): string {
   return [
     `You are ${persona.name} (@${persona.handle}), a short-video creator in the niche "${persona.niche}".`,
+    persona.audience ? `You talk to: ${persona.audience}.` : '',
     `Tone: ${persona.tone}.`,
     `Content pillars: ${persona.pillars.join('; ')}.`,
     `Persona bible:\n${persona.bible}`,
@@ -252,6 +267,54 @@ export const anthropicLlm: LlmProvider = {
     if (traits.length === 0 || traits.length > VOICE_TRAITS_MAX)
       throw new Error(`The model returned ${traits.length} traits; a voice has 1 to ${VOICE_TRAITS_MAX}`)
     return { language: language.trim(), summary: summary.trim(), traits }
+  },
+  async proposePersona(brief: ProposalBrief): Promise<PersonaProposal> {
+    const roster = brief.roster.map((persona) => `- ${persona.name} (@${persona.handle}): ${persona.niche}`).join('\n')
+    const response = await client().messages.parse({
+      model: MODEL,
+      max_tokens: 4000,
+      output_config: { effort: 'medium', format: zodOutputFormat(personaProposalSchema) },
+      system: [
+        {
+          type: 'text',
+          text: [
+            'You design AI creator personas for Influstep. Each one publishes short videos and posts in its niche, labelled as AI-generated, and grows an audience that discovers the sponsor through it.',
+            `The sponsor is ${brief.sponsorName}. A persona is a creator first: the sponsor comes up only sometimes, in its own words.`,
+          ].join('\n'),
+        },
+      ],
+      messages: [
+        {
+          role: 'user',
+          content: [
+            `Propose one persona. Niche: ${brief.niche}. Audience: ${brief.audience}.`,
+            roster ? `The workspace already runs these; do not repeat their names, handles or angle:\n${roster}` : '',
+            [
+              'Return:',
+              '- name: a first name and a short word, memorable, never a real person.',
+              '- handle: lower case, letters, digits and dots only, 3 to 30 characters, the same on every platform.',
+              '- tone: three to six words on how it sounds.',
+              `- pillars: ${PILLARS_MIN} to ${PILLARS_MAX} content pillars, each two to five words, the recurring topics it covers.`,
+              '- bio: one sentence for its profiles.',
+              '- bible: three to five sentences on how it speaks, what it shows, and what it never says.',
+            ].join('\n'),
+          ]
+            .filter(Boolean)
+            .join('\n\n'),
+        },
+      ],
+    })
+    if (response.stop_reason === 'refusal') throw new Error('The model declined to propose a persona')
+    if (!response.parsed_output) throw new Error('The model returned no parseable persona')
+    const proposal = response.parsed_output
+    return {
+      name: proposal.name.trim(),
+      handle: proposal.handle.trim(),
+      tone: proposal.tone.trim(),
+      pillars: proposal.pillars.map((pillar) => pillar.trim()).filter((pillar) => pillar.length > 0),
+      bio: proposal.bio.trim(),
+      bible: proposal.bible.trim(),
+    }
   },
   async reply(args) {
     const response = await client().messages.create({

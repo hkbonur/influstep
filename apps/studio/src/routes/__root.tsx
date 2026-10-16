@@ -21,8 +21,7 @@ import { cn } from '@/lib/cn'
 import { useRunnerOnline } from '@/lib/use-runner-online'
 
 // `exact`: a persona's own page, its voice, its strategy and its report light up the persona's row instead, so the section
-// stays dark there and the sidebar never shows two selections at once. Search params never count, so the open new persona
-// form on /personas?new=true still lights Personas.
+// stays dark there and the sidebar never shows two selections at once.
 const NAV = [
   { to: '/', label: 'Calendar', icon: CalendarBlankIcon, exact: true },
   { to: '/personas', label: 'Personas', icon: UsersThreeIcon, exact: true },
@@ -143,10 +142,9 @@ function PersonaRoster(props: { collapsed: boolean }) {
           Personas
         </h2>
         <Link
-          to="/personas"
-          search={{ new: true }}
-          // Exact, so the + is not announced as the current page on every persona page.
-          activeOptions={{ exact: true }}
+          to="/onboarding"
+          // One persona through the onboarding flow; with no roster yet, the flow asks how many to build.
+          search={personas !== undefined && personas.length > 0 ? { count: 1 } : {}}
           aria-label="New persona"
           title="New persona"
           className="flex size-6 items-center justify-center rounded-md text-ash hover:bg-hairline-strong hover:text-ink"
@@ -164,15 +162,10 @@ function PersonaRoster(props: { collapsed: boolean }) {
 function RosterBody(props: { personas: PersonaRow[] | undefined; selectedPersonaId: string | null; collapsed: boolean }) {
   if (props.personas === undefined) return <RosterSkeleton collapsed={props.collapsed} />
   if (props.personas.length === 0) {
-    // The rail has no room for the sentence; its + button already leads to the form.
+    // The rail has no room for the sentence; its + button already leads to the flow.
     if (props.collapsed) return null
     return (
-      <Link
-        to="/personas"
-        search={{ new: true }}
-        activeOptions={{ exact: true }}
-        className="block rounded-lg px-2 py-1.5 text-ash hover:bg-paper-warm hover:text-ink"
-      >
+      <Link to="/onboarding" className="block rounded-lg px-2 py-1.5 text-ash hover:bg-paper-warm hover:text-ink">
         No persona yet.
       </Link>
     )

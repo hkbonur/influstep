@@ -13,6 +13,7 @@ import {
   type ExperimentKind,
   type PostIntent,
   type PostKind,
+  type PersonaProposal,
   type PostLength,
   type ReplyOrigin,
   type ScriptKind,
@@ -41,7 +42,16 @@ export interface WriterResearch {
  * shape, so the pipeline never knows which one answered.
  */
 export interface ScriptBrief {
-  persona: { name: string; handle: string; niche: string; tone: string; bible: string; pillars: string[] }
+  persona: {
+    name: string
+    handle: string
+    niche: string
+    /** Who the persona talks to; none on a persona created before onboarding asked. */
+    audience?: string
+    tone: string
+    bible: string
+    pillars: string[]
+  }
   concept: string
   pillar: string
   sponsorSegment: SponsorSegment
@@ -218,6 +228,15 @@ export interface VoiceDraft {
   traits: string[]
 }
 
+/** What the writer reads to propose a new persona at onboarding (docs/plan.md, slice 13). */
+export interface ProposalBrief {
+  niche: string
+  audience: string
+  sponsorName: string
+  /** The personas the workspace already runs, so a new one does not repeat their name or niche. */
+  roster: { name: string; handle: string; niche: string }[]
+}
+
 export interface ChatTurn {
   author: 'operator' | 'persona'
   text: string
@@ -273,6 +292,8 @@ export interface LlmProvider {
   writePost(brief: PostBrief): Promise<PostDraft>
   writeReply(brief: ReplyBrief): Promise<ReplyDraft>
   learnVoice(brief: VoiceBrief): Promise<VoiceDraft>
+  /** A new persona for a niche and an audience, which the operator edits before it is created. */
+  proposePersona(brief: ProposalBrief): Promise<PersonaProposal>
   /** The persona's reply in its own chat; `directive` is set when the message was stored as one. */
   reply(args: { persona: ScriptBrief['persona']; history: ChatTurn[]; directive?: string }): Promise<string>
   /** What an operator's chat message asks for; `conversation` when it asks for no change and no task. */
