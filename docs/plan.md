@@ -64,7 +64,7 @@ Written 2026-10-10 after the operator's second brief. The product in one sentenc
 
 ### Progress
 
-Updated 2026-10-16. Slices 1 to 15 are built and committed on `main`; slice 16 is next. The operator builds slices 10 to 16 in the main session, without multi-agent workflow runs.
+Updated 2026-10-16. Slices 1 to 16 are built and committed on `main`. What is left is under "After slice 16". The operator builds slices 10 to 16 in the main session, without multi-agent workflow runs.
 
 | Slice | State | Commits |
 | ----- | ----- | ------- |
@@ -83,7 +83,7 @@ Updated 2026-10-16. Slices 1 to 15 are built and committed on `main`; slice 16 i
 | 13 Onboarding | done | 4cdf27c, 3050470 |
 | 14 Home dashboard | done | 38d5a1e |
 | 15 Generated media | done | 2f53efe |
-| 16 Polish | to build | |
+| 16 Polish | done | fb0acb0, 84fd9d2 |
 
 How a slice is built: write a short brief of the data, agent and studio changes; build; run `pnpm quality:fix`, `pnpm quality:check`, `pnpm test` and `pnpm knip`; reset, push and seed the local backend (see CLAUDE.md); smoke test every new screen and action in Chrome; commit with explicit paths.
 
