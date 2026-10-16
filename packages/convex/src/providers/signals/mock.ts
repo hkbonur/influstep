@@ -58,7 +58,10 @@ export function mockSignals(source: PolledSignalSource): SignalsProvider {
     async find(query: SignalsQuery): Promise<FoundSignal[]> {
       const now = Date.now()
       if (source === 'search') return searchSuggestions(query, now)
-      return STORIES[source].slice(0, query.limit).map((story, index) => ({
+      // The fixed stories are about automation and agents; a persona in another niche hears stories about its own terms.
+      const fixed = STORIES[source]
+      const stories = fixed.some((story) => termBonus(query.terms, story.topics) > 0) ? fixed : nicheStories(source, query.terms)
+      return stories.slice(0, query.limit).map((story, index) => ({
         source,
         externalId: `mock-${source}-${index}`,
         title: story.title,
@@ -97,6 +100,42 @@ function searchSuggestions(query: SignalsQuery, now: number): FoundSignal[] {
     topics: entry.topics,
     publishedAt: now - (2 + rank * 4) * HOUR_MS,
   }))
+}
+
+/** Stories shaped like the source's, about the persona's first two terms; none without a term. */
+export function nicheStories(source: Exclude<PolledSignalSource, 'search'>, terms: string[]): Story[] {
+  const [first, second = first] = terms.map((term) => term.toLowerCase())
+  if (first === undefined || second === undefined) return []
+  const topics = (term: string) => term.split(/\s+/).filter((word) => word !== '')
+  const by: Record<Exclude<PolledSignalSource, 'search'>, Story[]> = {
+    hackernews: [
+      {
+        title: `Ask HN: What does your ${first} setup look like?`,
+        summary: `A long thread of people comparing how they do ${first}.`,
+        topics: topics(first),
+      },
+      {
+        title: `Show HN: I automated the boring part of ${second}`,
+        summary: `What it saved, and what still needs a human.`,
+        topics: topics(second),
+      },
+    ],
+    reddit: [
+      {
+        title: `What do you wish you knew before starting with ${first}?`,
+        summary: `Beginners' regrets, 90 comments.`,
+        topics: topics(first),
+      },
+      {
+        title: `${second} keeps going wrong, what am I missing?`,
+        summary: `Most answers point at the same setting.`,
+        topics: topics(second),
+      },
+    ],
+    google_trends: [{ title: `${first} tutorial`, summary: 'Rising query, +80% over 90 days.', topics: topics(first) }],
+    youtube_search: [{ title: `${first} for beginners`, summary: 'The top result is two years old.', topics: topics(first) }],
+  }
+  return by[source]
 }
 
 function termBonus(terms: string[], topics: string[]): number {

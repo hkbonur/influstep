@@ -270,6 +270,8 @@ export const rewrite = mutation({
     if (!episode) throw new Error('episode not found')
     const persona = await ctx.db.get(episode.personaId)
     if (!persona) throw new Error('persona not found')
+    // An idea has nothing written to send back; the writer writes it on its script day.
+    if (episode.status === 'idea') throw refusal('The writer has not written this one yet, so there is nothing to rewrite.')
     await applyEvent(ctx, args.episodeId, { type: 'rewrite' })
     // An image post's rendered card locks its card title (core/posts.ts). The rewrite gets a new card title, and approval
     // renders it again, so the old card goes and the title opens for the writer and the operator.

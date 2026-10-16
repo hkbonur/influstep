@@ -21,7 +21,6 @@ const BACKEND_RUNNERS: Partial<Record<JobKind, (ctx: ActionCtx, job: Doc<'jobs'>
   write_script: (ctx, job) => ctx.runAction(internal.internal.agents.writeScript, payloadWith(job.payload, 'episodeId')),
   poll_comments: (ctx, job) => ctx.runAction(internal.internal.agents.pollComments, payloadWith(job.payload, 'personaId')),
   pull_metrics: (ctx, job) => ctx.runAction(internal.internal.agents.pullMetrics, payloadWith(job.payload, 'personaId')),
-  evaluate_experiments: (ctx, job) => ctx.runAction(internal.internal.agents.evaluateExperiments, payloadWith(job.payload, 'personaId')),
   import_x_history: (ctx, job) => ctx.runAction(internal.internal.agents.importXHistory, payloadWith(job.payload, 'personaId')),
   learn_voice: (ctx, job) => ctx.runAction(internal.internal.agents.learnVoice, payloadWith(job.payload, 'personaId')),
   generate_media: (ctx, job) => ctx.runAction(internal.internal.media.generate, payloadWith(job.payload, 'generationId')),

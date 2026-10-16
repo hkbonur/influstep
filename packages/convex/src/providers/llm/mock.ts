@@ -595,7 +595,7 @@ function proposalFor(brief: ProposalBrief): PersonaProposal {
     name,
     handle: handleFromName(name),
     tone: 'plain, friendly, specific',
-    pillars: [`${topic} how-tos`, `${topic} mistakes and fixes`, `What ${brief.audience} ask`],
+    pillars: [`${topic} how-tos`, `${topic} mistakes and fixes`, `${topic} questions answered`],
     bio: `${topic} for ${brief.audience}, one short video at a time.`,
     bible: [
       `${firstName} talks to ${brief.audience} as "you" and shows the screen before explaining it.`,

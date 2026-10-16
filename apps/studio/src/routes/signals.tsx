@@ -209,9 +209,12 @@ function SignalRow(props: { signal: SignalRowData; freshness: number; now: numbe
             <Button size="sm" onClick={() => setPicking(true)}>
               Make an episode
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => dismiss({ signalId: signal._id })}>
-              Dismiss
-            </Button>
+            {/* A signal an episode already uses has nothing left to dismiss. */}
+            {signal.status !== 'used' && (
+              <Button size="sm" variant="ghost" onClick={() => dismiss({ signalId: signal._id })}>
+                Dismiss
+              </Button>
+            )}
           </>
         )}
       </div>

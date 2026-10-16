@@ -16,6 +16,7 @@ import { assertFormats, platformsOf } from '../core/formats'
 import { workingPersonaIds } from '../core/jobs'
 import { replySummary } from '../core/replies'
 import { createPersona } from '../core/personas'
+import { reportWindow } from '../core/report'
 import { requireWorkspace, workspaceOf } from '../core/workspace'
 import { enqueueJob } from '../jobs/queue'
 import { appearanceStyleValidator, personaColorValidator, platformFormatValidator } from '../lib/validators'
@@ -43,6 +44,9 @@ const personaFields = {
   autoPublish: v.boolean(),
   timezone: v.string(),
 }
+
+/** The persona page's header counts over the report's window. */
+const HEADER_WINDOW_DAYS = 28
 
 export const list = query({
   args: {},
@@ -154,8 +158,18 @@ export const get = query({
       .withIndex('by_persona_kind', (q) => q.eq('personaId', persona._id).eq('kind', 'design_voice'))
       .order('desc')
       .first()
+    // The persona's own numbers over the report's window, for the page's header (core `reportWindow`, the report's reading).
+    const window = await reportWindow(ctx, persona, HEADER_WINDOW_DAYS, Date.now())
     return {
       persona,
+      numbers: {
+        days: HEADER_WINDOW_DAYS,
+        value: window.funnel.value,
+        paid: window.funnel.paid,
+        views: window.funnel.views,
+        currency: window.currency,
+        mock: window.funnel.mock,
+      },
       look: persona.appearance ? { style: persona.appearance.style, references } : null,
       // The newest job that made the voice from the description; null when the operator gave an id.
       voiceJob: voiceJob ? { _id: voiceJob._id, status: voiceJob.status, error: voiceJob.error ?? null } : null,

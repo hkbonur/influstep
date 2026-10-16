@@ -33,3 +33,26 @@ export function nextReviewAt(now: number): number {
   )
   return slot > now ? slot : slot + WEEK_MS
 }
+
+/**
+ * Shares as whole percents that add up to 100: each rounded down, then the
+ * points left over go to the largest remainders, ties to the earlier share.
+ * Rounding each share on its own can show three equal pillars as 33% each.
+ */
+export function wholePercents(shares: readonly number[]): number[] {
+  const total = shares.reduce((sum, share) => sum + share, 0)
+  if (total === 0) return shares.map(() => 0)
+  const exact = shares.map((share) => (share / total) * 100)
+  const floors = exact.map(Math.floor)
+  let left = 100 - floors.reduce((sum, value) => sum + value, 0)
+  const order = exact
+    .map((value, index) => ({ index, remainder: value - Math.floor(value) }))
+    .sort((a, b) => b.remainder - a.remainder || a.index - b.index)
+  const out = [...floors]
+  for (const { index } of order) {
+    if (left <= 0) break
+    out[index] = (out[index] ?? 0) + 1
+    left -= 1
+  }
+  return out
+}

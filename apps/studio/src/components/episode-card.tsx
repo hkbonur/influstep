@@ -1,4 +1,11 @@
-import { EPISODE_STATUS_TINTS, SPONSOR_SEGMENT_LABELS, isPost, waitsOnOperator, type PostKind } from '@influstep/shared'
+import {
+  EPISODE_STATUS_LABELS,
+  EPISODE_STATUS_TINTS,
+  SPONSOR_SEGMENT_LABELS,
+  isPost,
+  waitsOnOperator,
+  type PostKind,
+} from '@influstep/shared'
 import { Link } from '@tanstack/react-router'
 import { api } from '@influstep/convex/_generated/api'
 import type { FunctionReturnType } from 'convex/server'
@@ -35,6 +42,8 @@ export function EpisodeCard(props: { episode: CalendarEpisode }) {
     >
       <div className="flex items-start gap-2">
         <span aria-hidden className="mt-1.5 size-1.5 shrink-0 rounded-full bg-[var(--tint)]" />
+        {/* The dot's color is the status; screen readers hear its name first, the way the eye meets the dot. */}
+        <span className="sr-only">{EPISODE_STATUS_LABELS[episode.status]}:</span>
         <div className="min-w-0 flex-1">
           {isPost(episode.kind) ? (
             <>

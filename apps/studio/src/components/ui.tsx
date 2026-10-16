@@ -31,10 +31,27 @@ function buttonClass(variant: ButtonVariant, size: ButtonSize, className: string
 }
 
 /** Takes a `ref` like the element (React 19 passes it as a prop), so a confirm step can hand focus back to the button that opened it. */
+/**
+ * While `busy`, the button says so (aria-busy) and ignores clicks, a form's
+ * submit included, but is never disabled: a disabled button drops the focus
+ * it holds to the page body.
+ */
 export function Button(props: React.ComponentProps<'button'> & { variant?: ButtonVariant; size?: ButtonSize; busy?: boolean }) {
-  const { variant = 'outline', size = 'md', busy, className, children, ...rest } = props
+  const { variant = 'outline', size = 'md', busy, className, children, onClick, ...rest } = props
   return (
-    <button type="button" {...rest} disabled={rest.disabled || busy} className={buttonClass(variant, size, className)}>
+    <button
+      type="button"
+      {...rest}
+      aria-busy={busy || undefined}
+      onClick={(event) => {
+        if (busy) {
+          event.preventDefault()
+          return
+        }
+        onClick?.(event)
+      }}
+      className={buttonClass(variant, size, className)}
+    >
       {busy && <Spinner />}
       {children}
     </button>
@@ -138,13 +155,28 @@ export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...rest} className={cn('field', className)} />
 }
 
+/**
+ * A labelled control. The hint sits outside the label, so it is not read as
+ * part of the control's name; a single control is described by it instead.
+ */
 export function Field(props: { label: string; hint?: string; children: React.ReactNode; className?: string }) {
+  const hintId = React.useId()
+  const described =
+    props.hint && React.isValidElement<{ 'aria-describedby'?: string }>(props.children)
+      ? React.cloneElement(props.children, { 'aria-describedby': hintId })
+      : props.children
   return (
-    <label className={cn('flex flex-col gap-1.5', props.className)}>
-      <span className="text-xs font-medium text-graphite">{props.label}</span>
-      {props.children}
-      {props.hint && <span className="text-xs text-ash">{props.hint}</span>}
-    </label>
+    <div className={cn('flex flex-col gap-1.5', props.className)}>
+      <label className="flex flex-col gap-1.5">
+        <span className="text-xs font-medium text-graphite">{props.label}</span>
+        {described}
+      </label>
+      {props.hint && (
+        <span id={hintId} className="text-xs text-ash">
+          {props.hint}
+        </span>
+      )}
+    </div>
   )
 }
 
@@ -190,14 +222,25 @@ export function MockNote(props: { when: boolean; children?: React.ReactNode }) {
   return <p className="text-xs text-ash">{props.children ?? 'Mock providers: these numbers are generated, not measured.'}</p>
 }
 
-/** What the report can vouch for and what it cannot (docs/plan.md, v0.2). Shown wherever conversions are counted. */
+/**
+ * What the report can vouch for and what it cannot (docs/plan.md, v0.2),
+ * wherever conversions are counted. One line stays in view, the caveat
+ * included, so the numbers above it are never read as more exact than they
+ * are; the rest opens on request, so the paragraph does not push the funnel
+ * down the page.
+ */
 export function AttributionNote() {
   return (
-    <p className="max-w-[65ch] text-xs text-ash">
-      Views, follows, likes, comments and watch rate are the platforms' own counts. Clicks and code redemptions are exact. Demos, signups,
-      trials and link-attributed paid come from PostHog, first touch, and undercount visitors who declined cookies. A persona-wide code's
-      redemptions count for the persona, not for an episode.
-    </p>
+    <details className="max-w-[65ch] text-xs text-ash">
+      <summary className="cursor-pointer hover:text-graphite">
+        Platform counts, exact clicks and codes; signups and paid from PostHog, first touch, which undercounts.
+      </summary>
+      <p className="mt-1">
+        Views, follows, likes, comments and watch rate are the platforms' own counts. Clicks and code redemptions are exact. Demos, signups,
+        trials and link-attributed paid come from PostHog, first touch, and undercount visitors who declined cookies. A persona-wide code's
+        redemptions count for the persona, not for an episode.
+      </p>
+    </details>
   )
 }
 

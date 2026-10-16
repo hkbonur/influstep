@@ -56,7 +56,7 @@ export function Funnel(props: { data: FunnelData }) {
         const from = step.rateFrom === undefined ? null : props.data[step.rateFrom]
         const width = value === 0 ? 0 : Math.max(2, (Math.log10(value + 1) / Math.log10(max + 1)) * 100)
         return (
-          <li key={step.key} className="grid grid-cols-[9rem_1fr_5rem] items-center gap-3 text-sm">
+          <li key={step.key} className="grid grid-cols-[5rem_1fr_6.5rem] items-center gap-3 text-sm sm:grid-cols-[9rem_1fr_5rem]">
             <span className="text-graphite">{step.label}</span>
             <span className="h-5 overflow-hidden rounded-sm bg-hairline">
               <span

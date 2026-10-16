@@ -109,7 +109,7 @@ function CalendarPage() {
       </div>
 
       {!data && (
-        <div className="grid grid-cols-7 gap-2">
+        <div className="grid gap-2 md:grid-cols-7">
           {Array.from({ length: 7 }, (_, index) => (
             <Skeleton key={index} className="h-64" />
           ))}
@@ -128,9 +128,10 @@ function CalendarPage() {
         </Empty>
       )}
       {data && total > 0 && (
-        <div className="grid grid-cols-7 gap-2 overflow-x-auto">
+        // Seven columns from md up; on a phone the days stack, today's wash and every card as they are.
+        <div className="grid gap-2 md:grid-cols-7">
           {data.days.map((day) => (
-            <section key={day.day} className={cn('min-w-36 rounded-xl p-1.5', { 'bg-paper-warm': day.day === today })}>
+            <section key={day.day} className={cn('rounded-xl p-1.5 md:min-w-36', { 'bg-paper-warm': day.day === today })}>
               <h2 className="flex items-baseline justify-between px-1 pb-2 text-xs">
                 <span className={cn('font-medium text-graphite', { 'text-ink': day.day === today })}>
                   {formatDay(day.day, { weekday: 'short' })}
@@ -141,6 +142,8 @@ function CalendarPage() {
                 {day.episodes.map((episode) => (
                   <EpisodeCard key={episode._id} episode={episode} />
                 ))}
+                {/* Stacked, an empty day would read as a missing one; side by side its empty column says it. */}
+                {day.episodes.length === 0 && <p className="px-1 text-xs text-ash md:hidden">Nothing planned.</p>}
               </div>
             </section>
           ))}
@@ -158,9 +161,15 @@ function CalendarPage() {
   )
 }
 
-/** One bucket per status in the week's loud cards, "1 failed, 2 needs approval, 1 ready to publish", in the order they appear. */
+/** One bucket per status in the week's loud cards, "1 failed, 2 need approval, 1 ready to publish", in the order they appear. */
 function summarize(statuses: EpisodeStatus[]): string {
   const counts = new Map<EpisodeStatus, number>()
   for (const status of statuses) counts.set(status, (counts.get(status) ?? 0) + 1)
-  return [...counts.entries()].map(([status, count]) => `${count} ${EPISODE_STATUS_LABELS[status].toLowerCase()}`).join(', ')
+  return [...counts.entries()]
+    .map(([status, count]) => {
+      const label = EPISODE_STATUS_LABELS[status].toLowerCase()
+      // The labels are written for one card ("needs approval"); several need it.
+      return `${count} ${count === 1 ? label : label.replace(/^needs /, 'need ')}`
+    })
+    .join(', ')
 }

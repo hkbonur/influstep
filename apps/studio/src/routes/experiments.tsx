@@ -175,7 +175,17 @@ function ExperimentCard(props: { experiment: ExperimentRow }) {
                 <td className="py-1.5 text-right">{stat?.episodes ?? 0}</td>
                 <td className="py-1.5 text-right">{formatCount(stat?.exposures ?? 0)}</td>
                 <td className="py-1.5 text-right">{formatCount(stat?.successes ?? 0)}</td>
-                <td className="py-1.5 text-right">{stat && stat.exposures > 0 ? formatPercent(stat.rate, 2) : ''}</td>
+                <td className="py-1.5 text-right">
+                  {stat && stat.exposures > 0 ? (
+                    formatPercent(stat.rate, 2)
+                  ) : (
+                    // Nothing went out under this variant yet, so there is no rate; an empty cell read as a missing number.
+                    <span className="text-ash">
+                      <span aria-hidden>–</span>
+                      <span className="sr-only">no data yet</span>
+                    </span>
+                  )}
+                </td>
               </tr>
             )
           })}
@@ -244,6 +254,8 @@ function NewExperimentForm(props: { personas: PersonaOption[]; firstPersonaId: I
     if (variants.trim() === '' || variants === filled) setVariants(variantsText(knownVariants(next.kind, defaultsOf(next.personaId))))
     setPersonaId(next.personaId)
     setKind(next.kind)
+    // A refusal was about the persona and the dimension that were sent; picking another makes it stale.
+    if (state.status === 'error') setState({ status: 'idle' })
   }
   const pickPersona = (value: string) => {
     const persona = props.personas.find((candidate) => candidate._id === value)

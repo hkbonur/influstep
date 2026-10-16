@@ -38,23 +38,54 @@ type PersonaRow = FunctionReturnType<typeof api.private.personas.list>[number]
 /** The one mark a roster row may carry: what waits on the operator first, then a failure, else nothing. */
 type PersonaMark = { kind: 'waiting'; count: number } | { kind: 'failed' } | { kind: 'none' }
 
-function Sidebar(props: { collapsed: boolean; onToggle: () => void }) {
+/** Below this width the sidebar is a rail that opens over the page, so the page keeps its width on a phone. */
+const NARROW_QUERY = '(max-width: 767px)'
+
+function subscribeNarrow(onChange: () => void): () => void {
+  const query = window.matchMedia(NARROW_QUERY)
+  query.addEventListener('change', onChange)
+  return () => query.removeEventListener('change', onChange)
+}
+
+function useNarrow(): boolean {
+  return React.useSyncExternalStore(
+    subscribeNarrow,
+    () => window.matchMedia(NARROW_QUERY).matches,
+    () => false
+  )
+}
+
+function Sidebar(props: {
+  collapsed: boolean
+  onToggle: () => void
+  /** On a narrow screen, the open sidebar lies over the page instead of beside it, and a link followed or Escape closes it. */
+  overlay?: { onClose: () => void }
+}) {
   const checklist = useQuery(api.private.checklist.list, {})
   const providers = useQuery(api.private.providers.status, {})
   const open = checklist?.filter((item) => item.status === 'open').length ?? 0
   const runnerOnline = useRunnerOnline(providers?.runner?.lastSeenAt ?? null)
-  const runnerStatus = runnerOnline ? 'Runner online' : 'Runner offline'
+  // Until the status loads, the runner is neither: saying "offline" then would cry wolf on every page load.
+  const runnerStatus = providers === undefined ? 'Checking the runner' : runnerOnline ? 'Runner online' : 'Runner offline'
   const runnerLabel = providers ? `${runnerStatus}, ${providers.mode}` : runnerStatus
   return (
     // Sticky rather than a scroll container of its own: the page keeps window scroll, which the router resets on navigation.
     <aside
       className={cn(
-        'sticky top-0 flex h-dvh shrink-0 flex-col self-start border-r border-mist bg-paper-tint transition-[width] duration-200 ease-out-quint',
+        'top-0 flex h-dvh shrink-0 flex-col self-start border-r border-mist bg-paper-tint transition-[width] duration-200 ease-out-quint',
         {
           'w-[232px]': !props.collapsed,
           'w-14': props.collapsed,
+          sticky: props.overlay === undefined,
+          'fixed left-0 z-30 shadow-xl': props.overlay !== undefined,
         }
       )}
+      onClickCapture={(event) => {
+        if (props.overlay && event.target instanceof Element && event.target.closest('a')) props.overlay.onClose()
+      }}
+      onKeyDown={(event) => {
+        if (props.overlay && event.key === 'Escape') props.overlay.onClose()
+      }}
     >
       <div className="flex h-14 shrink-0 items-center gap-2 px-3">
         <button
@@ -341,9 +372,26 @@ function RootComponent() {
       return !current
     })
   }
+  const narrow = useNarrow()
+  const [drawer, setDrawer] = React.useState(false)
+  // On a narrow screen the rail stays in the page's flow and the open sidebar lies over it; the wide preference is untouched.
+  const open = narrow && drawer
   return (
     <div className="flex min-h-dvh bg-paper">
-      <Sidebar collapsed={collapsed} onToggle={toggle} />
+      {narrow ? (
+        <div className="w-14 shrink-0">
+          <Sidebar
+            collapsed={!drawer}
+            onToggle={() => setDrawer((current) => !current)}
+            overlay={open ? { onClose: () => setDrawer(false) } : undefined}
+          />
+        </div>
+      ) : (
+        <Sidebar collapsed={collapsed} onToggle={toggle} />
+      )}
+      {open && (
+        <button type="button" aria-label="Close the menu" className="fixed inset-0 z-20 bg-ink/20" onClick={() => setDrawer(false)} />
+      )}
       <main className="min-w-0 flex-1">
         <div className="mx-auto max-w-[1280px] px-4 py-6 sm:px-6">
           <Outlet />

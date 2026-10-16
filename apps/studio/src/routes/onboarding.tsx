@@ -533,6 +533,8 @@ function LookPart(props: {
   onBack: () => void
 }) {
   const [fileProblem, setFileProblem] = React.useState<string | null>(null)
+  // The problems show once the operator tries to go on, not before they have typed anything.
+  const [tried, setTried] = React.useState(false)
   const { draft } = props
   const pick = (files: FileList | null) => {
     const picked = [...(files ?? [])]
@@ -554,6 +556,7 @@ function LookPart(props: {
       className="space-y-6"
       onSubmit={(event) => {
         event.preventDefault()
+        setTried(true)
         if (props.problems.length === 0) props.onNext()
       }}
     >
@@ -675,10 +678,10 @@ function LookPart(props: {
         )}
       </fieldset>
 
-      <Problems problems={props.problems} />
+      <Problems problems={tried ? props.problems : []} />
       <StepError message={props.error} />
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" variant="primary" disabled={props.problems.length > 0}>
+        <Button type="submit" variant="primary">
           Next
         </Button>
         <Button variant="ghost" onClick={props.onBack}>

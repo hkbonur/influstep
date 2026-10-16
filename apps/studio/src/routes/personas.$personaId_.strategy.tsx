@@ -19,8 +19,8 @@ import React from 'react'
 import { JobState, PlatformGlyphs } from '@/components/status'
 import { Button, ErrorLine, LinkButton, Mono, PageHeader, Skeleton, Spinner } from '@/components/ui'
 import { errorMessage } from '@/lib/errors'
-import { formatCount, formatDate, formatDateTime, formatHour, formatNumber, formatPercent } from '@/lib/format'
-import { ACTOR_WORDS, nextReviewAt } from '@/lib/strategy'
+import { formatCount, formatDate, formatDateTime, formatHour, formatNumber } from '@/lib/format'
+import { ACTOR_WORDS, nextReviewAt, wholePercents } from '@/lib/strategy'
 import { useNow } from '@/lib/use-now'
 
 // `$personaId_`: the same /personas/:id/strategy address, outside the persona page's route, like the voice page. The
@@ -328,18 +328,19 @@ function DefaultRow(props: { label: string; value: string; since?: number; teste
 /** How the planner shares the evergreen slots between the pillars, in the persona's pillar order. */
 function Pillars(props: { persona: Doc<'personas'> }) {
   const weights = pillarWeights(props.persona.pillars, props.persona.strategy?.pillarWeights)
+  const percents = wholePercents(weights.map((entry) => entry.weight))
   return (
     <section>
       <SectionHeading>Pillars</SectionHeading>
       <ul className="space-y-2">
-        {weights.map((entry) => (
+        {weights.map((entry, index) => (
           <li key={entry.pillar} className="grid grid-cols-[minmax(0,1fr)_3rem] items-center gap-x-4 sm:grid-cols-[14rem_1fr_3rem]">
             <span className="truncate">{entry.pillar}</span>
             {/* The percentage beside it says the same, so the bar is hidden from screen readers. */}
             <span aria-hidden className="order-last col-span-2 h-1 overflow-hidden rounded-full bg-mist sm:order-none sm:col-span-1">
               <span className="block h-full rounded-full bg-graphite" style={{ width: `${entry.weight * 100}%` }} />
             </span>
-            <span className="tabular text-right font-mono text-[11px] text-ash">{formatPercent(entry.weight, 0)}</span>
+            <span className="tabular text-right font-mono text-[11px] text-ash">{percents[index]}%</span>
           </li>
         ))}
       </ul>

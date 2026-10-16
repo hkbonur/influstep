@@ -42,7 +42,17 @@ import {
 import { assetCounts } from '@/lib/assets'
 import { cn } from '@/lib/cn'
 import { errorMessage } from '@/lib/errors'
-import { formatDate, formatDateTime, formatDay, formatHour, languageName, plural, relativeTime } from '@/lib/format'
+import {
+  formatCount,
+  formatDate,
+  formatDateTime,
+  formatDay,
+  formatHour,
+  formatMoney,
+  languageName,
+  plural,
+  relativeTime,
+} from '@/lib/format'
 import { ideaLine } from '@/lib/ideas'
 import { PROBLEMS_SHOWN, briefTime, splitBrief } from '@/lib/research'
 import { useNow } from '@/lib/use-now'
@@ -50,6 +60,35 @@ import { useNow } from '@/lib/use-now'
 export const Route = createFileRoute('/personas/$personaId')({ component: PersonaPage })
 
 type PersonaData = NonNullable<FunctionReturnType<typeof api.private.personas.get>>
+
+type HeaderActionKey = 'poll' | 'plan' | 'metrics' | 'pause'
+type HeaderActionState =
+  | { status: 'idle' }
+  | { status: 'busy'; key: HeaderActionKey }
+  | { status: 'done'; message: string }
+  | { status: 'error'; message: string }
+
+/**
+ * The persona's own numbers in its header, over the report's window: what it
+ * earned, the paid conversions behind that, and its views, linked to its
+ * report, so the operator does not have to open it to see if the persona works.
+ */
+function PersonaNumbers(props: { personaId: Id<'personas'>; numbers: PersonaData['numbers'] }) {
+  const { numbers } = props
+  return (
+    <Link to="/reports/$personaId" params={{ personaId: props.personaId }} className="group mt-1 block w-fit">
+      <span className="tabular font-medium text-ink">{formatMoney(numbers.value, numbers.currency)}</span>
+      <span className="text-ash"> earned from </span>
+      <span className="tabular text-graphite">{numbers.paid}</span>
+      <span className="text-ash"> paid · </span>
+      <span className="tabular text-graphite">{formatCount(numbers.views)}</span>
+      <span className="text-ash group-hover:underline">
+        {' '}
+        views, last {numbers.days} days{numbers.mock ? ' (mock)' : ''}
+      </span>
+    </Link>
+  )
+}
 
 function PersonaPage() {
   const params = Route.useParams()
@@ -61,6 +100,20 @@ function PersonaPage() {
   const pullMetrics = useMutation(api.private.personas.pullMetrics)
   const retireDiscountCode = useMutation(api.private.personas.retireDiscountCode)
   const [settings, setSettings] = React.useState(false)
+  const [action, setAction] = React.useState<HeaderActionState>({ status: 'idle' })
+
+  /** One header action at a time: busy while its request is out, then what it queued or why it was refused, under the header. */
+  const run = async (key: HeaderActionKey, request: () => Promise<unknown>, done: string) => {
+    if (action.status === 'busy') return
+    setAction({ status: 'busy', key })
+    try {
+      await request()
+      setAction({ status: 'done', message: done })
+    } catch (caught) {
+      setAction({ status: 'error', message: errorMessage(caught) })
+    }
+  }
+  const busy = (key: HeaderActionKey) => action.status === 'busy' && action.key === key
 
   if (data === undefined) return <Skeleton className="h-96" />
   if (data === null) return <p className="text-ash">This persona does not exist.</p>
@@ -90,18 +143,35 @@ function PersonaPage() {
                     <Pill tint="alert-amber">Paused</Pill>
                   </>
                 )}
+                <PersonaNumbers personaId={personaId} numbers={data.numbers} />
               </>
             }
             actions={
               <>
-                <Button size="sm" onClick={() => pollSignals({ personaId })}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  busy={busy('poll')}
+                  onClick={() => run('poll', () => pollSignals({ personaId }), 'Queued for the researcher: new signals shortly.')}
+                >
                   Poll signals
                 </Button>
-                <Button size="sm" onClick={() => planWeek({ personaId })}>
-                  Plan this week
-                </Button>
-                <Button size="sm" onClick={() => pullMetrics({ personaId })}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  busy={busy('metrics')}
+                  onClick={() => run('metrics', () => pullMetrics({ personaId }), 'Queued for the analyst: the numbers refresh shortly.')}
+                >
                   Pull metrics
+                </Button>
+                <Button
+                  size="sm"
+                  busy={busy('plan')}
+                  onClick={() =>
+                    run('plan', () => planWeek({ personaId }), "Queued for the writer: this week's plan shows on the calendar.")
+                  }
+                >
+                  Plan this week
                 </Button>
                 <LinkButton to="/reports/$personaId" params={{ personaId }} size="sm">
                   Report
@@ -112,13 +182,25 @@ function PersonaPage() {
                 <Button
                   size="sm"
                   variant={persona.paused ? 'primary' : 'destructive'}
-                  onClick={() => setPaused({ personaId, paused: !persona.paused })}
+                  busy={busy('pause')}
+                  onClick={() =>
+                    run(
+                      'pause',
+                      () => setPaused({ personaId, paused: !persona.paused }),
+                      persona.paused ? `${persona.name} is working again.` : `${persona.name} is paused: nothing runs until you resume.`
+                    )
+                  }
                 >
                   {persona.paused ? 'Resume' : 'Pause'}
                 </Button>
               </>
             }
           />
+          {/* Stays mounted, so what an action queued, or why it was refused, is heard where the operator's focus already is. */}
+          <div aria-live="polite" className="-mt-4 mb-4 text-xs">
+            {action.status === 'done' && <p className="text-ash">{action.message}</p>}
+            {action.status === 'error' && <ErrorLine>{action.message}</ErrorLine>}
+          </div>
         </div>
       </div>
       {settings && <SettingsForm persona={persona} onDone={() => setSettings(false)} />}
