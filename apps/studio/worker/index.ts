@@ -6,6 +6,7 @@
  */
 import { ConvexHttpClient } from 'convex/browser'
 import { api } from '@influstep/convex/_generated/api'
+import { isPlatform, trackedLinkPath, type Platform } from '@influstep/shared'
 
 interface Env {
   ASSETS: Fetcher
@@ -19,10 +20,13 @@ export function bioPage(bio: {
   sponsorName: string
   sponsorSlug: string | null
   episodes: { title: string; platform: string; url: string }[]
+  /** The platform whose bio linked here; its sponsor link carries it on, so the click counts for that platform. */
+  via?: Platform
 }): string {
   const escape = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-  const sponsor = bio.sponsorSlug
-    ? `<a class="sponsor" href="/go/${escape(bio.sponsorSlug)}">${escape(bio.sponsorName)}: the forms my workflows send</a>`
+  const sponsorHref = bio.sponsorSlug && trackedLinkPath(bio.sponsorSlug, bio.via)
+  const sponsor = sponsorHref
+    ? `<a class="sponsor" href="${escape(sponsorHref)}">${escape(bio.sponsorName)}: the forms my workflows send</a>`
     : ''
   const episodes = bio.episodes
     .map(
@@ -49,6 +53,16 @@ ${sponsor}<ul>${episodes}</ul>
 </main></body></html>`
 }
 
+/**
+ * The platform a viewer's URL names in `via`. Anyone can edit a URL, so a
+ * value that names no platform is not passed on: the page and the redirect
+ * still work, and the click counts as the bio's without a platform.
+ */
+function viaOf(url: URL): Platform | undefined {
+  const via = url.searchParams.get('via')
+  return via !== null && isPlatform(via) ? via : undefined
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
@@ -57,6 +71,7 @@ export default {
       const client = new ConvexHttpClient(env.CONVEX_URL)
       const result = await client.mutation(api.public.links.click, {
         slug: go[1],
+        via: viaOf(url),
         referrer: request.headers.get('referer') ?? undefined,
         country: request.headers.get('cf-ipcountry') ?? undefined,
       })
@@ -68,7 +83,9 @@ export default {
       const client = new ConvexHttpClient(env.CONVEX_URL)
       const page = await client.query(api.public.links.bio, { handle: bio[1] })
       if (!page) return new Response('No such persona.', { status: 404 })
-      return new Response(bioPage(page), { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=60' } })
+      return new Response(bioPage({ ...page, via: viaOf(url) }), {
+        headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=60' },
+      })
     }
     return env.ASSETS.fetch(request)
   },

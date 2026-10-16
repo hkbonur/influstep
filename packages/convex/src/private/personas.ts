@@ -11,7 +11,7 @@ import {
   retireDiscountCode as retireDiscountCodeRule,
 } from '../core/discounts'
 import { openXChecklist } from '../core/checklist'
-import { createTrackedLink, reconcilePlatformDrop, scriptBeingWritten } from '../core/episodes'
+import { bioLinkOf, createTrackedLink, reconcilePlatformDrop, scriptBeingWritten } from '../core/episodes'
 import { assertFormats, platformsOf } from '../core/formats'
 import { workingPersonaIds } from '../core/jobs'
 import { replySummary } from '../core/replies'
@@ -125,12 +125,7 @@ export const get = query({
       .take(12)
     // Not from `jobs` above: those are only the newest few, and a job queued for hours can sit behind them.
     const working = (await workingPersonaIds(ctx)).has(persona._id)
-    const bioLink = (
-      await ctx.db
-        .query('links')
-        .withIndex('by_persona', (q) => q.eq('personaId', persona._id))
-        .collect()
-    ).find((link) => !link.episodeId && !link.platform)
+    const bioLink = await bioLinkOf(ctx, persona._id)
     // The codes in force, the persona-wide one first, then the episode-bound ones.
     const codes = (await activeDiscountCodes(ctx, persona._id)).sort(
       (a, b) => Number(a.episodeId !== undefined) - Number(b.episodeId !== undefined) || b.createdAt - a.createdAt

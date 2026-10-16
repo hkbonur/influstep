@@ -1,14 +1,19 @@
 import { api } from '@influstep/convex/_generated/api'
-import { PLATFORM_LABELS } from '@influstep/shared'
+import { PLATFORMS, PLATFORM_LABELS, trackedLinkPath } from '@influstep/shared'
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from 'convex/react'
+import { z } from 'zod'
 import { Mono, Skeleton } from '@/components/ui'
 
+// As in the worker, a `via` that names no platform is dropped, never an error: anyone can edit the URL.
+const searchSchema = z.object({ via: z.enum(PLATFORMS).optional().catch(undefined) })
+
 /** Dev-only twin of the worker's link-in-bio page on /p/:handle. */
-export const Route = createFileRoute('/p/$handle')({ component: BioPage })
+export const Route = createFileRoute('/p/$handle')({ component: BioPage, validateSearch: searchSchema })
 
 function BioPage() {
   const params = Route.useParams()
+  const search = Route.useSearch()
   const bio = useQuery(api.public.links.bio, { handle: params.handle })
   if (bio === undefined) return <Skeleton className="mx-auto h-40 max-w-xl" />
   if (bio === null) return <p className="py-20 text-center text-ash">No such persona.</p>
@@ -18,7 +23,7 @@ function BioPage() {
       <Mono className="text-ash">@{bio.handle}</Mono>
       <p className="my-3">{bio.bio}</p>
       {bio.sponsorSlug && (
-        <a href={`/go/${bio.sponsorSlug}`} className="block rounded-lg bg-ink px-4 py-3 font-medium text-paper">
+        <a href={trackedLinkPath(bio.sponsorSlug, search.via)} className="block rounded-lg bg-ink px-4 py-3 font-medium text-paper">
           {bio.sponsorName}: the forms my workflows send
         </a>
       )}

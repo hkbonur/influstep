@@ -3,6 +3,7 @@ import type { Doc, Id } from '@influstep/convex/_generated/dataModel'
 import {
   DELIVERY_LABELS,
   EPISODE_KIND_LABELS,
+  bioPath,
   formatLength,
   isPost,
   type MemoryKind,
@@ -255,13 +256,22 @@ function PersonaPage() {
               {data.bioLink && (
                 <>
                   <dt className="text-ash">Link in bio</dt>
+                  {/* One address per platform, each naming its platform, so the report counts a bio's clicks where they came from. */}
                   <dd>
-                    <Mono className="break-all">
-                      {data.appUrl}/p/{persona.handle}
-                    </Mono>{' '}
-                    <span className="text-ash">
-                      · {data.bioLink.clicks} clicks on /go/{data.bioLink.slug}
-                    </span>
+                    <ul className="space-y-1">
+                      {persona.formats.map((format) => (
+                        <li key={format.platform} className="flex items-baseline gap-2">
+                          <PlatformGlyphs platforms={[format.platform]} />
+                          <Mono className="break-all">
+                            {data.appUrl}
+                            {bioPath(persona.handle, format.platform)}
+                          </Mono>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-1 text-ash">
+                      Put each in that platform's bio. {data.bioLink.clicks} clicks on /go/{data.bioLink.slug}
+                    </p>
                   </dd>
                 </>
               )}

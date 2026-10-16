@@ -266,7 +266,7 @@ A short link (`/go/<slug>`) that a publication carries in its description, bio, 
 _Avoid_: affiliate link, UTM link, short URL, redirect.
 
 **Link in bio**:
-The one page per persona (`/p/<handle>`) that platforms without clickable descriptions point to. It lists the persona's latest episodes and the sponsor's tracked link.
+The one page per persona (`/p/<handle>`) that platforms without clickable descriptions point to. It lists the persona's latest episodes and the sponsor's tracked link. Each platform's bio carries its own address, `/p/<handle>?via=<platform>`, and the page passes the platform on to the sponsor link's click, so the report counts a bio's clicks on the platform they came from.
 _Avoid_: landing page, profile page, hub.
 
 **Conversion**:
@@ -274,8 +274,12 @@ A Formstep event tied to a persona by UTM: a signup, a first published form, or 
 _Avoid_: sale, lead, goal (that is the workspace's goal, paying customers; PostHog's goals are conversions).
 
 **Report**:
-The one page per persona that answers "is this persona working?": followers, views, clicks, signups, and paid over time, the funnel from view to paid, the replies on X with the follows they brought, and the open experiments. Kept to one screen; detail lives in the episode list.
+The one page per persona that answers "is this persona working?": followers, views, clicks, signups, and paid over time, the funnel from view to paid, the replies on X with the follows they brought, and the open experiments. Kept to one screen; detail lives in the episode list. Reports open on the workspace report: every persona's funnel over the window added up, an engagement line (likes, comments, watch rate, follows per view), one row per persona with the same columns, and what works. Every number says where it comes from: the platforms' own counts, exact clicks and code redemptions, or conversions PostHog attributes first touch.
 _Avoid_: dashboard (fine casually), analytics (that is the data), insights.
+
+**What works**:
+Three ranked lists on the workspace report over every persona's measured videos of the last 28 days: by pillar, by hook style (the one a script was written in, stamped when the writer stores it), and by sponsor segment, each ranked by value per video, then clicks per view. A persona's strategy review moves its pillar weights on the same numbers, counted for that persona alone.
+_Avoid_: insights, best practices, leaderboard.
 
 ## Operations
 

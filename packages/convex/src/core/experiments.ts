@@ -103,6 +103,20 @@ export async function episodeEffectiveVariant(
 }
 
 /**
+ * The hook style a video's script is written in, stamped on the episode when
+ * the writer stores it (schema `hookStyle`): the report's "what works" by
+ * hook style reads it, since the default in force may change after.
+ */
+export async function hookStyleOf(
+  ctx: Reader,
+  episode: Carrier & { experimentId?: Id<'experiments'> },
+  persona: Pick<Doc<'personas'>, 'strategy'>
+): Promise<{ key: string; label: string }> {
+  const hook = await episodeEffectiveVariant(ctx, 'hook', episode, persona)
+  return { key: hook.key, label: hook.label }
+}
+
+/**
  * The running experiment as the video planner reads it, with the videos each
  * variant already has; none when no experiment runs or the one that runs
  * varies posts or replies (shared `EXPERIMENT_SUBJECT`).

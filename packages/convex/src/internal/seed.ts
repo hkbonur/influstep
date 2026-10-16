@@ -30,13 +30,13 @@ import {
   type VoiceEdit,
 } from '@influstep/shared'
 import { internal } from '../_generated/api'
-import type { Id, TableNames } from '../_generated/dataModel'
+import type { Doc, Id, TableNames } from '../_generated/dataModel'
 import { internalAction, internalMutation } from '../_generated/server'
 import { insertAccountPosts, topOriginalsOf } from '../core/account'
 import { openXChecklist } from '../core/checklist'
 import { addDays, dayKey, instantAt, weekStart } from '../core/dates'
-import { createIdea, createPostPublication, createTrackedLink, shotsFromDraft } from '../core/episodes'
-import { analystDecisionNote, applyExperimentDecision, startExperiment, variantStatsFor } from '../core/experiments'
+import { bioLinkOf, createIdea, createPostPublication, createTrackedLink, shotsFromDraft } from '../core/episodes'
+import { analystDecisionNote, applyExperimentDecision, hookStyleOf, startExperiment, variantStatsFor } from '../core/experiments'
 import { earliestPublishAt, formatFor, formatsFor, platformsOf, publishHourFor } from '../core/formats'
 import { rememberFromOperator } from '../core/memory'
 import { signalConcept } from '../core/planner'
@@ -595,6 +595,19 @@ export const write = internalMutation({
       if (!persona) throw new Error('persona vanished')
       await createTrackedLink(ctx, { persona, target: 'https://formstep.io' })
     }
+    /**
+     * Clicks on the sponsor link of a persona's bio page over the last three weeks, opened from a platform's
+     * bio (`/p/<handle>?via=<platform>`), or with no platform for a bio that does not name one. Returns
+     * their instants.
+     */
+    const seedBioClicks = async (personaId: Id<'personas'>, via: Platform | undefined, count: number): Promise<number[]> => {
+      const bioLink = await bioLinkOf(ctx, personaId)
+      if (!bioLink) throw new Error('the seed made no bio link')
+      const instants = Array.from({ length: count }, (_, c) => now - ((c + 1) * 21 * DAY_MS) / (count + 1))
+      for (const at of instants) await ctx.db.insert('linkClicks', { linkId: bioLink._id, personaId, via, at })
+      await ctx.db.patch(bioLink._id, { clicks: bioLink.clicks + count })
+      return instants
+    }
 
     // Ada's asset library: a screenshot the writer can place, and a document that stays in the library.
     const seededAsset = async (
@@ -899,16 +912,20 @@ export const write = internalMutation({
     const adaRenders = (durationSec: number) => adaAspects.map((aspect) => ({ aspect, storageId: args.storageId, durationSec, mock: true }))
     const today = dayKey(now, TIMEZONE)
     /**
-     * One of Ada's past videos, live on every platform at its own hour: a tracked link per platform with its
-     * clicks (none on X, where nothing is appended), and three snapshots per publication.
+     * A persona's past video, live on every platform of the persona at its own hour: a tracked link per
+     * platform with its clicks (none on X, where nothing is appended), and three snapshots per publication.
+     * Its hook style is stamped the way the writer stamps it.
      */
     const seedPastVideo = async (video: {
+      persona: Doc<'personas'>
+      /** The code its descriptions off X went out with; none when the persona had none. */
+      codeId: Id<'discountCodes'> | undefined
       concept: string
       pillar: string
       sponsorSegment: SponsorSegment
       plannedFor: string
-      experimentId: Id<'experiments'>
-      variantKey: string
+      experimentId: Id<'experiments'> | undefined
+      variantKey: string | undefined
       hook: string
       closing: string
       /** Measured, or still only published (the newest). */
@@ -923,10 +940,14 @@ export const write = internalMutation({
       /** Hours after a publication went live of its snapshots; the seed never writes one after now. */
       snapshotHours: (liveAt: number) => number[]
     }): Promise<{ episodeId: Id<'episodes'>; scheduledAt: number; clicks: number }> => {
+      const { persona } = video
+      const platforms = platformsOf(persona)
+      const formats = formatsFor(persona, platforms)
+      const format = resolveEpisodeFormat(formats)
       // No seeded episode carries a publish time variant, so every one goes out at its platforms' own hours.
-      const scheduledAt = earliestPublishAt(ada, adaPlatforms, video.plannedFor, 0)
+      const scheduledAt = earliestPublishAt(persona, platforms, video.plannedFor, 0)
       // Live once the last platform went out.
-      const publishedAt = Math.max(...adaFormats.map((format) => platformInstant(video.plannedFor, format)))
+      const publishedAt = Math.max(...formats.map((candidate) => platformInstant(video.plannedFor, candidate)))
       const shotPlan = seededBeats({
         hook: video.hook,
         opener: { title: 'The hook', tool: PRESENTER_TOOL, url: '' },
@@ -938,7 +959,7 @@ export const write = internalMutation({
       })
       const description = seededDescription(video.concept)
       const episodeId = await ctx.db.insert('episodes', {
-        personaId: adaId,
+        personaId: persona._id,
         slug: `${video.concept
           .toLowerCase()
           .replace(/[^a-z0-9]+/g, '-')
@@ -951,11 +972,11 @@ export const write = internalMutation({
         hook: hookOf(shotPlan),
         description,
         sponsorSegment: video.sponsorSegment,
-        platforms: adaPlatforms,
-        format: adaFormat,
+        platforms,
+        format,
         shotPlan,
-        shots: shotsFromDraft({ shotPlan }, workspace.sponsorName, adaFormat.delivery),
-        renders: adaRenders(58),
+        shots: shotsFromDraft({ shotPlan }, workspace.sponsorName, format.delivery),
+        renders: formatAspects(format).map((aspect) => ({ aspect, storageId: args.storageId, durationSec: 58, mock: true })),
         plannedFor: video.plannedFor,
         scheduledAt,
         experimentId: video.experimentId,
@@ -968,24 +989,26 @@ export const write = internalMutation({
         createdAt: scheduledAt - 2 * DAY_MS,
         updatedAt: publishedAt,
       })
-      const episode = await ctx.db.get(episodeId)
-      if (!episode) throw new Error('episode vanished')
+      const inserted = await ctx.db.get(episodeId)
+      if (!inserted) throw new Error('episode vanished')
+      const episode = { ...inserted, hookStyle: await hookStyleOf(ctx, inserted, persona) }
+      await ctx.db.patch(episodeId, { hookStyle: episode.hookStyle })
       let clicksTotal = 0
-      for (const format of adaFormats) {
-        const { platform } = format
-        const liveAt = platformInstant(video.plannedFor, format)
-        const linkId = await createTrackedLink(ctx, { persona: ada, episode, platform, target: workspace.sponsorUrl })
+      for (const platformFormat of formats) {
+        const { platform } = platformFormat
+        const liveAt = platformInstant(video.plannedFor, platformFormat)
+        const linkId = await createTrackedLink(ctx, { persona, episode, platform, target: workspace.sponsorUrl })
         const externalId = `mock-${platform}-${video.tag}`
-        // Off X each went out with Ada's description and her code, stamped at dispatch; X took the title alone.
+        // Off X each went out with the description and the persona's code, stamped at dispatch; X took the title alone.
         const publicationId = await ctx.db.insert('publications', {
           episodeId,
-          personaId: adaId,
+          personaId: persona._id,
           platform,
-          aspect: format.aspect,
+          aspect: platformFormat.aspect,
           status: 'live',
           title: video.concept,
           body: platform === 'x' ? undefined : description,
-          discountCodeId: platform === 'x' ? undefined : adaCode._id,
+          discountCodeId: platform === 'x' ? undefined : video.codeId,
           linkId,
           scheduledAt: liveAt,
           externalId,
@@ -1000,7 +1023,7 @@ export const write = internalMutation({
         for (let c = 0; c < clicks; c += 1) {
           await ctx.db.insert('linkClicks', {
             linkId,
-            personaId: adaId,
+            personaId: persona._id,
             episodeId,
             at: liveAt + ((c + 1) * video.clickHours * 3_600_000) / (clicks + 1),
           })
@@ -1010,7 +1033,7 @@ export const write = internalMutation({
         for (const [snapshotIndex, hours] of video.snapshotHours(liveAt).entries()) {
           const views = Math.round(baseViews * Math.log2(2 + hours) * 0.4)
           await ctx.db.insert('metricSnapshots', {
-            personaId: adaId,
+            personaId: persona._id,
             episodeId,
             publicationId,
             platform,
@@ -1068,6 +1091,8 @@ export const write = internalMutation({
     ] as const
     for (const [index, [concept, pillar, variantKey]] of ctaConcepts.entries()) {
       await seedPastVideo({
+        persona: ada,
+        codeId: adaCode._id,
         concept,
         pillar,
         sponsorSegment: 'none',
@@ -1138,10 +1163,12 @@ export const write = internalMutation({
       ['n8n vs Make for a five-person team', 'n8n tutorials', 'none', 'howto'],
       ['Agent that fills in a quote and waits for approval', 'AI agent workflows', 'demo', 'wrong'],
     ] as const
-    const history: { episodeId: Id<'episodes'>; variantKey: string; scheduledAt: number; clicks: number }[] = []
+    const history: { episodeId: Id<'episodes'> | undefined; variantKey: string | undefined; scheduledAt: number; clicks: number }[] = []
     for (const [index, [concept, pillar, sponsorSegment, variantKey]] of historyConcepts.entries()) {
       const plannedFor = addDays(today, -(26 - index * 3))
       const seeded = await seedPastVideo({
+        persona: ada,
+        codeId: adaCode._id,
         concept,
         pillar,
         sponsorSegment,
@@ -1165,6 +1192,18 @@ export const write = internalMutation({
     // so the pull dedupes against these rows. The mock ties nothing to an episode (its UTM carries no
     // campaign); the seed spreads its rows over the episodes in proportion to clicks and times each one
     // after its episode went live, so the report has value per episode and the trend clusters on publish days.
+    // Ada's bio clicks, most through her TikTok and Instagram bios, a few from before her bios named their
+    // platform. The mock analytics counts every click of the last 30 days, so they join the history as one
+    // row with no episode: the conversions they bring are Ada's, not a video's.
+    let bioClickCount = 0
+    for (const [via, count] of [
+      ['tiktok', 14],
+      ['instagram', 6],
+      [undefined, 3],
+    ] as const) {
+      bioClickCount += (await seedBioClicks(adaId, via, count)).length
+    }
+    history.push({ episodeId: undefined, variantKey: undefined, scheduledAt: now - 14 * DAY_MS, clicks: bioClickCount })
     const totalClicks = history.reduce((sum, row) => sum + row.clicks, 0)
     const found = await mockAnalytics.conversions({ personaHandle: ada.handle, since: now - 30 * 86_400_000, clicksSince: totalClicks })
     const demos = found.filter((conversion) => conversion.kind === 'demo_started')
@@ -1656,6 +1695,38 @@ export const write = internalMutation({
         signalIds: offset === 1 ? [seededSignal(4)] : [],
       })
     }
+
+    // Max's first two videos, measured: TikTok takes no link in a description, so they bring views and
+    // follows, and the clicks come through his bio. None of it has paid yet, so the workspace report shows
+    // a persona that brings views next to one that brings paying customers.
+    for (const [index, [concept, pillar]] of [
+      ['Claude Code wrote the migration and dropped the wrong column', 'Agents in production'],
+      ['An MCP server for your calendar in forty lines', 'MCP servers'],
+    ].entries()) {
+      await seedPastVideo({
+        persona: max,
+        codeId: undefined,
+        concept,
+        pillar,
+        sponsorSegment: 'none',
+        plannedFor: addDays(today, -(8 - index * 3)),
+        experimentId: undefined,
+        variantKey: undefined,
+        hook: `How to ${concept.toLowerCase()} without it going wrong.`,
+        closing: SEEDED_CLOSINGS.comment,
+        measured: true,
+        tag: `m${index}`,
+        viewSeed: index + 21,
+        clickRate: 0,
+        clickHours: 24,
+        snapshotHours: () => [24, 72, 96],
+      })
+    }
+
+    // Max's clicks come through his TikTok bio (`/p/<handle>?via=tiktok`), so the report's By platform
+    // table carries them on TikTok.
+    await seedBioClicks(maxId, 'tiktok', 23)
+
     await ctx.db.insert('checklistItems', {
       personaId: maxId,
       title: 'Connect a TikTok account for Max',

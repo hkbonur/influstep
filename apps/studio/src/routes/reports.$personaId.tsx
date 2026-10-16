@@ -35,9 +35,14 @@ function ReportPage() {
           </>
         }
         actions={
-          <LinkButton to="/personas/$personaId" params={{ personaId }} variant="ghost">
-            Open persona
-          </LinkButton>
+          <>
+            <LinkButton to="/reports" variant="ghost">
+              All personas
+            </LinkButton>
+            <LinkButton to="/personas/$personaId" params={{ personaId }} variant="ghost">
+              Open persona
+            </LinkButton>
+          </>
         }
       />
       {nothing && <Empty>Nothing measured yet. Once an episode is live for 72 hours the analyst fills this page.</Empty>}
@@ -83,7 +88,10 @@ function ReportPage() {
 
           <section>
             <Eyebrow className="mb-3">By platform</Eyebrow>
-            {/* One row per platform the persona has, counting live publications only; zeros until one is live there, never empty. */}
+            {/*
+              One row per platform the persona has, counting live publications only; zeros until one is live there, never empty.
+              Bio clicks came through the bio page opened from that platform's bio (/p/<handle>?via=<platform>).
+            */}
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="text-xs text-ash">
@@ -95,6 +103,7 @@ function ReportPage() {
                     <th className="hidden py-1 pl-3 text-right font-medium lg:table-cell">Likes</th>
                     <th className="hidden py-1 pl-3 text-right font-medium lg:table-cell">Comments</th>
                     <th className="py-1 pl-3 text-right font-medium">{METRIC_LABELS.clicks}</th>
+                    <th className="py-1 pl-3 text-right font-medium">Bio clicks</th>
                   </tr>
                 </thead>
                 <tbody className="tabular">
@@ -115,6 +124,7 @@ function ReportPage() {
                       <td className="hidden py-1.5 pl-3 text-right lg:table-cell">{formatCount(row.likes)}</td>
                       <td className="hidden py-1.5 pl-3 text-right lg:table-cell">{formatCount(row.comments)}</td>
                       <td className="py-1.5 pl-3 text-right">{formatCount(row.clicks)}</td>
+                      <td className="py-1.5 pl-3 text-right">{formatCount(row.bioClicks)}</td>
                     </tr>
                   ))}
                 </tbody>

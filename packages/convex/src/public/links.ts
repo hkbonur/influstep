@@ -1,15 +1,27 @@
 import { v } from 'convex/values'
 import { buildAttributedUrl } from '@influstep/shared'
 import { mutation, query } from '../_generated/server'
+import { bioLinkOf, isBioLink } from '../core/episodes'
+import { platformValidator } from '../lib/validators'
 
 /**
  * Tracked links and the link in bio (ADR 0003). Unauthenticated: the worker
  * calls these for every viewer who clicks.
  */
 
-/** Counts the click and returns where to send the viewer, with UTM parameters. */
+/**
+ * Counts the click and returns where to send the viewer, with UTM parameters.
+ * `via` is the platform whose bio the viewer came from (`/p/<handle>?via=…`);
+ * it names the platform of the bio link only, since every other link was
+ * made for one platform and says so itself.
+ */
 export const click = mutation({
-  args: { slug: v.string(), referrer: v.optional(v.string()), country: v.optional(v.string()) },
+  args: {
+    slug: v.string(),
+    via: v.optional(platformValidator),
+    referrer: v.optional(v.string()),
+    country: v.optional(v.string()),
+  },
   handler: async (ctx, args): Promise<{ target: string } | null> => {
     const link = await ctx.db
       .query('links')
@@ -19,11 +31,13 @@ export const click = mutation({
     const persona = await ctx.db.get(link.personaId)
     if (!persona) return null
     const episode = link.episodeId ? await ctx.db.get(link.episodeId) : null
+    const via = isBioLink(link) ? args.via : undefined
     await ctx.db.patch(link._id, { clicks: link.clicks + 1 })
     await ctx.db.insert('linkClicks', {
       linkId: link._id,
       personaId: persona._id,
       episodeId: link.episodeId,
+      via,
       at: Date.now(),
       referrer: args.referrer,
       country: args.country,
@@ -31,7 +45,7 @@ export const click = mutation({
     return {
       target: buildAttributedUrl(link.target, {
         personaHandle: persona.handle,
-        platform: link.platform ?? 'bio',
+        platform: link.platform ?? via ?? 'bio',
         episodeSlug: episode?.slug,
         variantKey: episode?.variantKey,
       }),
@@ -50,11 +64,7 @@ export const bio = query({
     if (!persona) return null
     const workspace = await ctx.db.get(persona.workspaceId)
     if (!workspace) return null
-    const links = await ctx.db
-      .query('links')
-      .withIndex('by_persona', (q) => q.eq('personaId', persona._id))
-      .collect()
-    const bioLink = links.find((link) => link.episodeId === undefined && link.platform === undefined)
+    const bioLink = await bioLinkOf(ctx, persona._id)
     const publications = (
       await ctx.db
         .query('publications')

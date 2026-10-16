@@ -652,6 +652,20 @@ export async function createPostPublication(
   })
 }
 
+/** The link in bio's tracked link: the one a persona has for no episode and no platform. */
+export function isBioLink(link: Pick<Doc<'links'>, 'episodeId' | 'platform'>): boolean {
+  return link.episodeId === undefined && link.platform === undefined
+}
+
+/** The persona's bio link; none before one is made. */
+export async function bioLinkOf(ctx: { db: QueryCtx['db'] }, personaId: Id<'personas'>): Promise<Doc<'links'> | null> {
+  const links = await ctx.db
+    .query('links')
+    .withIndex('by_persona', (q) => q.eq('personaId', personaId))
+    .collect()
+  return links.find(isBioLink) ?? null
+}
+
 export async function createTrackedLink(
   ctx: MutationCtx,
   args: { persona: Doc<'personas'>; episode?: Doc<'episodes'>; platform?: Platform; target: string }

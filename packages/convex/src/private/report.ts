@@ -3,8 +3,9 @@ import { PLATFORMS, variantRate } from '@influstep/shared'
 import { query } from '../_generated/server'
 import { platformsOf } from '../core/formats'
 import { engagementReport } from '../core/replies'
-import { buildFunnel, countConversions, latestPerPublication, reportWindow } from '../core/report'
-import { workspaceOf } from '../core/workspace'
+import { bioLinkOf } from '../core/episodes'
+import { WHAT_WORKS_DAYS, countConversions, latestPerPublication, reportWindow, sumFunnels, whatWorks } from '../core/report'
+import { requireWorkspace, workspaceOf } from '../core/workspace'
 import { variantStatsFor } from '../core/experiments'
 
 const TREND_DAYS = 28
@@ -23,16 +24,12 @@ export const forPersona = query({
       .query('metricSnapshots')
       .withIndex('by_persona_time', (q) => q.eq('personaId', persona._id))
       .collect()
-    const clicks = await ctx.db
-      .query('linkClicks')
-      .withIndex('by_persona_time', (q) => q.eq('personaId', persona._id))
-      .collect()
     const conversions = await ctx.db
       .query('conversions')
       .withIndex('by_persona_time', (q) => q.eq('personaId', persona._id))
       .collect()
-    const funnel = buildFunnel({ snapshots, clicks: clicks.length, conversions, valuePerPaid: workspace.valuePerPaid })
-    const { trend } = await reportWindow(ctx, persona, TREND_DAYS, now)
+    // The window's funnel, the one the workspace report's row for this persona shows.
+    const { funnel, trend } = await reportWindow(ctx, persona, TREND_DAYS, now)
 
     const experiments = []
     for (const experiment of await ctx.db
@@ -78,8 +75,16 @@ export const forPersona = query({
       .slice(0, TOP_BY_VALUE)
 
     // The persona against its own platforms, in PLATFORMS order: its live publications there, their
-    // latest snapshot taken in the window, and the clicks on their tracked links. A platform the
-    // persona has but has not published on yet is a row of zeros.
+    // latest snapshot taken in the window, the clicks on their tracked links, and the clicks on the
+    // sponsor link of the bio page opened from that platform (`/p/<handle>?via=<platform>`). A platform
+    // the persona has but has not published on yet is a row of zeros.
+    const bioLink = await bioLinkOf(ctx, persona._id)
+    const bioClicks = bioLink
+      ? await ctx.db
+          .query('linkClicks')
+          .withIndex('by_link', (q) => q.eq('linkId', bioLink._id))
+          .collect()
+      : []
     const publications = await ctx.db
       .query('publications')
       .withIndex('by_persona', (q) => q.eq('personaId', persona._id))
@@ -102,6 +107,7 @@ export const forPersona = query({
         likes: ownSnapshots.reduce((sum, snapshot) => sum + snapshot.counts.likes, 0),
         comments: ownSnapshots.reduce((sum, snapshot) => sum + snapshot.counts.comments, 0),
         clicks,
+        bioClicks: bioClicks.filter((click) => click.via === platform).length,
         publications: own.length,
       })
     }
@@ -139,6 +145,48 @@ export const forPersona = query({
       // Replies on X sent in the window and what they brought back (core/replies.ts); null without X.
       engagement: await engagementReport(ctx, persona, since),
       windowDays: TREND_DAYS,
+    }
+  },
+})
+
+/**
+ * The workspace report (docs/plan.md, slice 12): every persona's funnel over
+ * the window added up, one row per persona with the same columns, the
+ * personas that bring the most value first, and what works across them.
+ * Each row is the persona report's own funnel (core `reportWindow`), so a
+ * drill-down never shows another number.
+ */
+export const forWorkspace = query({
+  args: {},
+  handler: async (ctx) => {
+    const workspace = await requireWorkspace(ctx)
+    const now = Date.now()
+    const personas = await ctx.db
+      .query('personas')
+      .withIndex('by_workspace', (q) => q.eq('workspaceId', workspace._id))
+      .collect()
+    const rows = []
+    for (const persona of personas) {
+      const { funnel } = await reportWindow(ctx, persona, TREND_DAYS, now)
+      rows.push({
+        persona: { _id: persona._id, name: persona.name, handle: persona.handle, color: persona.color, paused: persona.paused },
+        funnel,
+      })
+    }
+    rows.sort(
+      (a, b) =>
+        b.funnel.value - a.funnel.value ||
+        b.funnel.paid - a.funnel.paid ||
+        b.funnel.clicks - a.funnel.clicks ||
+        b.funnel.views - a.funnel.views
+    )
+    return {
+      currency: workspace.currency,
+      windowDays: TREND_DAYS,
+      total: sumFunnels(rows.map((row) => row.funnel)),
+      personas: rows,
+      whatWorks: await whatWorks(ctx, personas, workspace.valuePerPaid, now),
+      whatWorksDays: WHAT_WORKS_DAYS,
     }
   },
 })

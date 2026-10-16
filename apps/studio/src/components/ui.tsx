@@ -194,8 +194,9 @@ export function MockNote(props: { when: boolean; children?: React.ReactNode }) {
 export function AttributionNote() {
   return (
     <p className="max-w-[65ch] text-xs text-ash">
-      Clicks and code redemptions are exact. Demos, signups, trials and link-attributed paid come from PostHog, first touch, and undercount
-      visitors who declined cookies. A persona-wide code's redemptions count for the persona, not for an episode.
+      Views, follows, likes, comments and watch rate are the platforms' own counts. Clicks and code redemptions are exact. Demos, signups,
+      trials and link-attributed paid come from PostHog, first touch, and undercount visitors who declined cookies. A persona-wide code's
+      redemptions count for the persona, not for an episode.
     </p>
   )
 }

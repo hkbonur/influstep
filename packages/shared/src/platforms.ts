@@ -8,6 +8,24 @@ export const PLATFORM_LABELS: Record<Platform, string> = {
   x: 'X',
 }
 
+export function isPlatform(value: string): value is Platform {
+  return PLATFORMS.some((platform) => platform === value)
+}
+
+/**
+ * The link in bio's path (CONTEXT.md, "Link in bio"). Each platform's bio
+ * points at the page with its own `via`, so a click on the sponsor link
+ * there counts for that platform in the report.
+ */
+export function bioPath(handle: string, via?: Platform): string {
+  return via === undefined ? `/p/${handle}` : `/p/${handle}?via=${via}`
+}
+
+/** A tracked link's path. The bio page's sponsor link carries the platform it was opened from on to the click. */
+export function trackedLinkPath(slug: string, via?: Platform): string {
+  return via === undefined ? `/go/${slug}` : `/go/${slug}?via=${via}`
+}
+
 export const ASPECT_RATIOS = ['16:9', '9:16'] as const
 export type AspectRatio = (typeof ASPECT_RATIOS)[number]
 

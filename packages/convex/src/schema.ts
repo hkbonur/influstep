@@ -143,6 +143,10 @@ export default defineSchema({
     variantKey: v.optional(v.string()),
     signalIds: v.array(v.id('signals')),
     pillar: v.optional(v.string()),
+    // The hook style a video's script was written in (core `hookStyleOf`), stamped when the writer stores it,
+    // so the report's "what works" lists read the style it went out with, not the default in force now.
+    // Absent on a post and until the video is written.
+    hookStyle: v.optional(v.object({ key: v.string(), label: v.string() })),
     error: v.optional(v.string()),
     approvedAt: v.optional(v.number()),
     publishedAt: v.optional(v.number()),
@@ -261,6 +265,8 @@ export default defineSchema({
     linkId: v.id('links'),
     personaId: v.id('personas'),
     episodeId: v.optional(v.id('episodes')),
+    // The platform whose bio the viewer came from (`/p/<handle>?via=<platform>`), on a click of the bio link only.
+    via: v.optional(platformValidator),
     at: v.number(),
     referrer: v.optional(v.string()),
     country: v.optional(v.string()),

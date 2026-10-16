@@ -12,7 +12,6 @@ import {
   bestPublishHour,
   contradictionMinExposures,
   contradicts,
-  isPost,
   pickGoalMetric,
   pickNextExperiment,
   pillarWeights,
@@ -32,7 +31,7 @@ import type { MutationCtx, QueryCtx } from '../_generated/server'
 import { dayKey, hourAt, hourText } from './dates'
 import { dimensionProblem, grouped, rateNumber, rateText, startExperiment, variantStatsSince } from './experiments'
 import { activeEntries, supersedeOthers } from './memory'
-import { latestPerPublication } from './report'
+import { WHAT_WORKS_DAYS, latestPerPublication, measuredVideosSince, rankGroups, videoOutcomes } from './report'
 import { workspaceOf } from './workspace'
 
 /**
@@ -46,8 +45,8 @@ type Reader = { db: QueryCtx['db'] }
 type Strategy = NonNullable<Doc<'personas'>['strategy']>
 
 const DAY_MS = 24 * 60 * 60 * 1000
-/** Measured episodes of this many days score the pillars. */
-const PILLAR_WINDOW_DAYS = 28
+/** Measured episodes of this many days score the pillars: the report's "what works" window. */
+const PILLAR_WINDOW_DAYS = WHAT_WORKS_DAYS
 /** Measured publications of this many days compare the publish hours. */
 const HOUR_WINDOW_DAYS = 56
 /** Successes of this many days pick the next experiment's goal metric. */
@@ -124,29 +123,13 @@ function lowerFirst(text: string): string {
   return text.charAt(0).toLowerCase() + text.slice(1)
 }
 
-/** Views and link clicks of one episode, at the latest snapshot of each of its publications. */
-async function episodeReach(ctx: Reader, episodeId: Id<'episodes'>): Promise<{ views: number; clicks: number }> {
-  const snapshots = latestPerPublication(
-    await ctx.db
-      .query('metricSnapshots')
-      .withIndex('by_episode', (q) => q.eq('episodeId', episodeId))
-      .collect()
-  )
-  const links = await ctx.db
-    .query('links')
-    .withIndex('by_episode', (q) => q.eq('episodeId', episodeId))
-    .collect()
-  return {
-    views: snapshots.reduce((sum, snapshot) => sum + snapshot.counts.views, 0),
-    clicks: links.reduce((sum, link) => sum + link.clicks, 0),
-  }
-}
-
 /**
  * The pillar weights step: each pillar's value per measured video of the last
  * 28 days (paid conversions of its episodes, by link or by code, times the
  * workspace's value per paid), with clicks per view to break a tie, then
- * shared `shiftPillarWeights`.
+ * shared `shiftPillarWeights`. The scores are the report's "what works" by
+ * pillar for this persona alone (core/report.ts `rankGroups`), so the
+ * operator reads the numbers the review acts on.
  */
 async function reviewPillars(
   ctx: MutationCtx,
@@ -157,37 +140,24 @@ async function reviewPillars(
   now: number
 ): Promise<{ strategy: Strategy; change: Change } | null> {
   const workspace = await workspaceOf(ctx, persona)
-  const since = now - PILLAR_WINDOW_DAYS * DAY_MS
-  const measured = episodes.filter(
-    (episode) => !isPost(episode.kind) && episode.status === 'measured' && episode.publishedAt !== undefined && episode.publishedAt >= since
+  const outcomes = await videoOutcomes(
+    ctx,
+    measuredVideosSince(episodes, now - PILLAR_WINDOW_DAYS * DAY_MS),
+    conversions,
+    workspace.valuePerPaid
   )
-  const scores: (PillarScore & { episodeIds: Id<'episodes'>[]; value: number; views: number; clicks: number })[] = []
-  for (const pillar of persona.pillars) {
-    const own = measured.filter((episode) => episode.pillar === pillar)
-    if (own.length === 0) continue
-    const ids = new Set(own.map((episode) => episode._id))
-    const paid = conversions.filter(
-      (conversion) => conversion.kind === 'paid' && conversion.episodeId !== undefined && ids.has(conversion.episodeId)
-    ).length
-    let views = 0
-    let clicks = 0
-    for (const episode of own) {
-      const reach = await episodeReach(ctx, episode._id)
-      views += reach.views
-      clicks += reach.clicks
-    }
-    const value = paid * workspace.valuePerPaid
-    scores.push({
-      pillar,
-      score: value / own.length,
-      tiebreak: views === 0 ? 0 : clicks / views,
-      episodes: own.length,
-      episodeIds: own.map((episode) => episode._id),
-      value,
-      views,
-      clicks,
-    })
-  }
+  const groups = rankGroups(outcomes, (episode) =>
+    episode.pillar !== undefined && persona.pillars.includes(episode.pillar) ? { key: episode.pillar, label: episode.pillar } : null
+  )
+  const scores: (PillarScore & { episodeIds: Id<'episodes'>[]; views: number; clicks: number })[] = groups.map((group) => ({
+    pillar: group.key,
+    score: group.valuePerVideo,
+    tiebreak: group.clicksPerView,
+    episodes: group.videos,
+    episodeIds: group.episodeIds,
+    views: group.views,
+    clicks: group.clicks,
+  }))
   const before = pillarWeights(persona.pillars, strategy.pillarWeights)
   const shift = shiftPillarWeights(before, scores)
   if (!shift) return null

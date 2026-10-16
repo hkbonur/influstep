@@ -22,4 +22,17 @@ describe('bioPage', () => {
     expect(html).toContain('&lt;b&gt;x&lt;/b&gt;')
     expect(html).not.toContain('class="sponsor"')
   })
+
+  it('sends the sponsor click on with the platform whose bio linked the page', () => {
+    const html = bioPage({
+      name: 'Max',
+      handle: 'max',
+      bio: '',
+      sponsorName: 'Formstep',
+      sponsorSlug: 'max-bio',
+      episodes: [],
+      via: 'tiktok',
+    })
+    expect(html).toContain('href="/go/max-bio?via=tiktok"')
+  })
 })
