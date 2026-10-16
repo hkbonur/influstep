@@ -3,6 +3,7 @@ import {
   PLATFORM_LABELS,
   X_IMAGE_ASPECT,
   isReferenceKind,
+  presenterFace,
   type ProduceAppearance,
   canTransition,
   effectiveVariant,
@@ -489,7 +490,7 @@ async function appearanceOf(ctx: MutationCtx, persona: Doc<'personas'>): Promise
     if (url === null) throw new Error(`the file of reference ${assetId} is gone from storage`)
     references.push({ assetId: asset._id, url, kind: asset.kind })
   }
-  return { style: persona.appearance.style, references }
+  return { style: persona.appearance.style, face: presenterFace(persona.appearance), references }
 }
 
 /**

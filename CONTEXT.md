@@ -49,7 +49,7 @@ The persona's text-to-speech voice, set as "Voice id" in the persona's settings 
 _Avoid_: narrator, TTS (fine as the mechanism).
 
 **Look**:
-How a persona appears in its videos: a presenter style (cartoon presenter, photoreal presenter, or screen only, with a voice and no presenter) and the reference pictures or clips of it in its asset library, tagged reference. The avatar provider reads the look for every avatar take; until a real one exists, a take is a card with the first reference as the presenter's portrait. A persona with no presenter records the screen only on every platform. `appearance` in code.
+How a persona appears in its videos: a presenter style (cartoon presenter, photoreal presenter, Loom-style presenter, or screen only, with a voice and no presenter) and the reference pictures or clips of it in its asset library, tagged reference. A Loom-style presenter sits in a round bubble in a corner of the screen the whole video, and the operator picks whether its face is a cartoon or realistic. The first reference image is the **portrait**, the face every avatar take is animated from: uploaded, or drawn by the media provider from the operator's description of the presenter. The avatar provider (HeyGen) animates the portrait to the persona's own voice track; in mock mode a take is a card with the portrait. A persona with no presenter records the screen only on every platform, and a Loom-style one records Screen with avatar on every platform. `appearance` in code.
 _Avoid_: avatar (that is the rendered take), skin, theme.
 
 **Voice** (on X):

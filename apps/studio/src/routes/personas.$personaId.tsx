@@ -4,11 +4,14 @@ import {
   APPEARANCE_STYLES,
   APPEARANCE_STYLE_LABELS,
   DELIVERY_LABELS,
+  PRESENTER_FACES,
+  PRESENTER_FACE_LABELS,
   EPISODE_KIND_LABELS,
   bioPath,
   formatLength,
   isPost,
   type AppearanceStyle,
+  type PresenterFace,
   type MemoryKind,
   type PersonaColor,
   type PlatformFormat,
@@ -661,6 +664,7 @@ function LookLine(props: { personaId: Id<'personas'>; look: PersonaPage['look'] 
   return (
     <>
       {APPEARANCE_STYLE_LABELS[props.look.style]}
+      {props.look.style === 'loom' && props.look.face && `, ${PRESENTER_FACE_LABELS[props.look.face].toLowerCase()}`}
       {props.look.style !== 'voice_only' && (
         <>
           {' · '}
@@ -699,6 +703,7 @@ function SettingsForm(props: { persona: Doc<'personas'>; onDone: () => void }) {
   const [color, setColor] = React.useState<PersonaColor>(props.persona.color)
   const [formats, setFormats] = React.useState<PlatformFormat[]>(props.persona.formats)
   const [lookStyle, setLookStyle] = React.useState<AppearanceStyle | undefined>(props.persona.appearance?.style)
+  const [lookFace, setLookFace] = React.useState<PresenterFace>(props.persona.appearance?.face ?? 'photoreal')
   const [code, setCode] = React.useState('')
   const [offer, setOffer] = React.useState('')
   const [codeState, setCodeState] = React.useState<FormState>({ status: 'idle' })
@@ -739,6 +744,8 @@ function SettingsForm(props: { persona: Doc<'personas'>; onDone: () => void }) {
         // Left empty while the voice is being made from its description, so the made one lands.
         voiceId: text('voiceId') || undefined,
         style: lookStyle,
+        // Only a Loom-style look has a face to pick.
+        face: lookStyle === 'loom' ? lookFace : undefined,
         sponsorDial: Number(form.get('sponsorDial')),
         sponsorRampEpisodes: Number(form.get('sponsorRampEpisodes')),
         episodesPerWeek: Number(form.get('episodesPerWeek')),
@@ -810,6 +817,21 @@ function SettingsForm(props: { persona: Doc<'personas'>; onDone: () => void }) {
             ))}
           </select>
         </Field>
+        {lookStyle === 'loom' && (
+          <Field label="Presenter in the bubble">
+            <select
+              className="field"
+              value={lookFace}
+              onChange={(event) => setLookFace(PRESENTER_FACES.find((face) => face === event.target.value) ?? lookFace)}
+            >
+              {PRESENTER_FACES.map((face) => (
+                <option key={face} value={face}>
+                  {PRESENTER_FACE_LABELS[face]}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
         <CheckboxField label="Approval" name="autoApprove" defaultChecked={p.autoApprove}>
           Approve scripts automatically
         </CheckboxField>

@@ -71,7 +71,8 @@ export const status = query({
         },
         { name: 'engagement', real: 'X API recent search and reply counts', hasReal: false, needs: [] as string[] },
         { name: 'voice', real: 'ElevenLabs (runner)', hasReal: false, needs: ['ELEVENLABS_API_KEY'] },
-        { name: 'avatar', real: 'HeyGen or Higgsfield (runner)', hasReal: false, needs: [] as string[] },
+        // The runner's key (HEYGEN_API_KEY in apps/runner/.env.local); the backend cannot see it.
+        { name: 'avatar', real: 'HeyGen Avatar IV (runner)', hasReal: true, needs: [] as string[] },
         { name: 'publisher', real: 'YouTube upload (runner)', hasReal: false, needs: [] as string[] },
       ],
       // Whether it is alive is judged in the studio against its own clock (shared runnerAlive); a query would not notice it go silent.

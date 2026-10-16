@@ -31,6 +31,7 @@ import {
   personaColorValidator,
   platformFormatValidator,
   appearanceStyleValidator,
+  presenterFaceValidator,
   generationStatusValidator,
   mediaKindValidator,
   platformValidator,
@@ -93,9 +94,17 @@ export default defineSchema({
     voiceId: v.optional(v.string()),
     // What the operator said the voice should sound like, when the voice was made from words.
     voiceDescription: v.optional(v.string()),
-    // The look every avatar take reads (shared appearance.ts): the presenter style and the reference images or
-    // clips in the persona's asset library, in the operator's order. Absent on a persona made before looks existed.
-    appearance: v.optional(v.object({ style: appearanceStyleValidator, referenceAssetIds: v.array(v.id('assets')) })),
+    // The look every avatar take reads (shared appearance.ts): the presenter style, the face a Loom-style look's
+    // presenter has (the operator's pick; no other look has one), and the reference images or clips in the
+    // persona's asset library, in the operator's order. The first image is the portrait every avatar take is
+    // animated from. Absent on a persona made before looks existed.
+    appearance: v.optional(
+      v.object({
+        style: appearanceStyleValidator,
+        face: v.optional(presenterFaceValidator),
+        referenceAssetIds: v.array(v.id('assets')),
+      })
+    ),
     // 0..1 share of episodes that carry the sponsor (CONTEXT.md, "Sponsor dial").
     sponsorDial: v.number(),
     // The planner keeps the first N episodes unsponsored so the profile earns followers first.
@@ -454,6 +463,8 @@ export default defineSchema({
     error: v.optional(v.string()),
     mock: v.optional(v.boolean()),
     createdAt: v.number(),
+    // A portrait of the persona's presenter (core/media.ts `requestPortrait`): once made, it leads the look's references.
+    portrait: v.optional(v.boolean()),
     // When it last started; the day's budget counts it by this.
     startedAt: v.optional(v.number()),
     doneAt: v.optional(v.number()),

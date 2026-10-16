@@ -5,14 +5,19 @@ import {
   APPEARANCE_STYLE_HINTS,
   APPEARANCE_STYLE_LABELS,
   ONBOARDING_PERSONAS_MAX,
+  PRESENTER_FACES,
+  PRESENTER_FACE_LABELS,
   PILLARS_MAX,
   PILLARS_MIN,
   REFERENCES_MAX,
   SPONSOR_RAMP_EPISODES,
   appearanceProblem,
+  deliveryOfStyle,
   assetFileProblem,
   assetKindOf,
   firstUnusedPersonaColor,
+  generationPromptProblem,
+  hasPresenter,
   isReferenceKind,
   parsePillars,
   proposalProblems,
@@ -20,6 +25,7 @@ import {
   type AppearanceStyle,
   type PersonaColor,
   type PersonaProposal,
+  type PresenterFace,
   type PlatformFormat,
 } from '@influstep/shared'
 import { createFileRoute } from '@tanstack/react-router'
@@ -166,6 +172,10 @@ interface Draft {
   episodesPerWeek: number
   sponsorDial: number
   style: AppearanceStyle
+  /** The Loom-style presenter's face; only a Loom-style look asks for it. */
+  face: PresenterFace | null
+  /** What the presenter looks like, for the producer to draw a portrait from; empty when the references show it. */
+  portrait: string
   references: Reference[]
   voice: VoiceDraft
 }
@@ -197,6 +207,8 @@ function PersonaStep(props: {
     episodesPerWeek: 3,
     sponsorDial: 0.3,
     style: 'cartoon',
+    face: null,
+    portrait: '',
     references: [],
     voice: { kind: 'id', voiceId: '' },
   }))
@@ -214,6 +226,12 @@ function PersonaStep(props: {
   })
   const problems = proposalProblems(proposal(), takenHandles)
   const lookProblems = [
+    ...(draft.style === 'loom' && draft.face === null ? ['Pick whether the Loom-style presenter is a cartoon or realistic.'] : []),
+    ...(hasPresenter(draft.style) && draft.portrait.trim() !== ''
+      ? [generationPromptProblem(draft.portrait, props.sponsorName)]
+          .filter((problem) => problem !== null)
+          .map((problem) => `The portrait: ${problem}`)
+      : []),
     ...(draft.voice.kind === 'id' && draft.voice.voiceId.trim() === '' ? ['Give the voice id, or describe the voice.'] : []),
     ...(draft.voice.kind === 'description' ? [voiceDescriptionProblem(draft.voice.description)].filter((problem) => problem !== null) : []),
   ]
@@ -268,6 +286,8 @@ function PersonaStep(props: {
         ...proposal(),
         color: draft.color,
         style: draft.style,
+        face: draft.style === 'loom' && draft.face !== null ? draft.face : undefined,
+        portrait: hasPresenter(draft.style) && draft.portrait.trim() !== '' ? draft.portrait : undefined,
         references: await upload(),
         voice: draft.voice.kind === 'id' ? { kind: 'id', voiceId: draft.voice.voiceId.trim() } : draft.voice,
         formats: draft.formats,
@@ -575,13 +595,15 @@ function LookPart(props: {
                 name="style"
                 value={style}
                 checked={draft.style === style}
-                onChange={() =>
-                  props.onChange(
-                    style === 'voice_only'
-                      ? { style, formats: draft.formats.map((format) => ({ ...format, delivery: 'screen_only' })) }
-                      : { style }
-                  )
-                }
+                onChange={() => {
+                  // A look that records one delivery sets every platform to it; the operator can still see them on the next part.
+                  const delivery = deliveryOfStyle(style)
+                  props.onChange({
+                    style,
+                    face: style === 'loom' ? draft.face : null,
+                    ...(delivery === null ? {} : { formats: draft.formats.map((format) => ({ ...format, delivery })) }),
+                  })
+                }}
                 className="sr-only"
               />
               <span className="block font-medium">{APPEARANCE_STYLE_LABELS[style]}</span>
@@ -632,6 +654,34 @@ function LookPart(props: {
           )}
           <div aria-live="polite">{fileProblem && <ErrorLine>{fileProblem}</ErrorLine>}</div>
         </fieldset>
+      )}
+
+      {draft.style === 'loom' && (
+        <fieldset className="space-y-2">
+          <legend className="mb-2 text-xs font-medium text-graphite">The presenter in the bubble</legend>
+          <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm">
+            {PRESENTER_FACES.map((face) => (
+              <label key={face} className="flex items-center gap-2">
+                <input type="radio" name="face" checked={draft.face === face} onChange={() => props.onChange({ face })} />
+                {PRESENTER_FACE_LABELS[face]}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
+
+      {hasPresenter(draft.style) && (
+        <Field
+          label="What the presenter looks like"
+          hint={`Optional. The producer draws ${props.name}'s portrait from this, and every avatar take is animated from it. Without it, the first picture above is the portrait.`}
+        >
+          <Textarea
+            rows={2}
+            value={draft.portrait}
+            placeholder="Late thirties, short grey hair, round glasses, a dark green sweater."
+            onChange={(event) => props.onChange({ portrait: event.target.value })}
+          />
+        </Field>
       )}
 
       <fieldset className="space-y-2">

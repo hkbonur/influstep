@@ -32,12 +32,13 @@ When an agent cannot continue (n8n not signed in, YouTube permission missing), i
 | --------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
 | llm       | template writer seeded by ids             | Anthropic Messages API (`claude-opus-5-5`)                                                            | `ANTHROPIC_API_KEY`                                     |
 | voice     | silent track with the script length       | ElevenLabs text-to-speech, persona voice id                                                           | `ELEVENLABS_API_KEY`; commercial use needs a paid plan  |
-| avatar    | title card with the persona's name        | HeyGen or Higgsfield talking-head take                                                                | key; pick one once the look is chosen                   |
+| avatar    | a card with the portrait, in the look      | HeyGen Avatar IV: the look's portrait animated to the persona's ElevenLabs track, one square take per presenter beat, one over the whole track for a Loom-style video | `HEYGEN_API_KEY` on the runner; a portrait (generated or uploaded, PNG or JPEG) |
 | screen    | ffmpeg placeholder video                  | Playwright `recordVideo` against the runner's browser profile                                         | the tool signed in (checklist item)                     |
 | publisher | fake external id and URL                  | YouTube Data API (resumable upload), TikTok Content Posting, Instagram Graph (Reels)                  | OAuth apps; TikTok and Instagram need app review        |
 | signals   | fixed set of plausible stories            | Hacker News Algolia (no key), Reddit public JSON (no key), Google Trends (unofficial), YouTube search | none for HN and Reddit                                  |
 | comments  | generated comments                        | YouTube commentThreads, TikTok comment list, Instagram comments                                       | same OAuth apps                                         |
 | analytics | seeded conversions proportional to clicks | PostHog query API (HogQL on `$initial_utm_*`)                                                         | `POSTHOG_API_KEY`, `POSTHOG_PROJECT_ID`, `POSTHOG_HOST` |
+| media     | the prompt on a card in the persona's color | OpenAI gpt-image-1 for stills and portraits, Seedance on ModelArk for clips                          | `OPENAI_API_KEY`, `ARK_API_KEY`, `ARK_BASE_URL`, `SEEDANCE_MODEL` |
 
 Set `PROVIDERS_MODE=real` on the backend and the runner to switch; each adapter throws naming its missing key.
 
@@ -61,10 +62,11 @@ Written 2026-10-10 after the operator's second brief. The product in one sentenc
 14. **Home dashboard.** The calendar stays the plan for the week; above it a short overview answers the operator's three questions in one glance: what waits on me (checklist and approvals), what the personas changed on their own this week (journal), and what it earned (value per persona for the window, with the attribution caveat). One screen, no widget grid.
 15. **Generated media.** The producer can make the pictures a beat needs, not only find them in the asset library. A media provider joins the providers, with a mock and a real adapter like the others: an image model for stills (OpenAI's image API, gpt-image-1 to start) and a video model for short clips (Seedance). The writer can ask for a generated image or clip in a beat with a prompt where it would otherwise name an asset ("a run history where every execution fails in red"), inside the bible, the rules and the persona's look, and never in the sponsor demo beat, where Formstep's real screen shows. Before recording, a backend job generates it (a video model is polled until the clip is done) and saves it to the asset library as the producer's, tagged generated, with the prompt and the model in its note, so it is reused, edited and deleted like any asset, and the beat shows it as an asset shot. The operator can also generate an asset from a prompt on the Assets page, and generate one again when it misses. Nothing generated pretends to be real: a prompt for a real person, a brand other than Formstep, or a real product's screen is refused, since a screen made up by a model would mislead a viewer about how the tool works; a tool's real screen is recorded. Generation has a daily budget per persona (images and seconds of video), shown with the provider on the Providers page, and a job that would pass it fails with the budget in its error. Generated media goes out under the same AI labels as everything else. The mock provider draws a placeholder (the prompt on a card in the persona's color; a still held for a clip), so the whole path runs without keys; in real mode a missing key is an error, never a fallback to mock (ADR 0002). Which models, their limits and their prices are checked when the keys are set up, not assumed here.
 16. **Polish.** An impeccable pass (critique, then polish) over every screen against DESIGN.md, then the cleanup skill over the changed files. Smoke test in Chrome at desktop and phone width.
+17. **Avatars from a portrait.** Added 2026-10-16 when the operator chose an avatar provider. A persona with a presenter has a portrait, the first image of its look: uploaded, or drawn by the media provider (gpt-image-1, square) from the operator's description of the presenter, at onboarding or on the Assets page, in the look's face. HeyGen Avatar IV animates that portrait to the persona's own ElevenLabs track, so a persona keeps one face and one voice; OpenAI cannot animate it (its Sora video API closed on 2026-09-24). Each presenter beat is one square take of its stretch of the track, fitted to every cut, so a video with two cuts pays once. Loom-style is a look of its own: the screen the whole video with the presenter in a round bubble in the bottom-left corner, cut from one take over the whole track, which also serves its full-frame presenter beats; its face is cartoon or realistic, the operator's pick. In mock mode a take is a card with the portrait and a Loom bubble is the portrait held as a still; in real mode a video with a presenter and no portrait fails saying what to do.
 
 ### Progress
 
-Updated 2026-10-16. Slices 1 to 16 are built and committed on `main`. What is left is under "After slice 16". The operator builds slices 10 to 16 in the main session, without multi-agent workflow runs.
+Updated 2026-10-16. Slices 1 to 17 are built and committed on `main`. What is left is under "After slice 16". The operator builds slices 10 to 16 in the main session, without multi-agent workflow runs.
 
 | Slice | State | Commits |
 | ----- | ----- | ------- |
@@ -84,14 +86,13 @@ Updated 2026-10-16. Slices 1 to 16 are built and committed on `main`. What is le
 | 14 Home dashboard | done | 38d5a1e |
 | 15 Generated media | done | 2f53efe |
 | 16 Polish | done | fb0acb0, 84fd9d2 |
+| 17 Avatars from a portrait | done | SLICE17 |
 
 How a slice is built: write a short brief of the data, agent and studio changes; build; run `pnpm quality:fix`, `pnpm quality:check`, `pnpm test` and `pnpm knip`; reset, push and seed the local backend (see CLAUDE.md); smoke test every new screen and action in Chrome; commit with explicit paths.
 
 #### Open questions for the operator
 
 - Overriding an experiment that is already decided is refused today, and the "Decide myself" form shows only while the experiment runs. Should the operator be able to change a decision later?
-- Slice 13 reads the look's styles as a presenter style (cartoon, photoreal, or none: screen only with a voice), and "Loom-style with a small corner avatar" as the existing Screen with avatar delivery a presenter can use. Confirm, or make Loom-style a style of its own.
-- No avatar provider exists yet: an avatar take is a card with the first reference as the presenter's portrait, in mock and real mode alike, and says so on the card. Which provider should make real takes (HeyGen, Synthesia, D-ID, or a video model from slice 15), and should real mode refuse avatar deliveries until its key is set (ADR 0002)?
 - Slice 9 made "link first" the control of the description format experiment, so a description now puts the tracked link before the code by default (it was code first). Confirm, or make "code first" the control.
 
 #### After slice 16
@@ -115,6 +116,7 @@ Left for later, smallest first:
 - Slice 13: references are added only at onboarding; an upload on the assets page never joins the look, and the settings change only the style.
 - Slice 15: the mock writer never asks for a generated picture, so in mock mode a beat's picture only comes from the real writer or a script stored by hand. A mock clip is the mock card held as a still. The prompt rules are word lists, and the real models' own policies are the second line. The Seedance request is unverified until the keys exist. A beat's prompt cannot be edited.
 - The persona page's checklist pane runs long: every item's full why is in view. The checklist could clamp it to two lines.
+- Slice 17: the HeyGen request follows its v3 API docs (image plus our audio, square, 720p), unverified until the key exists. The bubble and the beats are cut by the estimated spoken length, like every shot, so they can drift from ElevenLabs' real timing. A mock portrait is a card, cropped in the bubble. Approving a video whose persona has a presenter and no portrait is not refused; the runner fails it in real mode. Hedra is the second adapter to try on the same personas.
 - Runner: stamp a per-process instance id on a job at claim and check it in heartbeat, complete and fail, so a quiet but alive process and the runner that reclaimed its job cannot both finish it.
 
 ### Autonomy loop

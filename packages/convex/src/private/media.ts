@@ -1,8 +1,8 @@
 import { v } from 'convex/values'
-import { MEDIA_BUDGET } from '@influstep/shared'
+import { MEDIA_BUDGET, hasPresenter } from '@influstep/shared'
 import type { Id } from '../_generated/dataModel'
 import { mutation, query } from '../_generated/server'
-import { regenerateBeat, requestGeneration, spentToday } from '../core/media'
+import { regenerateBeat, requestGeneration, requestPortrait, spentToday } from '../core/media'
 import { workspaceOf } from '../core/workspace'
 import { refusal } from '../lib/errors'
 import { mediaKindValidator } from '../lib/validators'
@@ -25,6 +25,16 @@ export const generate = mutation({
   },
 })
 
+/** A portrait of the persona's presenter, from what the operator says it looks like; it leads the look once made. */
+export const generatePortrait = mutation({
+  args: { personaId: v.id('personas'), description: v.string() },
+  handler: async (ctx, args): Promise<Id<'generations'>> => {
+    const persona = await ctx.db.get(args.personaId)
+    if (!persona) throw new Error(`persona ${args.personaId} not found`)
+    return requestPortrait(ctx, persona, args.description, Date.now())
+  },
+})
+
 /** The beat's picture missed: the producer makes it again from the same prompt. */
 export const regenerateForBeat = mutation({
   args: { episodeId: v.id('episodes'), beatIndex: v.number() },
@@ -42,6 +52,8 @@ export const regenerateAsset = mutation({
     if (!generation) throw refusal('This asset was not generated, so there is no prompt to make it again from.')
     const persona = await ctx.db.get(generation.personaId)
     if (!persona) throw new Error(`persona ${generation.personaId} not found`)
+    // A portrait missed: a new one from the same words, which leads the look once made.
+    if (generation.portrait) return requestPortrait(ctx, persona, generation.prompt, Date.now())
     return requestGeneration(ctx, persona, { kind: generation.kind, prompt: generation.prompt, now: Date.now() })
   },
 })
@@ -63,6 +75,8 @@ export const forPersona = query({
     const workspace = await workspaceOf(ctx, persona)
     return {
       sponsorName: workspace.sponsorName,
+      // A look with a presenter can be given a portrait from the page; one without has no face to draw.
+      presenter: persona.appearance !== undefined && hasPresenter(persona.appearance.style),
       spent: await spentToday(ctx, persona, now),
       budget: MEDIA_BUDGET,
       generations: open.map((generation) => ({

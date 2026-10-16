@@ -29,7 +29,12 @@ async function image(request: MediaRequest): Promise<MediaResult> {
   const response = await fetch('https://api.openai.com/v1/images/generations', {
     method: 'POST',
     headers: { Authorization: `Bearer ${requireEnv('OPENAI_API_KEY')}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: IMAGE_MODEL, prompt: request.prompt, size: '1536x1024', n: 1 }),
+    body: JSON.stringify({
+      model: IMAGE_MODEL,
+      prompt: request.prompt,
+      size: request.shape === 'square' ? '1024x1024' : '1536x1024',
+      n: 1,
+    }),
   })
   if (!response.ok) throw new Error(`OpenAI refused the image: ${response.status} ${await response.text()}`)
   const [first] = imageResponseSchema.parse(await response.json()).data

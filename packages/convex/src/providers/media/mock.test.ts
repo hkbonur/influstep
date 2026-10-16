@@ -10,9 +10,29 @@ describe('the mock media card', () => {
   })
 
   it('prints the prompt, escaped, on the persona’s color and says it is a mock', () => {
-    const svg = mockCard({ kind: 'clip', prompt: 'x', shownPrompt: 'A <red> node & a retry', personaName: 'Ada', color: 'teal' })
+    const svg = mockCard({
+      kind: 'clip',
+      prompt: 'x',
+      shownPrompt: 'A <red> node & a retry',
+      personaName: 'Ada',
+      color: 'teal',
+      shape: 'wide',
+    })
     expect(svg).toContain('oklch(55% 0.09 200)')
     expect(svg).toContain('A &lt;red&gt; node &amp; a retry')
     expect(svg).toContain('Clip for Ada · mock, generated')
+  })
+
+  it('draws a portrait square', () => {
+    const svg = mockCard({
+      kind: 'image',
+      prompt: 'x',
+      shownPrompt: 'Curly red hair',
+      personaName: 'Wren',
+      color: 'olive',
+      shape: 'square',
+    })
+    expect(svg).toContain('width="1080" height="1080"')
+    expect(svg).toContain('Portrait for Wren · mock, generated')
   })
 })

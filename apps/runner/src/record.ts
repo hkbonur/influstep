@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { chromium } from 'playwright'
-import type { AppearanceStyle, RecipeStep, Shot } from '@influstep/shared'
+import type { PresenterFace, RecipeStep, Shot } from '@influstep/shared'
 import { profileDir } from './config'
 import { ShotRecordingError } from './failure'
 
@@ -116,7 +116,8 @@ export async function renderTitleCard(args: {
 export async function renderAvatarCard(args: {
   title: string
   subtitle: string
-  style: AppearanceStyle | null
+  /** The presenter's face, which a placeholder is drawn in; none for a look not set. */
+  face: PresenterFace | null
   portrait: { file: string; contentType: string } | null
   out: string
   width: number
@@ -125,13 +126,13 @@ export async function renderAvatarCard(args: {
   await fs.mkdir(path.dirname(args.out), { recursive: true })
   const portrait = args.portrait
     ? `<img src="data:${args.portrait.contentType};base64,${(await fs.readFile(args.portrait.file)).toString('base64')}" alt="" style="width:100%;height:100%;object-fit:cover">`
-    : args.style === 'cartoon'
+    : args.face === 'cartoon'
       ? CARTOON_FACE
       : PHOTO_SILHOUETTE
   const vertical = args.height > args.width
   const size = Math.round(Math.min(args.width, args.height) * (vertical ? 0.42 : 0.36))
   const fontSize = Math.round(Math.max(args.width, args.height) / 30)
-  const ring = args.style === 'cartoon' ? `border:${Math.round(size / 28)}px solid #262626;` : ''
+  const ring = args.face === 'cartoon' ? `border:${Math.round(size / 28)}px solid #262626;` : ''
   const browser = await chromium.launch({ headless: true })
   try {
     const page = await browser.newPage({ viewport: { width: args.width, height: args.height } })
@@ -152,6 +153,34 @@ export async function renderAvatarCard(args: {
           throw new Error(`the browser could not draw the reference ${path.basename(args.out)}`, { cause: error })
         })
     }
+    await page.screenshot({ path: args.out, type: 'png' })
+    return args.out
+  } finally {
+    await browser.close()
+  }
+}
+
+/**
+ * The presenter as a square still, for a mock Loom-style bubble: the
+ * portrait, or a placeholder drawn in the face when there is none.
+ */
+export async function renderPortraitSquare(args: {
+  face: PresenterFace | null
+  portrait: { file: string; contentType: string } | null
+  out: string
+}): Promise<string> {
+  await fs.mkdir(path.dirname(args.out), { recursive: true })
+  const content = args.portrait
+    ? `<img src="data:${args.portrait.contentType};base64,${(await fs.readFile(args.portrait.file)).toString('base64')}" alt="" style="display:block;width:512px;height:512px;object-fit:cover">`
+    : args.face === 'cartoon'
+      ? CARTOON_FACE
+      : PHOTO_SILHOUETTE
+  const browser = await chromium.launch({ headless: true })
+  try {
+    const page = await browser.newPage({ viewport: { width: 512, height: 512 } })
+    await page.setContent(
+      `<!doctype html><html><body style="margin:0;background:#e5e5e5"><div style="width:512px;height:512px;overflow:hidden">${content}</div></body></html>`
+    )
     await page.screenshot({ path: args.out, type: 'png' })
     return args.out
   } finally {

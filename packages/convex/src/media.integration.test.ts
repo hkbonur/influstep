@@ -144,4 +144,23 @@ describe('generated media', () => {
     ])
     expect((await t.query(api.private.media.forPersona, { personaId: adaId }))?.spent.clipSeconds).toBe(10)
   })
+
+  it('draws a portrait for the look from the Assets page, and a new one leads the look when it is made again', async () => {
+    const t = setup()
+    const adaId = await seededAda(t)
+    await t.mutation(api.private.media.generatePortrait, { personaId: adaId, description: 'Calm, late thirties, dark bob, grey cardigan.' })
+    await t.finishAllScheduledFunctions(() => {})
+    const first = (await t.run(async (ctx) => ctx.db.get(adaId)))?.appearance?.referenceAssetIds[0]
+    if (!first) throw new Error('no portrait')
+    expect(await t.run(async (ctx) => ctx.db.get(first))).toMatchObject({
+      name: 'Portrait of Ada Automates',
+      tags: ['generated', 'reference'],
+    })
+
+    await t.mutation(api.private.media.regenerateAsset, { assetId: first })
+    await t.finishAllScheduledFunctions(() => {})
+    const references = (await t.run(async (ctx) => ctx.db.get(adaId)))?.appearance?.referenceAssetIds ?? []
+    expect(references).toHaveLength(2)
+    expect(references[1]).toBe(first)
+  })
 })

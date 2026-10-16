@@ -9,6 +9,8 @@ export interface MediaRequest {
   shownPrompt: string
   personaName: string
   color: PersonaColor
+  /** A portrait is drawn square, the shape every avatar take and every bubble crops it to; anything else is wide. */
+  shape: 'wide' | 'square'
 }
 
 /** The file the provider made, ready for storage, and the model that made it. */

@@ -199,4 +199,44 @@ describe('onboarding', () => {
     persona = await t.run(async (ctx) => ctx.db.get(personaId))
     expect(persona?.voiceId).toBe('mock-designed-nora')
   })
+
+  it('gives a Loom-style presenter the face the operator picks, and a portrait drawn from their words that leads the look', async () => {
+    const t = setup()
+    const proposal = await t.action(api.private.onboarding.propose, { niche: 'Figma for founders', audience: 'founders' })
+    const loom = {
+      ...createArgs('Figma for founders', 'founders', proposal),
+      style: 'loom' as const,
+      formats: [{ ...TIKTOK, delivery: 'screen_with_avatar' as const }],
+    }
+    await expect(t.mutation(api.private.onboarding.create, loom)).rejects.toThrow(
+      'Pick whether the Loom-style presenter is a cartoon or realistic.'
+    )
+    await expect(t.mutation(api.private.onboarding.create, { ...loom, face: 'cartoon', formats: [TIKTOK] })).rejects.toThrow(
+      /Screen with avatar/
+    )
+    await expect(t.mutation(api.private.onboarding.create, { ...loom, face: 'cartoon', portrait: 'A photo of Jane Doe' })).rejects.toThrow(
+      /The portrait: A generated picture never shows a real person/
+    )
+
+    const outcome = await t.mutation(api.private.onboarding.create, {
+      ...loom,
+      face: 'cartoon',
+      portrait: 'Short grey hair, round glasses.',
+    })
+    if (outcome.status !== 'created') throw new Error(outcome.message)
+    await t.finishAllScheduledFunctions(() => {})
+    const persona = await t.run(async (ctx) => ctx.db.get(outcome.personaId))
+    expect(persona?.appearance).toMatchObject({ style: 'loom', face: 'cartoon' })
+    const [portraitId] = persona?.appearance?.referenceAssetIds ?? []
+    if (!portraitId) throw new Error('the look has no portrait')
+    const portrait = await t.run(async (ctx) => ctx.db.get(portraitId))
+    expect(portrait).toMatchObject({
+      name: `Portrait of ${proposal.name}`,
+      tags: ['generated', 'reference'],
+      source: 'producer',
+      kind: 'image',
+    })
+    const generation = await t.run(async (ctx) => (await ctx.db.query('generations').collect()).find((row) => row.portrait))
+    expect(generation?.prompt).toBe('Short grey hair, round glasses.')
+  })
 })

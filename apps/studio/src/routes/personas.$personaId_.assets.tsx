@@ -468,18 +468,21 @@ function GenerateAgain(props: { assetId: Id<'assets'> }) {
  */
 function GenerateForm(props: { personaId: Id<'personas'>; media: MediaData }) {
   const generate = useMutation(api.private.media.generate)
-  const [kind, setKind] = React.useState<MediaKind>('image')
+  const generatePortrait = useMutation(api.private.media.generatePortrait)
+  // A portrait is an image the look leads with: every avatar take is animated from it.
+  const [kind, setKind] = React.useState<MediaKind | 'portrait'>('image')
   const [prompt, setPrompt] = React.useState('')
   const [state, setState] = React.useState<FormState>({ status: 'idle' })
   const { media } = props
   const problem = prompt.trim() === '' ? null : generationPromptProblem(prompt, media.sponsorName)
-  const spent = budgetProblem(kind, media.spent)
+  const spent = budgetProblem(kind === 'portrait' ? 'image' : kind, media.spent)
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
     if (state.status === 'saving' || problem !== null || prompt.trim() === '') return
     setState({ status: 'saving' })
     try {
-      await generate({ personaId: props.personaId, kind, prompt })
+      if (kind === 'portrait') await generatePortrait({ personaId: props.personaId, description: prompt })
+      else await generate({ personaId: props.personaId, kind, prompt })
       setPrompt('')
       setState({ status: 'idle' })
     } catch (caught) {
@@ -492,15 +495,25 @@ function GenerateForm(props: { personaId: Id<'personas'>; media: MediaData }) {
       <form onSubmit={(event) => void submit(event)} className="card grid gap-3">
         <div className="grid gap-3 sm:grid-cols-[9rem_1fr]">
           <Field label="Kind">
-            <select className="field" value={kind} onChange={(event) => setKind(event.target.value === 'clip' ? 'clip' : 'image')}>
+            <select
+              className="field"
+              value={kind}
+              onChange={(event) =>
+                setKind(event.target.value === 'clip' ? 'clip' : event.target.value === 'portrait' ? 'portrait' : 'image')
+              }
+            >
               {MEDIA_KINDS.map((candidate) => (
                 <option key={candidate} value={candidate}>
                   {candidate === 'clip' ? `Clip, ${CLIP_SECONDS} s` : MEDIA_KIND_LABELS[candidate]}
                 </option>
               ))}
+              {media.presenter && <option value="portrait">Portrait</option>}
             </select>
           </Field>
-          <Field label="What it shows">
+          <Field
+            label={kind === 'portrait' ? 'What the presenter looks like' : 'What it shows'}
+            hint={kind === 'portrait' ? 'The portrait leads the look: every avatar take from now on is animated from it.' : undefined}
+          >
             <Textarea
               rows={2}
               value={prompt}

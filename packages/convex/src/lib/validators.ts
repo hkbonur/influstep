@@ -28,6 +28,7 @@ import {
   OPERATOR_MEMORY_KINDS,
   PERSONA_COLORS,
   PLATFORMS,
+  PRESENTER_FACES,
   POST_INTENTS,
   POST_KINDS,
   POST_LENGTHS,
@@ -52,6 +53,7 @@ export const episodeStatusValidator = literals(EPISODE_STATUSES)
 export const sponsorSegmentValidator = literals(SPONSOR_SEGMENTS)
 export const platformValidator = literals(PLATFORMS)
 export const appearanceStyleValidator = literals(APPEARANCE_STYLES)
+export const presenterFaceValidator = literals(PRESENTER_FACES)
 export const mediaKindValidator = literals(MEDIA_KINDS)
 export const generationStatusValidator = literals(GENERATION_STATUSES)
 export const aspectRatioValidator = literals(ASPECT_RATIOS)

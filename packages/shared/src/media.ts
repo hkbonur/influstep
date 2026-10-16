@@ -1,4 +1,4 @@
-import type { AppearanceStyle } from './appearance'
+import { presenterFace, type Appearance } from './appearance'
 import type { PersonaColor } from './persona-colors'
 
 /**
@@ -118,14 +118,32 @@ export function budgetProblem(kind: MediaKind, spent: MediaSpend): string | null
  * persona's look, and never text, logos or a real person, whatever the words
  * ask. A persona with no presenter gets clean illustrations.
  */
-export function providerPrompt(prompt: string, style: AppearanceStyle | null): string {
+export function providerPrompt(prompt: string, appearance: Appearance | null): string {
+  const face = appearance === null ? null : presenterFace(appearance)
   const look =
-    style === 'photoreal'
+    face === 'photoreal'
       ? 'A realistic photograph.'
-      : style === 'cartoon'
+      : face === 'cartoon'
         ? 'A bold, friendly cartoon illustration.'
         : 'A clean, flat illustration.'
   return `${prompt.trim().replace(/[.!?]+$/, '')}. ${look} No words, no logos, no real people.`
+}
+
+/**
+ * The prompt for a persona's portrait (docs/plan.md, slice 17): the face
+ * every avatar take is animated from, from the operator's description of it,
+ * drawn in the look's face and framed the way the look needs (a Loom-style
+ * face is a webcam's). Always a made-up person.
+ */
+export function portraitPrompt(description: string, appearance: Appearance): string {
+  const face = presenterFace(appearance)
+  if (face === null) throw new Error('a look with no presenter has no portrait')
+  const kind = face === 'photoreal' ? 'A realistic photograph' : 'A bold, friendly cartoon portrait'
+  const frame =
+    appearance.style === 'loom'
+      ? 'framed like a webcam: a made-up presenter at a desk, head and shoulders, looking into the camera, soft home-office light'
+      : 'of a made-up presenter, head and shoulders, looking into the camera, soft even light, plain light background'
+  return `${kind} ${frame}. ${description.trim().replace(/[.!?]+$/, '')}. No words, no logos, not a real person.`
 }
 
 /**

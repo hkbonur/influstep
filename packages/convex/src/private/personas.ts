@@ -1,5 +1,5 @@
 import { v } from 'convex/values'
-import { appearanceProblem, waitsOnOperator } from '@influstep/shared'
+import { appearanceFaceProblem, appearanceProblem, waitsOnOperator } from '@influstep/shared'
 import { internal } from '../_generated/api'
 import type { Doc } from '../_generated/dataModel'
 import { mutation, query } from '../_generated/server'
@@ -19,7 +19,7 @@ import { createPersona } from '../core/personas'
 import { reportWindow } from '../core/report'
 import { requireWorkspace, workspaceOf } from '../core/workspace'
 import { enqueueJob } from '../jobs/queue'
-import { appearanceStyleValidator, personaColorValidator, platformFormatValidator } from '../lib/validators'
+import { appearanceStyleValidator, personaColorValidator, platformFormatValidator, presenterFaceValidator } from '../lib/validators'
 import { refusal } from '../lib/errors'
 
 const personaFields = {
@@ -170,7 +170,7 @@ export const get = query({
         currency: window.currency,
         mock: window.funnel.mock,
       },
-      look: persona.appearance ? { style: persona.appearance.style, references } : null,
+      look: persona.appearance ? { style: persona.appearance.style, face: persona.appearance.face ?? null, references } : null,
       // The newest job that made the voice from the description; null when the operator gave an id.
       voiceJob: voiceJob ? { _id: voiceJob._id, status: voiceJob.status, error: voiceJob.error ?? null } : null,
       // The voice of the X account the persona took over, and how much of its history is imported (docs/plan.md, slice 5).
@@ -205,14 +205,20 @@ export const create = mutation({
  */
 export const update = mutation({
   // `style` is the look's presenter style; the look's references are the persona's assets tagged as such.
-  args: { personaId: v.id('personas'), style: v.optional(appearanceStyleValidator), ...personaFields },
+  args: {
+    personaId: v.id('personas'),
+    style: v.optional(appearanceStyleValidator),
+    face: v.optional(presenterFaceValidator),
+    ...personaFields,
+  },
   handler: async (ctx, args) => {
-    const { personaId, style, voiceId, ...fields } = args
+    const { personaId, style, face, voiceId, ...fields } = args
     assertFormats(fields.formats)
     const persona = await ctx.db.get(personaId)
     if (!persona) throw new Error('persona not found')
-    const appearance = style === undefined ? persona.appearance : { style, referenceAssetIds: persona.appearance?.referenceAssetIds ?? [] }
-    const mismatch = appearance ? appearanceProblem(appearance.style, fields.formats) : null
+    const appearance =
+      style === undefined ? persona.appearance : { style, face, referenceAssetIds: persona.appearance?.referenceAssetIds ?? [] }
+    const mismatch = appearance ? (appearanceProblem(appearance.style, fields.formats) ?? appearanceFaceProblem(appearance)) : null
     if (mismatch) throw refusal(mismatch)
     const before = platformsOf(persona)
     const next = new Set(fields.formats.map((format) => format.platform))

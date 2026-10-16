@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { PLACEABLE_ASSET_KINDS } from './assets'
-import { APPEARANCE_STYLES, REFERENCE_KINDS } from './appearance'
+import { APPEARANCE_STYLES, PRESENTER_FACES, REFERENCE_KINDS } from './appearance'
 import { ASPECT_RATIOS, PLATFORMS } from './platforms'
 
 export const AGENT_ROLES = ['researcher', 'writer', 'producer', 'publisher', 'analyst'] as const
@@ -142,6 +142,8 @@ export const producePayloadSchema = z.discriminatedUnion('kind', [
     appearance: z
       .object({
         style: z.enum(APPEARANCE_STYLES),
+        // The presenter's face (shared `presenterFace`); null for a look with no presenter.
+        face: z.enum(PRESENTER_FACES).nullable(),
         // Where the runner downloads each reference, in the order the operator gave them.
         references: z.array(z.object({ assetId: z.string(), url: z.string(), kind: z.enum(REFERENCE_KINDS) })),
       })

@@ -3,12 +3,15 @@ import {
   REFERENCES_MAX,
   REFERENCE_TAG,
   SPONSOR_RAMP_EPISODES,
+  appearanceFaceProblem,
   appearanceProblem,
   assetFileProblem,
   assetKindOf,
   assetNameFromFile,
   freeHandle,
+  generationPromptProblem,
   handleFromName,
+  hasPresenter,
   isReferenceKind,
   proposalProblems,
   voiceDescriptionProblem,
@@ -18,11 +21,12 @@ import { internal } from '../_generated/api'
 import type { Doc, Id } from '../_generated/dataModel'
 import { action, internalQuery, mutation, query, type MutationCtx, type QueryCtx } from '../_generated/server'
 import { addUploadedAsset } from '../core/assets'
+import { requestPortrait } from '../core/media'
 import { createPersona, planFirstWeeks } from '../core/personas'
 import { FIRST_WORKSPACE, ensureWorkspace } from '../core/workspace'
 import { refusal } from '../lib/errors'
 import { enqueueJob } from '../jobs/queue'
-import { appearanceStyleValidator, personaColorValidator, platformFormatValidator } from '../lib/validators'
+import { appearanceStyleValidator, personaColorValidator, platformFormatValidator, presenterFaceValidator } from '../lib/validators'
 import { llmProvider } from '../providers/llm'
 
 /**
@@ -117,6 +121,10 @@ export const create = mutation({
     bio: v.string(),
     bible: v.string(),
     style: appearanceStyleValidator,
+    // The Loom-style presenter's face, the operator's pick; no other look has one.
+    face: v.optional(presenterFaceValidator),
+    // What the presenter looks like, for the producer to draw a portrait from; none when the references show it.
+    portrait: v.optional(v.string()),
     references: v.array(v.object({ storageId: v.id('_storage'), fileName: v.string() })),
     voice: v.union(
       v.object({ kind: v.literal('id'), voiceId: v.string() }),
@@ -128,15 +136,21 @@ export const create = mutation({
     timezone: v.string(),
   },
   handler: async (ctx, args): Promise<CreateOutcome> => {
-    const { appUrl, style, references, voice, ...fields } = args
+    const { appUrl, style, face, portrait, references, voice, ...fields } = args
     const taken = (await ctx.db.query('personas').collect()).map((persona) => persona.handle)
     const problems = proposalProblems(fields, taken)
     if (problems.length > 0) throw refusal(problems.join(' '))
     if (!(fields.sponsorDial >= 0 && fields.sponsorDial <= 1)) throw refusal('The sponsor dial is between 0 and 1.')
     if (!(Number.isInteger(fields.episodesPerWeek) && fields.episodesPerWeek >= 1 && fields.episodesPerWeek <= 7))
       throw refusal('A persona publishes 1 to 7 videos a week.')
-    const mismatch = appearanceProblem(style, fields.formats)
+    const mismatch = appearanceProblem(style, fields.formats) ?? appearanceFaceProblem({ style, face })
     if (mismatch) throw refusal(mismatch)
+    const portraitDescription = portrait?.trim() || undefined
+    if (portraitDescription !== undefined) {
+      if (!hasPresenter(style)) throw new Error('a persona with no presenter takes no portrait')
+      const portraitProblem = generationPromptProblem(portraitDescription, (await rosterOf(ctx)).sponsorName)
+      if (portraitProblem) throw refusal(`The portrait: ${portraitProblem}`)
+    }
     if (style === 'voice_only' && references.length > 0) throw new Error('a persona with no presenter takes no references')
     if (references.length > REFERENCES_MAX) throw refusal(`Give at most ${REFERENCES_MAX} references.`)
     const voiceProblem =
@@ -181,7 +195,12 @@ export const create = mutation({
       if (outcome.status === 'refused') throw new Error(`reference ${reference.fileName} was refused after its check: ${outcome.message}`)
       referenceAssetIds.push(outcome.assetId)
     }
-    await ctx.db.patch(persona._id, { appearance: { style, referenceAssetIds } })
+    await ctx.db.patch(persona._id, { appearance: { style, face, referenceAssetIds } })
+    if (portraitDescription !== undefined) {
+      const withLook = await ctx.db.get(persona._id)
+      if (!withLook) throw new Error('persona vanished')
+      await requestPortrait(ctx, withLook, portraitDescription, now)
+    }
     if (voice.kind === 'description') {
       await enqueueJob(ctx, {
         kind: 'design_voice',

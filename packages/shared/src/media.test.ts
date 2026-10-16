@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CLIP_SECONDS, MEDIA_BUDGET, budgetProblem, generationPromptProblem, providerPrompt } from './media'
+import { CLIP_SECONDS, MEDIA_BUDGET, budgetProblem, generationPromptProblem, portraitPrompt, providerPrompt } from './media'
 
 describe('generationPromptProblem', () => {
   it('lets a made-up picture through', () => {
@@ -38,9 +38,22 @@ describe('budgetProblem', () => {
 
 describe('providerPrompt', () => {
   it('puts the prompt in the persona’s look and rules out words, logos and real people', () => {
-    expect(providerPrompt('A red node.', 'cartoon')).toBe(
+    expect(providerPrompt('A red node.', { style: 'cartoon' })).toBe(
       'A red node. A bold, friendly cartoon illustration. No words, no logos, no real people.'
     )
     expect(providerPrompt('A red node', null)).toBe('A red node. A clean, flat illustration. No words, no logos, no real people.')
+    expect(providerPrompt('A red node', { style: 'loom', face: 'photoreal' })).toBe(
+      'A red node. A realistic photograph. No words, no logos, no real people.'
+    )
+  })
+})
+
+describe('portraitPrompt', () => {
+  it('draws the face the look has, framed like a webcam for a Loom-style look', () => {
+    expect(portraitPrompt('Short grey hair, round glasses.', { style: 'loom', face: 'cartoon' })).toBe(
+      'A bold, friendly cartoon portrait framed like a webcam: a made-up presenter at a desk, head and shoulders, looking into the camera, soft home-office light. Short grey hair, round glasses. No words, no logos, not a real person.'
+    )
+    expect(portraitPrompt('Freckles', { style: 'photoreal' })).toMatch(/^A realistic photograph of a made-up presenter/)
+    expect(() => portraitPrompt('x', { style: 'voice_only' })).toThrow('no presenter')
   })
 })

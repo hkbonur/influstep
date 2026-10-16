@@ -1385,7 +1385,7 @@ export const write = internalMutation({
             episodeId,
             personaHandle: ada.handle,
             voiceId: ADA_VOICE_ID,
-            appearance: { style: 'photoreal', references: [] },
+            appearance: { style: 'photoreal', face: 'photoreal', references: [] },
             shots: episode.shots,
             aspects: adaAspects,
             assets: [],
