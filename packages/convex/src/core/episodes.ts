@@ -2,6 +2,8 @@ import {
   EPISODE_STATUS_LABELS,
   PLATFORM_LABELS,
   X_IMAGE_ASPECT,
+  isReferenceKind,
+  type ProduceAppearance,
   canTransition,
   effectiveVariant,
   formatAspects,
@@ -413,6 +415,7 @@ export async function approveEpisode(ctx: MutationCtx, episodeId: Id<'episodes'>
   const persona = await ctx.db.get(episode.personaId)
   if (!persona) throw new Error(`persona ${episode.personaId} not found`)
   const workspace = await workspaceOf(ctx, persona)
+  if (episode.kind === 'video' && persona.voiceId === undefined) throw refusal(voiceMissing(persona))
 
   await ctx.db.patch(episodeId, { approvedAt: Date.now() })
   if (episode.kind === 'text' || episode.kind === 'thread') {
@@ -461,6 +464,31 @@ export async function approveEpisode(ctx: MutationCtx, episodeId: Id<'episodes'>
   await startProduction(ctx, episode, persona)
 }
 
+/** Why a video of a persona whose voice is still being made cannot be recorded yet. */
+export function voiceMissing(persona: Pick<Doc<'personas'>, 'name'>): string {
+  return `${persona.name} has no voice yet: the producer is still making it from your description. Approve once it is made, or give a voice id in the settings.`
+}
+
+/**
+ * The look an avatar take reads (shared appearance.ts), with where the runner
+ * downloads each reference. A reference is an asset of the persona; deleting
+ * one takes it off the look (core/assets.ts `removeAsset`), so a missing one is a bug.
+ */
+async function appearanceOf(ctx: MutationCtx, persona: Doc<'personas'>): Promise<ProduceAppearance> {
+  if (!persona.appearance) return null
+  const references = []
+  for (const assetId of persona.appearance.referenceAssetIds) {
+    const asset = await ctx.db.get(assetId)
+    if (!asset) throw new Error(`reference ${assetId} of persona ${persona._id} not found`)
+    if (!isReferenceKind(asset.kind))
+      throw new Error(`reference ${assetId} of persona ${persona._id} is ${asset.kind}, which no look takes`)
+    const url = await ctx.storage.getUrl(asset.storageId)
+    if (url === null) throw new Error(`the file of reference ${assetId} is gone from storage`)
+    references.push({ assetId: asset._id, url, kind: asset.kind })
+  }
+  return { style: persona.appearance.style, references }
+}
+
 /**
  * The producer renders a video once per aspect its platforms publish, as
  * fixed when it was scripted, and an image post's one title card. A text post
@@ -475,11 +503,13 @@ async function producePayload(ctx: MutationCtx, episode: Doc<'episodes'>, person
   switch (episode.kind) {
     case 'video': {
       if (!episode.format) throw new Error(`episode ${episode._id} has no format: it cannot be produced before it is scripted`)
+      if (persona.voiceId === undefined) throw refusal(voiceMissing(persona))
       return {
         kind: 'video',
         episodeId: episode._id,
         personaHandle: persona.handle,
         voiceId: persona.voiceId,
+        appearance: await appearanceOf(ctx, persona),
         shots: episode.shots,
         aspects: formatAspects(episode.format),
         assets: await shotAssets(ctx, episode.shots),

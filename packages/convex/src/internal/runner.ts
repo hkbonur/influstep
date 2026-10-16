@@ -2,12 +2,14 @@ import { v } from 'convex/values'
 import {
   RUNNER_STALE_MS,
   X_POST_LIMIT,
+  designVoicePayloadSchema,
+  designVoiceResultSchema,
   isPost,
+  postReplyPayloadSchema,
   produceResultSchema,
   publishResultSchema,
   xLength,
   type AspectRatio,
-  postReplyPayloadSchema,
   type PublishPayload,
   type RunnerJob,
 } from '@influstep/shared'
@@ -96,6 +98,7 @@ function toRunnerJob(job: Doc<'jobs'>): RunnerJob {
   if (job.kind === 'publish') return { id: job._id, kind: 'publish', payload: job.payload }
   if (job.kind === 'open_browser') return { id: job._id, kind: 'open_browser', payload: job.payload }
   if (job.kind === 'post_reply') return { id: job._id, kind: 'post_reply', payload: job.payload }
+  if (job.kind === 'design_voice') return { id: job._id, kind: 'design_voice', payload: job.payload }
   throw new Error(`job kind ${job.kind} does not run on the runner`)
 }
 
@@ -141,6 +144,14 @@ export const complete = internalMutation({
     } else if (job.kind === 'post_reply') {
       const result = publishResultSchema.parse(args.result)
       await completeReply(ctx, postReplyPayloadSchema.parse(job.payload).replyId as Id<'replies'>, result)
+    } else if (job.kind === 'design_voice') {
+      const result = designVoiceResultSchema.parse(args.result)
+      const personaId = designVoicePayloadSchema.parse(job.payload).personaId as Id<'personas'>
+      const persona = await ctx.db.get(personaId)
+      if (!persona) throw new Error(`persona ${personaId} of job ${job._id} not found`)
+      // The operator may have given a voice id in the settings meanwhile; theirs stays, and the made voice is only recorded on the job.
+      if (persona.voiceId === undefined) await ctx.db.patch(persona._id, { voiceId: result.voiceId })
+      else stored = { skipped: 'the persona has a voice id', ...result }
     }
     await markDone(ctx, args.jobId, stored)
     await clearRunnerJob(ctx, args.jobId)

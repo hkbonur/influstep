@@ -211,6 +211,13 @@ export async function removeAsset(ctx: MutationCtx, assetId: Id<'assets'>): Prom
       `"${showing.title}" shows this ${ASSET_KIND_LABELS[asset.kind].toLowerCase()}; it stays until that episode is measured or killed.`
     )
   await ctx.db.delete(asset._id)
+  // A reference of the persona's look goes off the look with it.
+  const persona = await ctx.db.get(asset.personaId)
+  if (persona?.appearance?.referenceAssetIds.includes(asset._id)) {
+    await ctx.db.patch(persona._id, {
+      appearance: { ...persona.appearance, referenceAssetIds: persona.appearance.referenceAssetIds.filter((id) => id !== asset._id) },
+    })
+  }
   const episode = asset.episodeId === undefined ? null : await ctx.db.get(asset.episodeId)
   if (episode?.renders.some((render) => render.storageId === asset.storageId)) return
   await ctx.storage.delete(asset.storageId)

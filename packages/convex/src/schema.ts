@@ -30,6 +30,7 @@ import {
   metricKeyValidator,
   personaColorValidator,
   platformFormatValidator,
+  appearanceStyleValidator,
   platformValidator,
   postIntentValidator,
   postLengthValidator,
@@ -85,7 +86,14 @@ export default defineSchema({
     pillars: v.array(v.string()),
     // One format per platform the persona publishes on; the list is the persona's platforms (core/formats.ts).
     formats: v.array(platformFormatValidator),
-    voiceId: v.string(),
+    // The ElevenLabs voice the producer speaks with. Absent while the voice provider makes it from
+    // `voiceDescription` (a design_voice job); a video cannot be approved for recording until it is set.
+    voiceId: v.optional(v.string()),
+    // What the operator said the voice should sound like, when the voice was made from words.
+    voiceDescription: v.optional(v.string()),
+    // The look every avatar take reads (shared appearance.ts): the presenter style and the reference images or
+    // clips in the persona's asset library, in the operator's order. Absent on a persona made before looks existed.
+    appearance: v.optional(v.object({ style: appearanceStyleValidator, referenceAssetIds: v.array(v.id('assets')) })),
     // 0..1 share of episodes that carry the sponsor (CONTEXT.md, "Sponsor dial").
     sponsorDial: v.number(),
     // The planner keeps the first N episodes unsponsored so the profile earns followers first.

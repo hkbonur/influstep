@@ -1,4 +1,6 @@
 import fs from 'node:fs/promises'
+import type { DesignVoicePayload, DesignVoiceResult } from '@influstep/shared'
+import { z } from 'zod'
 import { ffmpeg } from './ffmpeg'
 import { providersMode, requireEnv } from './config'
 
@@ -40,4 +42,48 @@ export async function makeVoice(args: { text: string; voiceId: string; out: stri
   await fs.writeFile(args.out, Buffer.from(await response.arrayBuffer()))
   const { durationOf } = await import('./ffmpeg')
   return { file: args.out, seconds: await durationOf(args.out), mock: false }
+}
+
+const designResponseSchema = z.object({ previews: z.array(z.object({ generated_voice_id: z.string() })).min(1) })
+const createResponseSchema = z.object({ voice_id: z.string().min(1) })
+
+/** A mock voice id named after the persona, so a seeded or test run reads the same id twice. */
+export function mockVoiceId(personaName: string): string {
+  const slug = personaName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return `mock-voice-${slug || 'persona'}`
+}
+
+/**
+ * A spoken voice made from the operator's description (docs/plan.md, slice
+ * 13). Mock: an id named after the persona; the mock voice track is silent
+ * anyway. Real: ElevenLabs Voice Design makes previews from the description,
+ * and the first preview is saved as a voice of the account under the
+ * persona's name.
+ */
+export async function designVoice(payload: DesignVoicePayload): Promise<DesignVoiceResult> {
+  if (providersMode() === 'mock') return { voiceId: mockVoiceId(payload.personaName), mock: true }
+  const apiKey = requireEnv('ELEVENLABS_API_KEY')
+  const headers = { 'xi-api-key': apiKey, 'Content-Type': 'application/json' }
+  const designed = await fetch('https://api.elevenlabs.io/v1/text-to-voice/design', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ voice_description: payload.description, auto_generate_text: true }),
+  })
+  if (!designed.ok) throw new Error(`ElevenLabs refused the voice design: ${designed.status} ${await designed.text()}`)
+  const [preview] = designResponseSchema.parse(await designed.json()).previews
+  if (!preview) throw new Error('ElevenLabs returned no voice preview')
+  const created = await fetch('https://api.elevenlabs.io/v1/text-to-voice', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      voice_name: payload.personaName,
+      voice_description: payload.description,
+      generated_voice_id: preview.generated_voice_id,
+    }),
+  })
+  if (!created.ok) throw new Error(`ElevenLabs refused to save the voice: ${created.status} ${await created.text()}`)
+  return { voiceId: createResponseSchema.parse(await created.json()).voice_id, mock: false }
 }

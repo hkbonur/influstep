@@ -1,5 +1,5 @@
 import { v } from 'convex/values'
-import { waitsOnOperator } from '@influstep/shared'
+import { appearanceProblem, waitsOnOperator } from '@influstep/shared'
 import { internal } from '../_generated/api'
 import type { Doc } from '../_generated/dataModel'
 import { mutation, query } from '../_generated/server'
@@ -18,7 +18,7 @@ import { replySummary } from '../core/replies'
 import { createPersona } from '../core/personas'
 import { requireWorkspace, workspaceOf } from '../core/workspace'
 import { enqueueJob } from '../jobs/queue'
-import { personaColorValidator, platformFormatValidator } from '../lib/validators'
+import { appearanceStyleValidator, personaColorValidator, platformFormatValidator } from '../lib/validators'
 import { refusal } from '../lib/errors'
 
 const personaFields = {
@@ -33,7 +33,8 @@ const personaFields = {
   pillars: v.array(v.string()),
   // One format per platform the persona publishes on (core/formats.ts checks the list).
   formats: v.array(platformFormatValidator),
-  voiceId: v.string(),
+  // Left out by the settings form when the persona's voice is still being made, which keeps it as it is.
+  voiceId: v.optional(v.string()),
   sponsorDial: v.number(),
   sponsorRampEpisodes: v.number(),
   episodesPerWeek: v.number(),
@@ -141,8 +142,23 @@ export const get = query({
       episodeId: code.episodeId,
       episodeTitle: code.episodeId ? (episodes.find((episode) => episode._id === code.episodeId)?.title ?? null) : null,
     }))
+    // The look's references, in the operator's order, and where the spoken voice stands when it is made from words.
+    const references = []
+    for (const assetId of persona.appearance?.referenceAssetIds ?? []) {
+      const asset = await ctx.db.get(assetId)
+      if (!asset) throw new Error(`reference ${assetId} of persona ${persona._id} not found`)
+      references.push({ _id: asset._id, name: asset.name, kind: asset.kind })
+    }
+    const voiceJob = await ctx.db
+      .query('jobs')
+      .withIndex('by_persona_kind', (q) => q.eq('personaId', persona._id).eq('kind', 'design_voice'))
+      .order('desc')
+      .first()
     return {
       persona,
+      look: persona.appearance ? { style: persona.appearance.style, references } : null,
+      // The newest job that made the voice from the description; null when the operator gave an id.
+      voiceJob: voiceJob ? { _id: voiceJob._id, status: voiceJob.status, error: voiceJob.error ?? null } : null,
       // The voice of the X account the persona took over, and how much of its history is imported (docs/plan.md, slice 5).
       voice: persona.voice ?? null,
       account: await accountSummary(ctx, persona._id),
@@ -174,16 +190,20 @@ export const create = mutation({
  * items (core/checklist.ts).
  */
 export const update = mutation({
-  args: { personaId: v.id('personas'), ...personaFields },
+  // `style` is the look's presenter style; the look's references are the persona's assets tagged as such.
+  args: { personaId: v.id('personas'), style: v.optional(appearanceStyleValidator), ...personaFields },
   handler: async (ctx, args) => {
-    const { personaId, ...fields } = args
+    const { personaId, style, voiceId, ...fields } = args
     assertFormats(fields.formats)
     const persona = await ctx.db.get(personaId)
     if (!persona) throw new Error('persona not found')
+    const appearance = style === undefined ? persona.appearance : { style, referenceAssetIds: persona.appearance?.referenceAssetIds ?? [] }
+    const mismatch = appearance ? appearanceProblem(appearance.style, fields.formats) : null
+    if (mismatch) throw refusal(mismatch)
     const before = platformsOf(persona)
     const next = new Set(fields.formats.map((format) => format.platform))
     const dropped = before.filter((platform) => !next.has(platform))
-    await ctx.db.patch(personaId, fields)
+    await ctx.db.patch(personaId, { ...fields, appearance, ...(voiceId === undefined ? {} : { voiceId }) })
     await reconcilePlatformDrop(ctx, personaId, dropped)
     if (next.has('x') && !before.includes('x')) {
       const saved = await ctx.db.get(personaId)

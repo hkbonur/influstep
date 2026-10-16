@@ -79,6 +79,8 @@ const SEEDED_CLOSINGS = {
   comment: 'Which part of this trips you up? Tell me in the comments.',
 } as const
 
+const ADA_VOICE_ID = 'mock-ada'
+
 /** Ada posts everywhere, on the defaults, with a shorter YouTube tutorial and a slightly longer TikTok. On X she also writes posts. */
 const ADA_FORMATS: PlatformFormat[] = [
   { platform: 'youtube', ...DEFAULT_FORMATS.youtube, lengthSec: 240 },
@@ -556,7 +558,9 @@ export const write = internalMutation({
         'Ada speaks in short sentences and shows the screen before she explains it. She never says "game changer" or "insane". She admits when a tool is the wrong choice. She calls viewers "you", never "guys".',
       pillars: ['n8n tutorials', 'AI agent workflows', 'Automation fails'],
       formats: ADA_FORMATS,
-      voiceId: 'mock-ada',
+      voiceId: ADA_VOICE_ID,
+      // A realistic presenter in the corner of her screen recordings; no reference yet, so the operator can add one.
+      appearance: { style: 'photoreal', referenceAssetIds: [] },
       sponsorDial: 0.4,
       sponsorRampEpisodes: 10,
       episodesPerWeek: 5,
@@ -581,6 +585,7 @@ export const write = internalMutation({
       pillars: ['Claude Code recipes', 'MCP servers', 'Agents in production'],
       formats: MAX_FORMATS,
       voiceId: 'mock-max',
+      appearance: { style: 'cartoon', referenceAssetIds: [] },
       sponsorDial: 0.3,
       sponsorRampEpisodes: 10,
       episodesPerWeek: 3,
@@ -1379,7 +1384,8 @@ export const write = internalMutation({
             kind: 'video',
             episodeId,
             personaHandle: ada.handle,
-            voiceId: ada.voiceId,
+            voiceId: ADA_VOICE_ID,
+            appearance: { style: 'photoreal', references: [] },
             shots: episode.shots,
             aspects: adaAspects,
             assets: [],

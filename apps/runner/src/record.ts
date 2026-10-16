@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { chromium } from 'playwright'
-import type { RecipeStep, Shot } from '@influstep/shared'
+import type { AppearanceStyle, RecipeStep, Shot } from '@influstep/shared'
 import { profileDir } from './config'
 import { ShotRecordingError } from './failure'
 
@@ -105,6 +105,63 @@ export async function renderTitleCard(args: {
     await browser.close()
   }
 }
+
+/**
+ * A placeholder avatar take, until an avatar provider exists: the presenter's
+ * portrait beside the line it speaks. The portrait is the persona's first
+ * reference image, cropped to a circle; without one it is drawn in the look's
+ * style, a cartoon face or a photo silhouette. Never the persona's identity
+ * color: that is the studio's, not the viewer's.
+ */
+export async function renderAvatarCard(args: {
+  title: string
+  subtitle: string
+  style: AppearanceStyle | null
+  portrait: { file: string; contentType: string } | null
+  out: string
+  width: number
+  height: number
+}): Promise<string> {
+  await fs.mkdir(path.dirname(args.out), { recursive: true })
+  const portrait = args.portrait
+    ? `<img src="data:${args.portrait.contentType};base64,${(await fs.readFile(args.portrait.file)).toString('base64')}" alt="" style="width:100%;height:100%;object-fit:cover">`
+    : args.style === 'cartoon'
+      ? CARTOON_FACE
+      : PHOTO_SILHOUETTE
+  const vertical = args.height > args.width
+  const size = Math.round(Math.min(args.width, args.height) * (vertical ? 0.42 : 0.36))
+  const fontSize = Math.round(Math.max(args.width, args.height) / 30)
+  const ring = args.style === 'cartoon' ? `border:${Math.round(size / 28)}px solid #262626;` : ''
+  const browser = await chromium.launch({ headless: true })
+  try {
+    const page = await browser.newPage({ viewport: { width: args.width, height: args.height } })
+    await page.setContent(`<!doctype html><html><body style="margin:0;background:#fafafa;font-family:Inter,system-ui,sans-serif;color:#262626">
+      <div style="height:100vh;display:flex;flex-direction:${vertical ? 'column' : 'row'};align-items:center;justify-content:center;gap:${Math.round(fontSize * 1.4)}px;padding:0 7%;text-align:${vertical ? 'center' : 'left'}">
+        <div style="flex:none;width:${size}px;height:${size}px;border-radius:50%;overflow:hidden;background:#e5e5e5;box-sizing:border-box;${ring}">${portrait}</div>
+        <div style="display:flex;flex-direction:column;gap:${Math.round(fontSize * 0.5)}px;max-width:${vertical ? '100%' : '55%'}">
+          <div style="font-size:${fontSize}px;font-weight:600;letter-spacing:-0.02em;line-height:1.2">${escapeHtml(args.title)}</div>
+          <div style="font-size:${Math.round(fontSize * 0.5)}px;color:#737373;font-family:ui-monospace,monospace">${escapeHtml(args.subtitle)}</div>
+        </div>
+      </div></body></html>`)
+    if (args.portrait) {
+      // decode() rejects when the browser cannot draw the file, so a broken reference fails the job instead of rendering blank.
+      await page
+        .locator('img')
+        .evaluate((image: HTMLImageElement) => image.decode())
+        .catch((error: unknown) => {
+          throw new Error(`the browser could not draw the reference ${path.basename(args.out)}`, { cause: error })
+        })
+    }
+    await page.screenshot({ path: args.out, type: 'png' })
+    return args.out
+  } finally {
+    await browser.close()
+  }
+}
+
+const CARTOON_FACE = `<svg viewBox="0 0 100 100" width="100%" height="100%"><rect width="100" height="100" fill="#f5f5f5"/><circle cx="50" cy="56" r="34" fill="#262626"/><rect x="36" y="42" width="8" height="16" rx="4" fill="#fafafa"/><rect x="56" y="42" width="8" height="16" rx="4" fill="#fafafa"/></svg>`
+
+const PHOTO_SILHOUETTE = `<svg viewBox="0 0 100 100" width="100%" height="100%"><rect width="100" height="100" fill="#d4d4d4"/><circle cx="50" cy="40" r="18" fill="#a3a3a3"/><path d="M14 100c4-22 18-32 36-32s32 10 36 32z" fill="#a3a3a3"/></svg>`
 
 /**
  * An image of the asset library fitted into the frame on the paper

@@ -4,6 +4,7 @@ import { failureOf } from './failure'
 import { produce } from './produce'
 import { postReply, publish } from './publish'
 import { openBrowser } from './record'
+import { designVoice } from './voice'
 
 /**
  * The runner (CONTEXT.md): polls the backend for runner jobs and does the
@@ -34,6 +35,8 @@ async function handle(job: NonNullable<Awaited<ReturnType<typeof backend.claim>>
     } else if (job.kind === 'post_reply') {
       const result = await postReply(job)
       await backend.complete(job.id, result)
+    } else if (job.kind === 'design_voice') {
+      await backend.complete(job.id, await designVoice(job.payload))
     } else {
       await openBrowser(job.payload.url)
       await backend.complete(job.id, { opened: job.payload.url })

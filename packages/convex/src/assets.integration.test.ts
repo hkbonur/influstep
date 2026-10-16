@@ -6,26 +6,12 @@ import { addDays, dayKey, weekStart } from './core/dates'
 import { createIdea } from './core/episodes'
 import { TIMEZONE, insertPersona } from '../test/fixtures'
 import { writeScriptsDueBefore } from '../test/scripts'
+import { storeFile } from '../test/fixtures'
 import { setup } from '../test/setup'
 
 type Test = ReturnType<typeof setup>
 
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="9"><rect width="16" height="9" fill="#fafafa"/></svg>'
-
-/**
- * A file in storage with its content type. The real backend records the type
- * a file is stored or uploaded with; convex-test records none, so the test
- * writes it where the backend would.
- */
-async function storeFile(t: Test, body: string, type: string): Promise<Id<'_storage'>> {
-  const storageId = await t.run((ctx) => ctx.storage.store(new Blob([body], { type })))
-  await t.run(async (ctx) => {
-    // The fake database patches a system row like any other; the typed one names only the app's tables.
-    const db = ctx.db as unknown as { patch: (id: Id<'_storage'>, value: { contentType: string }) => Promise<void> }
-    await db.patch(storageId, { contentType: type })
-  })
-  return storageId
-}
 
 async function upload(
   t: Test,

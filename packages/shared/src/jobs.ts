@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { PLACEABLE_ASSET_KINDS } from './assets'
+import { APPEARANCE_STYLES, REFERENCE_KINDS } from './appearance'
 import { ASPECT_RATIOS, PLATFORMS } from './platforms'
 
 export const AGENT_ROLES = ['researcher', 'writer', 'producer', 'publisher', 'analyst'] as const
@@ -56,6 +57,8 @@ export const JOB_KINDS = {
   listen_x: { role: 'researcher', runsOn: 'backend' },
   write_replies: { role: 'writer', runsOn: 'backend' },
   post_reply: { role: 'publisher', runsOn: 'runner' },
+  // Onboarding (shared appearance.ts): the voice provider makes a persona's spoken voice from the operator's description.
+  design_voice: { role: 'producer', runsOn: 'runner' },
   // Tasks the operator gives a persona in its chat (shared CHAT_TASKS): the role that owns the data answers there.
   research_brief: { role: 'researcher', runsOn: 'backend' },
   comment_digest: { role: 'publisher', runsOn: 'backend' },
@@ -83,6 +86,7 @@ export const JOB_KIND_LABELS: Record<JobKind, string> = {
   listen_x: 'Listen on X',
   write_replies: 'Write replies',
   post_reply: 'Post a reply',
+  design_voice: 'Make the voice',
   research_brief: 'Research brief',
   comment_digest: 'Comment digest',
   analytics_summary: 'Analytics summary',
@@ -133,6 +137,14 @@ export const producePayloadSchema = z.discriminatedUnion('kind', [
     episodeId: z.string(),
     personaHandle: z.string(),
     voiceId: z.string(),
+    // The persona's look, which every avatar take reads; null for a persona made before looks existed.
+    appearance: z
+      .object({
+        style: z.enum(APPEARANCE_STYLES),
+        // Where the runner downloads each reference, in the order the operator gave them.
+        references: z.array(z.object({ assetId: z.string(), url: z.string(), kind: z.enum(REFERENCE_KINDS) })),
+      })
+      .nullable(),
     shots: z.array(shotSchema).min(1),
     aspects: z.array(z.enum(ASPECT_RATIOS)).min(1),
     // Where the runner downloads each asset its asset shots show, once per job, and whether it holds or loops it.
@@ -147,6 +159,8 @@ export const producePayloadSchema = z.discriminatedUnion('kind', [
   }),
 ])
 export type ProducePayload = z.infer<typeof producePayloadSchema>
+/** A video's look as the producer reads it; null for a persona made before looks existed. */
+export type ProduceAppearance = Extract<ProducePayload, { kind: 'video' }>['appearance']
 
 /** An image render is one card at `durationSec: 0`. */
 export const produceResultSchema = z.object({
@@ -199,10 +213,18 @@ export type PostReplyPayload = z.infer<typeof postReplyPayloadSchema>
 export const openBrowserPayloadSchema = z.object({ url: z.string(), checklistItemId: z.string() })
 export type OpenBrowserPayload = z.infer<typeof openBrowserPayloadSchema>
 
+/** A spoken voice to make from the operator's words; the result is the voice id the producer speaks with. */
+export const designVoicePayloadSchema = z.object({ personaId: z.string(), personaName: z.string(), description: z.string().min(1) })
+export type DesignVoicePayload = z.infer<typeof designVoicePayloadSchema>
+
+export const designVoiceResultSchema = z.object({ voiceId: z.string().min(1), mock: z.boolean() })
+export type DesignVoiceResult = z.infer<typeof designVoiceResultSchema>
+
 export const runnerJobSchema = z.discriminatedUnion('kind', [
   z.object({ id: z.string(), kind: z.literal('produce'), payload: producePayloadSchema }),
   z.object({ id: z.string(), kind: z.literal('publish'), payload: publishPayloadSchema }),
   z.object({ id: z.string(), kind: z.literal('open_browser'), payload: openBrowserPayloadSchema }),
   z.object({ id: z.string(), kind: z.literal('post_reply'), payload: postReplyPayloadSchema }),
+  z.object({ id: z.string(), kind: z.literal('design_voice'), payload: designVoicePayloadSchema }),
 ])
 export type RunnerJob = z.infer<typeof runnerJobSchema>

@@ -1,6 +1,7 @@
 import { v, type Infer, type Validator } from 'convex/values'
 import {
   ACCOUNT_POST_SOURCES,
+  APPEARANCE_STYLES,
   AGENT_ROLES,
   ASPECT_RATIOS,
   ASSET_KINDS,
@@ -48,6 +49,7 @@ function literals<const T extends readonly string[]>(values: T): Validator<T[num
 export const episodeStatusValidator = literals(EPISODE_STATUSES)
 export const sponsorSegmentValidator = literals(SPONSOR_SEGMENTS)
 export const platformValidator = literals(PLATFORMS)
+export const appearanceStyleValidator = literals(APPEARANCE_STYLES)
 export const aspectRatioValidator = literals(ASPECT_RATIOS)
 export const agentRoleValidator = literals(AGENT_ROLES)
 export const jobRuntimeValidator = literals(JOB_RUNTIMES)

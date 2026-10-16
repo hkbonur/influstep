@@ -25,7 +25,7 @@ One AI influencer profile: a name, a handle, a spoken voice (and on X a writing 
 _Avoid_: influencer (fine in conversation; in code and copy a persona is the profile, the agents do the work), bot, avatar (that is only the rendered face), character, creator.
 
 **Onboarding**:
-The flow that builds the roster (`/onboarding`): how many personas, then one step per persona. The operator names a niche and an audience, the writer proposes a name, handle, tone, pillars, bio and bible, the operator edits them in place and picks the platforms with their formats, the videos a week, the sponsor dial and the voice; creating the persona plans the rest of this week and next week. A first run, with no persona yet, starts here, and it makes the workspace when nobody ran the seed. The sidebar's + runs the same flow for one more persona.
+The flow that builds the roster (`/onboarding`): how many personas, then one step per persona. The operator names a niche and an audience, the writer proposes a name, handle, tone, pillars, bio and bible, the operator edits them in place and gives the look and the voice, picks the platforms with their formats, the videos a week and the sponsor dial; creating the persona plans the rest of this week and next week. A first run, with no persona yet, starts here, and it makes the workspace when nobody ran the seed. The sidebar's + runs the same flow for one more persona.
 _Avoid_: wizard, setup, signup.
 
 **Agent**:
@@ -45,8 +45,12 @@ Something the operator asks for in a persona's chat that one agent runs and answ
 _Avoid_: job (that is how a task runs), todo, ticket, request (Formstep's word).
 
 **Voice** (spoken):
-The persona's text-to-speech voice, set as "Voice id" in the persona's settings (`voiceId` in code: an ElevenLabs voice id in production, a mock voice locally), used for every voiced episode so the persona sounds the same across platforms.
+The persona's text-to-speech voice, set as "Voice id" in the persona's settings (`voiceId` in code: an ElevenLabs voice id in production, a mock voice locally), used for every voiced episode so the persona sounds the same across platforms. At onboarding the operator gives an id or describes the voice; a description is made into a voice by the voice provider on the runner (ElevenLabs Voice Design), and until it is made no video of the persona can be approved for recording.
 _Avoid_: narrator, TTS (fine as the mechanism).
+
+**Look**:
+How a persona appears in its videos: a presenter style (cartoon presenter, photoreal presenter, or screen only, with a voice and no presenter) and the reference pictures or clips of it in its asset library, tagged reference. The avatar provider reads the look for every avatar take; until a real one exists, a take is a card with the first reference as the presenter's portrait. A persona with no presenter records the screen only on every platform. `appearance` in code.
+_Avoid_: avatar (that is the rendered take), skin, theme.
 
 **Voice** (on X):
 How an X persona writes, learned by the analyst from the account's imported history: the language, a summary and traits the LLM writes, the length mix and the emoji and hashtag habits counted from the account's own posts, and the example posts the writer imitates. The operator edits the language, summary and traits on the persona's voice page. Every X post is written in it; until it is learned the writer posts in English in the bible's tone. In code it is `persona.voice`; the spoken voice is always `voiceId`.

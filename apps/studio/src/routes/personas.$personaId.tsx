@@ -1,11 +1,14 @@
 import { api } from '@influstep/convex/_generated/api'
 import type { Doc, Id } from '@influstep/convex/_generated/dataModel'
 import {
+  APPEARANCE_STYLES,
+  APPEARANCE_STYLE_LABELS,
   DELIVERY_LABELS,
   EPISODE_KIND_LABELS,
   bioPath,
   formatLength,
   isPost,
+  type AppearanceStyle,
   type MemoryKind,
   type PersonaColor,
   type PlatformFormat,
@@ -212,6 +215,14 @@ function PersonaPage() {
                     )}
                   </React.Fragment>
                 ))}
+              </dd>
+              <dt className="text-ash">Look</dt>
+              <dd>
+                <LookLine personaId={personaId} look={data.look} />
+              </dd>
+              <dt className="text-ash">Speaks with</dt>
+              <dd>
+                <SpokenVoiceLine persona={persona} voiceJob={data.voiceJob} />
               </dd>
               {persona.formats.some((format) => format.platform === 'x') && (
                 <>
@@ -559,6 +570,45 @@ function ChecklistRow(props: {
   )
 }
 
+type PersonaPage = NonNullable<FunctionReturnType<typeof api.private.personas.get>>
+
+/** The look in one line: its style, and its references linked to the asset library. */
+function LookLine(props: { personaId: Id<'personas'>; look: PersonaPage['look'] }) {
+  if (props.look === null) return <span className="text-ash">Not set. Pick one in the settings.</span>
+  const count = props.look.references.length
+  return (
+    <>
+      {APPEARANCE_STYLE_LABELS[props.look.style]}
+      {props.look.style !== 'voice_only' && (
+        <>
+          {' · '}
+          <Link to="/personas/$personaId/assets" params={{ personaId: props.personaId }} className="hover:underline">
+            {count === 0 ? 'no reference yet' : `${count} ${plural(count, 'reference', 'references')}`}
+          </Link>
+        </>
+      )}
+    </>
+  )
+}
+
+/** The spoken voice: its id, or where the voice provider stands in making it from the operator's words. */
+function SpokenVoiceLine(props: { persona: Doc<'personas'>; voiceJob: PersonaPage['voiceJob'] }) {
+  if (props.persona.voiceId !== undefined) return <Mono>{props.persona.voiceId}</Mono>
+  if (props.voiceJob?.status === 'failed')
+    return (
+      <span>
+        <span className="text-signal-red-deep">Making the voice failed: {props.voiceJob.error}</span>{' '}
+        <span className="text-ash">Retry it on the Agents page, or give a voice id in the settings.</span>
+      </span>
+    )
+  return (
+    <span className="text-ash">
+      Being made from your description
+      {props.voiceJob?.status === 'queued' ? ', waiting for the runner' : ''}. Videos record once it is made.
+    </span>
+  )
+}
+
 function SettingsForm(props: { persona: Doc<'personas'>; onDone: () => void }) {
   const update = useMutation(api.private.personas.update)
   const giveDiscountCode = useMutation(api.private.personas.giveDiscountCode)
@@ -566,6 +616,7 @@ function SettingsForm(props: { persona: Doc<'personas'>; onDone: () => void }) {
   const [state, setState] = React.useState<FormState>({ status: 'idle' })
   const [color, setColor] = React.useState<PersonaColor>(props.persona.color)
   const [formats, setFormats] = React.useState<PlatformFormat[]>(props.persona.formats)
+  const [lookStyle, setLookStyle] = React.useState<AppearanceStyle | undefined>(props.persona.appearance?.style)
   const [code, setCode] = React.useState('')
   const [offer, setOffer] = React.useState('')
   const [codeState, setCodeState] = React.useState<FormState>({ status: 'idle' })
@@ -603,7 +654,9 @@ function SettingsForm(props: { persona: Doc<'personas'>; onDone: () => void }) {
           .map((pillar) => pillar.trim())
           .filter(Boolean),
         formats,
-        voiceId: text('voiceId'),
+        // Left empty while the voice is being made from its description, so the made one lands.
+        voiceId: text('voiceId') || undefined,
+        style: lookStyle,
         sponsorDial: Number(form.get('sponsorDial')),
         sponsorRampEpisodes: Number(form.get('sponsorRampEpisodes')),
         episodesPerWeek: Number(form.get('episodesPerWeek')),
@@ -658,8 +711,22 @@ function SettingsForm(props: { persona: Doc<'personas'>; onDone: () => void }) {
         <Field label="Timezone" hint="Publish hours are local to it.">
           <Input name="timezone" defaultValue={p.timezone} required />
         </Field>
-        <Field label="Voice id">
-          <Input name="voiceId" defaultValue={p.voiceId} />
+        <Field label="Voice id" hint={p.voiceId === undefined ? 'Being made from your description; or give one.' : undefined}>
+          <Input name="voiceId" defaultValue={p.voiceId ?? ''} />
+        </Field>
+        <Field label="Look" hint="No presenter records the screen only.">
+          <select
+            className="field"
+            value={lookStyle ?? ''}
+            onChange={(event) => setLookStyle(APPEARANCE_STYLES.find((style) => style === event.target.value))}
+          >
+            {lookStyle === undefined && <option value="">Not set</option>}
+            {APPEARANCE_STYLES.map((style) => (
+              <option key={style} value={style}>
+                {APPEARANCE_STYLE_LABELS[style]}
+              </option>
+            ))}
+          </select>
         </Field>
         <CheckboxField label="Approval" name="autoApprove" defaultChecked={p.autoApprove}>
           Approve scripts automatically

@@ -563,7 +563,8 @@ export const storeScript = internalMutation({
       updatedAt: Date.now(),
     })
     await applyEvent(ctx, args.episodeId, { type: 'script_written' })
-    if (args.autoApprove) await approveEpisode(ctx, args.episodeId)
+    // A persona whose voice is still being made cannot record yet: the script waits for the operator, who approves it once it is made.
+    if (args.autoApprove && persona.voiceId !== undefined) await approveEpisode(ctx, args.episodeId)
     return { title: args.title }
   },
 })

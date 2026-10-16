@@ -13,6 +13,7 @@ import {
 import type { Doc, Id } from '../src/_generated/dataModel'
 import type { MutationCtx } from '../src/_generated/server'
 import { instantAt } from '../src/core/dates'
+import type { setup } from './setup'
 
 /**
  * Rows for tests of the core rules that need a database but not the whole
@@ -281,4 +282,19 @@ export async function insertSignal(
   const signal = await ctx.db.get(signalId)
   if (!signal) throw new Error('signal vanished')
   return signal
+}
+
+/**
+ * A file in storage with its content type. The real backend records the type
+ * a file is stored or uploaded with; convex-test records none, so the test
+ * writes it where the backend would.
+ */
+export async function storeFile(t: ReturnType<typeof setup>, body: string, type: string): Promise<Id<'_storage'>> {
+  const storageId = await t.run((ctx) => ctx.storage.store(new Blob([body], { type })))
+  await t.run(async (ctx) => {
+    // The fake database patches a system row like any other; the typed one names only the app's tables.
+    const db = ctx.db as unknown as { patch: (id: Id<'_storage'>, value: { contentType: string }) => Promise<void> }
+    await db.patch(storageId, { contentType: type })
+  })
+  return storageId
 }
