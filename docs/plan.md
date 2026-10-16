@@ -86,7 +86,7 @@ Updated 2026-10-16. Slices 1 to 17 are built and committed on `main`. What is le
 | 14 Home dashboard | done | 38d5a1e |
 | 15 Generated media | done | 2f53efe |
 | 16 Polish | done | fb0acb0, 84fd9d2 |
-| 17 Avatars from a portrait | done | SLICE17 |
+| 17 Avatars from a portrait | done | aa472ef |
 
 How a slice is built: write a short brief of the data, agent and studio changes; build; run `pnpm quality:fix`, `pnpm quality:check`, `pnpm test` and `pnpm knip`; reset, push and seed the local backend (see CLAUDE.md); smoke test every new screen and action in Chrome; commit with explicit paths.
 
